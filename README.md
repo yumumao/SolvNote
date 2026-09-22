@@ -23,7 +23,7 @@
 ghcr.io/yumumao/wrong-notebook-yus:latest
 ```
 
-镜像同时面向`linux/amd64`和`linux/arm64`。`latest`只在两种架构构建成功并完成manifest检查后更新；合并代码不等于镜像已经发布，请在[Actions](https://github.com/yumumao/wrong-notebook-yus/actions/workflows/build-docker.yml)确认对应提交的发布结果。需要可重复部署时，使用该次发布的`sha256`摘要固定镜像，而不是长期依赖浮动标签。
+镜像同时面向`linux/amd64`和`linux/arm64`。`latest`只在两种架构构建、真实容器启动检查及manifest检查均通过后更新；合并代码不等于镜像已经发布，请在[Actions](https://github.com/yumumao/wrong-notebook-yus/actions/workflows/build-docker.yml)确认对应提交的发布结果。需要可重复部署时，使用该次发布的`sha256`摘要固定镜像，而不是长期依赖浮动标签。
 
 Zeabur升级前请配对备份`/app/config`与`/app/data`两个卷，保留原环境变量和管理员账户；不要删除卷或重新初始化真实数据库。部署步骤及回滚边界见[部署与构建说明](docs/deployment-build.md)。
 
@@ -140,7 +140,9 @@ npm run lint
 
 新增测试包含加密互通、管理员权限、协议图片载荷、队列幂等与租约恢复、图文多阶段和年级正确性。集成测试只创建合成临时SQLite库，不连接线上数据，不调用真实AI。`src/__tests__/fixtures/scandex-portable*-v1.json`均是专门生成的公开测试夹具，不是用户设置。
 
-仓库原有全量ESLint债务单独列入验收记录，不把单元测试通过称作浏览器或部署验收。真实Docker/Zeabur和供应商调用需在部署阶段分别验证。
+发布流程在AMD64和ARM64上分别使用临时合成卷验证真实容器启动：新库初始化、保留管理员与双卷的再次启动、缺少初始密码时安全退出。容器关闭外部网络，不调用真实AI；任一检查失败都不会更新正式镜像标签。这仍不能代替Zeabur真实卷升级和供应商调用验收。
+
+仓库原有全量ESLint债务单独列入验收记录，不把单元测试通过称作浏览器或部署验收。Zeabur和真实供应商调用需在部署阶段分别验证。
 
 ## 隐私与后续集成
 
