@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { ParsedQuestion } from "@/lib/ai";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { Input } from "@/components/ui/input";
@@ -19,7 +20,7 @@ import { apiClient } from "@/lib/api-client";
 import { UserProfile, Notebook } from "@/types/api";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave, type MistakeStatus } from "@/lib/mistake-status";
-import type { ReanswerQuestionResult } from "@/lib/ai/types";
+import type { ReanswerQuestionResult, GeogebraAnalysisResult } from "@/lib/ai/types";
 import { buildReanswerRequestBody } from "@/lib/reanswer-request";
 import { GeogebraDemo } from "@/components/geogebra-demo";
 
@@ -61,11 +62,37 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
     const [isSaving, setIsSaving] = useState(false);
     const [isAnalyzingGeogebra, setIsAnalyzingGeogebra] = useState(false);
     const [geogebraError, setGeogebraError] = useState<string | null>(null);
+    const [review, setReview] = useState(false);
+    const [taskStatus, setTaskStatus] = useState("");
+    const reanswerRequest = useRef<AbortController | null>(null);
+    const geogebraRequest = useRef<AbortController | null>(null);
+
+    useEffect(() => {
+        const listener = (event: Event) => {
+            if (!reanswerRequest.current && !geogebraRequest.current) return;
+            const detail = (event as CustomEvent<{ id?: string; state?: string }>).detail;
+            if (!detail?.id || !detail.state) return;
+            const labels: Record<string, string> = { pending: "排队中", running: "AI处理中", success: "已完成", failed: "失败", unknown: "受理状态不确定，请先核查", cancelled: "已取消" };
+            setTaskStatus(`任务${detail.id}：${labels[detail.state] || detail.state}`);
+        };
+        window.addEventListener("ai-job-progress", listener);
+        return () => {
+            window.removeEventListener("ai-job-progress", listener);
+            // Unmounting stops local polling, not the durable server job.
+            reanswerRequest.current?.abort();
+            geogebraRequest.current?.abort();
+        };
+    }, []);
 
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
 
 
+
+    // Notebook inference may arrive after the result. Never overwrite a user's selection.
+    useEffect(() => {
+        if (initialSubjectId) setData(prev => prev.subjectId ? prev : { ...prev, subjectId: initialSubjectId });
+    }, [initialSubjectId]);
 
     // Fetch user info and calculate grade on mount
     useEffect(() => {
@@ -87,11 +114,15 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
 
     // 重新解题函数
     const handleReanswer = async () => {
-        if (!data.questionText.trim()) {
+        if (!data.questionText.trim() && !imagePreview) {
             alert(t.editor.enterQuestionFirst || 'Please enter question text first');
             return;
         }
 
+        if (reanswerRequest.current || geogebraRequest.current) return;
+        const controller = new AbortController();
+        reanswerRequest.current = controller;
+        setTaskStatus("正在提交重解任务，请勿重复提交。");
         setIsReanswering(true);
         try {
             const requestBody = buildReanswerRequestBody({
@@ -102,15 +133,15 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                 gradeSemester: data.gradeSemester,
             });
 
-            if (requestBody.imageBase64) {
-                console.log("[Reanswer] Sending image + text (Image available for mistake analysis)");
-            } else {
-                console.log("[Reanswer] Sending text only (No image available)");
-            }
-
             frontendLogger.info('[Reanswer]', 'Sending request', { timeout: aiTimeout });
 
-            const result = await apiClient.post<ReanswerQuestionResult>("/api/reanswer", requestBody, { timeout: aiTimeout || 180000 });
+            const result = await apiClient.post<ReanswerQuestionResult>("/api/reanswer", {
+                ...requestBody,
+                subjectId: data.subjectId,
+                originalImageBase64: imagePreview || undefined,
+                review,
+            }, { timeout: aiTimeout || 180000, signal: controller.signal });
+            if (controller.signal.aborted) return;
 
             setData(prev => ({
                 ...prev,
@@ -127,7 +158,8 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
 
             alert(t.editor.reanswerSuccess || '✅ Answer and analysis updated!');
         } catch (error: unknown) {
-            console.error("Reanswer failed:", error);
+            if (controller.signal.aborted) return;
+            setTaskStatus("重解未完成，请到我的AI任务查看；不要连续重复提交。");
             const apiError = error as { data?: { message?: string } };
             const msg = apiError.data?.message || '';
 
@@ -145,12 +177,13 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             alert(errorText);
 
         } finally {
-            setIsReanswering(false);
+            reanswerRequest.current = null;
+            if (!controller.signal.aborted) setIsReanswering(false);
         }
     };
 
     const handleAnalyzeGeogebra = async () => {
-        if (!data.questionText.trim()) {
+        if (!data.questionText.trim() && !imagePreview) {
             alert(t.editor.enterQuestionFirst || '请先输入题目文本');
             return;
         }
@@ -159,24 +192,25 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             return;
         }
 
+        if (geogebraRequest.current || reanswerRequest.current) return;
+        const controller = new AbortController();
+        geogebraRequest.current = controller;
+        setTaskStatus("正在提交GeoGebra任务，请勿重复提交。");
         setIsAnalyzingGeogebra(true);
         setGeogebraError(null);
         try {
-            const response = await fetch("/api/geogebra-analyze", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    questionText: data.questionText,
-                    answerText: data.answerText,
-                    analysis: data.analysis,
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error("Analysis failed");
-            }
-
-            const result = await response.json();
+            const result = await apiClient.post<GeogebraAnalysisResult>("/api/geogebra-analyze", {
+                questionText: data.questionText,
+                answerText: data.answerText,
+                analysis: data.analysis,
+                imageBase64: imagePreview || undefined,
+                originalImageBase64: imagePreview || undefined,
+                subjectId: data.subjectId,
+                subject: data.subject,
+                gradeSemester: data.gradeSemester,
+                language,
+            }, { timeout: aiTimeout || 180000, signal: controller.signal });
+            if (controller.signal.aborted) return;
             if (result.suitable && result.commands?.length > 0) {
                 setData(prev => ({
                     ...prev,
@@ -185,11 +219,13 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             } else {
                 setGeogebraError(result.description || "该题目不适合用 GeoGebra 演示");
             }
-        } catch (error: any) {
-            console.error("GeoGebra analysis failed:", error);
-            setGeogebraError("分析失败，请稍后重试");
+        } catch {
+            if (controller.signal.aborted) return;
+            setTaskStatus("GeoGebra任务未完成，请到我的AI任务查看；不要连续重复提交。");
+            setGeogebraError("分析未完成，请先到我的AI任务核查状态。");
         } finally {
-            setIsAnalyzingGeogebra(false);
+            geogebraRequest.current = null;
+            if (!controller.signal.aborted) setIsAnalyzingGeogebra(false);
         }
     };
 
@@ -222,7 +258,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                                 setIsSaving(false);
                             }
                         }}
-                        disabled={isSaving}
+                        disabled={isSaving || isReanswering || isAnalyzingGeogebra}
                     >
                         {isSaving ? (
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -232,6 +268,12 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                         {isSaving ? (t.common?.pleaseWait || "Please wait...") : t.editor.save}
                     </Button>
                 </div>
+            </div>
+
+            <div className="border rounded p-3 space-y-2">
+                <Link className="underline" href="/ai-tasks">我的AI任务（取回结果/取消）</Link>
+                <p role="status">{taskStatus}</p>
+                <p className="text-sm">刷新或离开不会取消已受理的后台任务，请勿重复提交。年级仅作为讲解偏好，正确性优先。</p>
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
@@ -292,7 +334,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                             variant="default"
                             size="sm"
                             onClick={handleReanswer}
-                            disabled={isReanswering || !data.questionText.trim()}
+                            disabled={isReanswering || isAnalyzingGeogebra || (!data.questionText.trim() && !imagePreview)}
                             className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-medium"
                         >
                             {isReanswering ? (
@@ -307,6 +349,10 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                                 </>
                             )}
                         </Button>
+                        <label className="block text-sm">
+                            <input type="checkbox" checked={review} disabled={isReanswering || isAnalyzingGeogebra} onChange={e => setReview(e.target.checked)} />
+                            重解时由第二个AI独立复核（需至少两个可用模型，增加费用）
+                        </label>
                         <p className="text-xs text-muted-foreground">
                             {t.editor.reanswerHint || '💡 If the question was misrecognized, correct it and click to regenerate answer'}
                         </p>
@@ -411,7 +457,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     {/* GeoGebra Dynamic Demo */}
                     {data.geogebraCommands ? (
                         <GeogebraDemo commands={data.geogebraCommands} height={350} onRegenerate={handleAnalyzeGeogebra} />
-                    ) : data.questionText.trim() && data.answerText.trim() ? (
+                    ) : (data.questionText.trim() || imagePreview) && data.answerText.trim() ? (
                         <div className="rounded-lg border border-dashed p-4">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -422,7 +468,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                                     variant="outline"
                                     size="sm"
                                     onClick={handleAnalyzeGeogebra}
-                                    disabled={isAnalyzingGeogebra}
+                                    disabled={isAnalyzingGeogebra || isReanswering}
                                 >
                                     {isAnalyzingGeogebra ? (
                                         <>

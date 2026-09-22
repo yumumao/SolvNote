@@ -294,11 +294,15 @@ describe('AI Prompts', () => {
             expect(generateGradeInstruction('')).toBe('');
         });
 
-        it('有效的 gradeSemester 应生成约束指令', () => {
+        it('有效的 gradeSemester 应生成正确性优先的软偏好指令', () => {
             const instruction = generateGradeInstruction('初二上');
-            expect(instruction).toContain('学历约束');
+            expect(instruction).toContain('年级讲解偏好');
             expect(instruction).toContain('初中二年级');
-            expect(instruction).toContain('禁止使用超纲知识');
+            expect(instruction).toContain('不是解题方法的上限');
+            expect(instruction).toContain('正确性始终优先');
+            expect(instruction).toContain('必须使用必要的更高年级知识');
+            expect(instruction).toContain('解释新增概念、使用原因和每一步推理');
+            expect(instruction).not.toContain('禁止使用超纲知识');
         });
 
         it('无法识别的 gradeSemester 应返回空字符串', () => {
@@ -306,38 +310,51 @@ describe('AI Prompts', () => {
         });
     });
 
-    describe('gradeSemester 学历约束注入', () => {
-        it('analyze 提示词应包含学历约束（当提供 gradeSemester 时）', () => {
+    describe('gradeSemester 年级讲解偏好注入', () => {
+        it('analyze 提示词应包含年级讲解偏好（当提供 gradeSemester 时）', () => {
             const prompt = generateAnalyzePrompt('zh', 8, '数学', undefined, '初二上');
-            expect(prompt).toContain('学历约束');
+            expect(prompt).toContain('年级讲解偏好');
+            expect(prompt).toContain('正确性始终优先');
+            expect(prompt).toContain('必须使用必要的更高年级知识');
+            expect(prompt).not.toContain('禁止使用超纲知识');
             expect(prompt).toContain('初中二年级');
         });
 
-        it('analyze 提示词不应包含学历约束（当未提供 gradeSemester 时）', () => {
+        it('analyze 提示词不应包含年级讲解偏好（当未提供 gradeSemester 时）', () => {
             const prompt = generateAnalyzePrompt('zh', 8, '数学');
-            expect(prompt).not.toContain('学历约束');
+            expect(prompt).not.toContain('年级讲解偏好');
+            expect(prompt).toContain('【正确性优先】');
         });
 
-        it('similar 提示词应包含学历约束（当提供 gradeSemester 时）', () => {
+        it('similar 提示词应包含年级讲解偏好（当提供 gradeSemester 时）', () => {
             const prompt = generateSimilarQuestionPrompt('zh', '1+1=?', ['算术'], 'medium', undefined, 'primary_3');
-            expect(prompt).toContain('学历约束');
+            expect(prompt).toContain('年级讲解偏好');
+            expect(prompt).toContain('正确性始终优先');
+            expect(prompt).toContain('必须使用必要的更高年级知识');
+            expect(prompt).not.toContain('禁止使用超纲知识');
             expect(prompt).toContain('小学三年级');
+            expect(prompt).toContain('必须验证题目可解、答案正确且解析一致');
         });
 
-        it('similar 提示词不应包含学历约束（当未提供 gradeSemester 时）', () => {
+        it('similar 提示词不应包含年级讲解偏好（当未提供 gradeSemester 时）', () => {
             const prompt = generateSimilarQuestionPrompt('zh', '1+1=?', ['算术']);
-            expect(prompt).not.toContain('学历约束');
+            expect(prompt).not.toContain('年级讲解偏好');
+            expect(prompt).toContain('【正确性优先】');
         });
 
-        it('reanswer 提示词应包含学历约束（当提供 gradeSemester 时）', () => {
+        it('reanswer 提示词应包含年级讲解偏好（当提供 gradeSemester 时）', () => {
             const prompt = generateReanswerPrompt('zh', '1+1=?', '数学', undefined, '高一');
-            expect(prompt).toContain('学历约束');
+            expect(prompt).toContain('年级讲解偏好');
+            expect(prompt).toContain('正确性始终优先');
+            expect(prompt).toContain('必须使用必要的更高年级知识');
+            expect(prompt).not.toContain('禁止使用超纲知识');
             expect(prompt).toContain('高中一年级');
         });
 
-        it('reanswer 提示词不应包含学历约束（当未提供 gradeSemester 时）', () => {
+        it('reanswer 提示词不应包含年级讲解偏好（当未提供 gradeSemester 时）', () => {
             const prompt = generateReanswerPrompt('zh', '1+1=?', '数学');
-            expect(prompt).not.toContain('学历约束');
+            expect(prompt).not.toContain('年级讲解偏好');
+            expect(prompt).toContain('【正确性优先】');
         });
 
         it('analyze 提示词不应包含未替换的 grade_instruction 占位符', () => {

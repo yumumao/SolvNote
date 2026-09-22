@@ -1,56 +1,56 @@
 import { PrismaClient } from '@prisma/client';
 import { hash } from 'bcryptjs';
 
-const prisma = new PrismaClient();
+const INITIAL_ADMIN_GUIDANCE = 'For a new installation, set INITIAL_ADMIN_PASSWORD to a non-blank value of at least 12 characters and optionally set INITIAL_ADMIN_EMAIL. Resolve any existing non-admin account conflict manually.';
 
 async function main() {
-    const email = 'admin@localhost';
-    const password = '123456';
-    const name = 'Admin';
+    const prisma = new PrismaClient();
 
-    console.log(`Checking admin user: ${email}...`);
+    try {
+        // Disabled administrators also prevent bootstrap from changing accounts.
+        const existingAdmin = await prisma.user.findFirst({
+            where: { role: 'admin' },
+            select: { id: true },
+        });
+        if (existingAdmin) {
+            console.log('An administrator already exists. No changes made.');
+            return;
+        }
 
-    const existingUser = await prisma.user.findUnique({
-        where: { email },
-    });
-
-    if (existingUser) {
-        console.log(`Admin user already exists. Updating defaults...`);
-        await prisma.user.update({
+        const password = process.env.INITIAL_ADMIN_PASSWORD;
+        if (!password || password.length < 12 || !password.trim()) {
+            throw new Error(INITIAL_ADMIN_GUIDANCE);
+        }
+        const email = process.env.INITIAL_ADMIN_EMAIL?.trim() || 'admin@localhost';
+        const existingUser = await prisma.user.findUnique({
             where: { email },
+            select: { id: true },
+        });
+        if (existingUser) {
+            throw new Error('Initial administrator bootstrap refused: the selected account already exists. Resolve the account conflict manually; no permissions were changed.');
+        }
+
+        const hashedPassword = await hash(password, 12);
+        await prisma.user.create({
             data: {
+                email,
+                password: hashedPassword,
+                name: 'Admin',
+                role: 'admin',
+                isActive: true,
                 educationStage: 'junior_high',
                 enrollmentYear: 2025,
-            }
+            },
         });
-        return;
+
+        console.log('Success! Admin user created.');
+    } finally {
+        await prisma.$disconnect();
     }
-
-    console.log(`Admin user not found. Creating...`);
-    const hashedPassword = await hash(password, 12);
-
-    const user = await prisma.user.create({
-        data: {
-            email,
-            password: hashedPassword,
-            name,
-            role: 'admin',
-            isActive: true,
-            educationStage: 'junior_high',
-            enrollmentYear: 2025,
-        },
-    });
-
-    console.log(`\nSuccess! Admin user created.`);
-    console.log(`Email: ${user.email}`);
-    console.log(`Password: ${password}`);
 }
 
-main()
-    .catch((e) => {
-        console.error(e);
-        process.exit(1);
-    })
-    .finally(async () => {
-        await prisma.$disconnect();
-    });
+main().catch(() => {
+    // Never print raw errors: their messages can contain credentials or email.
+    console.error(`Admin initialization failed. ${INITIAL_ADMIN_GUIDANCE}`);
+    process.exitCode = 1;
+});

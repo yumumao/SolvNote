@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense, useEffect } from "react";
+import { useState, Suspense, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { UploadZone } from "@/components/upload-zone";
@@ -8,7 +8,7 @@ import { CorrectionEditor } from "@/components/correction-editor";
 import { ImageCropper } from "@/components/image-cropper";
 import { ParsedQuestion } from "@/lib/ai";
 import { UserWelcome } from "@/components/user-welcome";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, ApiError, waitForAIJob } from "@/lib/api-client";
 import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -23,10 +23,28 @@ import { frontendLogger } from "@/lib/frontend-logger";
 import { TextInputZone } from "@/components/text-input-zone";
 import { DirectTextEditor } from "@/components/direct-text-editor";
 
+type RestorableAnalyzeJob = {
+    kind: string;
+    state: string;
+    result?: AnalyzeResponse;
+    input?: {
+        subjectId?: string;
+        imageBase64?: string;
+        originalImageBase64?: string;
+        questionText?: string;
+        mode?: "direct" | "transcribe" | "text";
+        review?: boolean;
+    };
+};
+
+const taskStateLabels: Record<string, string> = {
+    pending: "排队中", running: "AI处理中", success: "已完成",
+    failed: "失败", cancelled: "已取消", unknown: "受理状态不确定，请先核查，不要重复提交",
+};
+
 function HomeContent() {
     const [step, setStep] = useState<"upload" | "review">("upload");
     const [analysisStep, setAnalysisStep] = useState<ProgressStatus>('idle');
-    const [progress, setProgress] = useState(0);
     const [parsedData, setParsedData] = useState<ParsedQuestion | null>(null);
     const [currentImage, setCurrentImage] = useState<string | null>(null);
     const { t, language } = useLanguage();
@@ -35,6 +53,11 @@ function HomeContent() {
     const initialNotebookId = searchParams.get("notebook");
     const [notebooks, setNotebooks] = useState<{ id: string; name: string }[]>([]);
     const [autoSelectedNotebookId, setAutoSelectedNotebookId] = useState<string | null>(null);
+
+    const inferredNotebookId = parsedData?.subject
+        ? notebooks.find(n => n.name.includes(parsedData.subject) || parsedData.subject.includes(n.name))?.id
+        : undefined;
+    const selectedNotebookId = initialNotebookId || autoSelectedNotebookId || inferredNotebookId;
 
     const [config, setConfig] = useState<AppConfig | null>(null);
 
@@ -45,9 +68,16 @@ function HomeContent() {
     const [croppingImage, setCroppingImage] = useState<string | null>(null);
     const [isCropperOpen, setIsCropperOpen] = useState(false);
 
-    // Timeout Config
+    const [extraText, setExtraText] = useState("");
+    const [aiMode, setAiMode] = useState<"direct" | "transcribe">("direct");
+    const [review, setReview] = useState(false);
+    const [taskStatus, setTaskStatus] = useState("");
+    const [taskId, setTaskId] = useState<string | null>(null);
+    const activeRequest = useRef<AbortController | null>(null);
+    const restoreJobId = searchParams.get("job");
+
+    // Only bounds an individual HTTP request. The durable queue owns the AI deadline.
     const aiTimeout = config?.timeouts?.analyze || 180000;
-    const safetyTimeout = aiTimeout + 10000;
 
     // Cleanup Blob URL to prevent memory leak
     useEffect(() => {
@@ -77,178 +107,144 @@ function HomeContent() {
             .catch(err => console.error("Failed to fetch config:", err));
     }, []);
 
-    // Simulate progress for smoother UX with timeout protection
-    useEffect(() => {
-        let interval: NodeJS.Timeout;
-        let timeout: NodeJS.Timeout;
-        if (analysisStep !== 'idle') {
-            setProgress(0);
-            interval = setInterval(() => {
-                setProgress(prev => {
-                    if (prev >= 90) return prev; // Cap at 90% until complete
-                    return prev + Math.random() * 10;
-                });
-            }, 500);
-
-            // Safety timeout: auto-reset after configurable time to prevent stuck overlay
-            timeout = setTimeout(() => {
-                console.warn('[Progress] Safety timeout triggered - resetting analysisStep');
-                setAnalysisStep('idle');
-            }, safetyTimeout);
+    const showAnalysis = useCallback((result: AnalyzeResponse | undefined, image: string | null, subjectId?: string) => {
+        if (!result || typeof result.questionText !== "string" || typeof result.answerText !== "string") {
+            throw new Error("INVALID_ANALYSIS_RESULT");
         }
-        return () => {
-            clearInterval(interval);
-            clearTimeout(timeout);
+        setParsedData(result);
+        setCurrentImage(image);
+        setAutoSelectedNotebookId(subjectId || null);
+        setStep("review");
+    }, []);
+
+    useEffect(() => {
+        const listener = (event: Event) => {
+            if (!activeRequest.current || activeRequest.current.signal.aborted) return;
+            const detail = (event as CustomEvent<{ id?: string; state?: string }>).detail;
+            if (!detail?.id || !detail.state) return;
+            setTaskId(detail.id);
+            setTaskStatus(`任务${detail.id}：${taskStateLabels[detail.state] || detail.state}`);
         };
-    }, [analysisStep, safetyTimeout]);
+        window.addEventListener("ai-job-progress", listener);
+        return () => {
+            window.removeEventListener("ai-job-progress", listener);
+            // Stop only local polling. Never cancel the server job on navigation.
+            activeRequest.current?.abort();
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!restoreJobId) return;
+        const controller = new AbortController();
+        activeRequest.current?.abort();
+        activeRequest.current = controller;
+        setAnalysisStep("analyzing");
+        setStep("upload");
+        setParsedData(null);
+        setCurrentImage(null);
+        setTaskId(restoreJobId);
+        setTaskStatus("正在取回任务，请勿重复提交。");
+        const restore = async () => {
+            try {
+                // The endpoint authenticates the session and checks job ownership.
+                // Neither localStorage nor query parameters are trusted as result data.
+                const job = await apiClient.get<RestorableAnalyzeJob>(`/api/ai/jobs/${encodeURIComponent(restoreJobId)}?restore=1`, { signal: controller.signal });
+                if (controller.signal.aborted) return;
+                if (job.kind !== "analyze" || !job.input) {
+                    setTaskStatus("此任务不能恢复到主页编辑器，请到我的AI任务查看。");
+                    return;
+                }
+                let result = job.result;
+                if (job.state === "pending" || job.state === "running") {
+                    result = await waitForAIJob<AnalyzeResponse>(restoreJobId, controller.signal);
+                } else if (job.state !== "success") {
+                    setTaskStatus(`任务${taskStateLabels[job.state] || "不可恢复"}，请到我的AI任务查看，不要连续重复提交。`);
+                    return;
+                }
+                if (controller.signal.aborted) return;
+                showAnalysis(result, job.input.originalImageBase64 || job.input.imageBase64 || null, job.input.subjectId);
+                setInputMode(job.input.mode === "text" ? "text" : "image");
+                setExtraText(job.input.questionText || "");
+                setAiMode(job.input.mode === "transcribe" ? "transcribe" : "direct");
+                setReview(Boolean(job.input.review));
+                setTaskStatus("已取回任务结果，请核对原图与AI结果后保存。");
+            } catch {
+                if (!controller.signal.aborted) setTaskStatus("任务不存在、不可访问、已过期或暂时无法取回，请到我的AI任务查看。");
+            } finally {
+                if (activeRequest.current === controller) {
+                    activeRequest.current = null;
+                    if (!controller.signal.aborted) setAnalysisStep("idle");
+                }
+            }
+        };
+        void restore();
+        return () => {
+            controller.abort();
+            // A query-only navigation can keep Home mounted. Unlock its form too.
+            if (activeRequest.current === controller) {
+                activeRequest.current = null;
+                setAnalysisStep("idle");
+                setTaskStatus("已停止本页等待，后台任务仍可在我的AI任务查看。");
+            }
+        };
+    }, [restoreJobId, showAnalysis]);
 
     const onImageSelect = (file: File) => {
+        if (activeRequest.current) return;
         const imageUrl = URL.createObjectURL(file);
         setCroppingImage(imageUrl);
         setIsCropperOpen(true);
     };
 
-    const handleCropComplete = async (croppedBlob: Blob) => {
+    const handleCropComplete = (croppedBlob: Blob) => {
         setIsCropperOpen(false);
-        // Convert Blob to File
-        const file = new File([croppedBlob], "cropped-image.jpg", { type: "image/jpeg" });
-        handleAnalyze(file);
+        const file = new File([croppedBlob], "cropped-image.jpg", { type: croppedBlob.type || "image/jpeg" });
+        void handleAnalyze(file);
     };
 
     const handleAnalyze = async (file: File) => {
-        const startTime = Date.now();
-        frontendLogger.info('[HomeAnalyze]', 'Starting analysis flow', {
-            timeoutSettings: {
-                apiTimeout: aiTimeout,
-                safetyTimeout
-            }
-        });
-
+        if (activeRequest.current) return;
+        if (file.size > 8 * 1024 * 1024) {
+            alert("裁剪图片超过8MiB，请缩小裁剪范围。");
+            return;
+        }
+        const controller = new AbortController();
+        activeRequest.current = controller;
+        setTaskId(null);
+        setTaskStatus("");
         try {
-            frontendLogger.info('[HomeAnalyze]', 'Step 1/5: Compressing image');
-            setAnalysisStep('compressing');
+            setAnalysisStep("compressing");
+            const originalImage = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result));
+                reader.onerror = () => reject(new Error("IMAGE_READ_FAILED"));
+                reader.readAsDataURL(file);
+            });
             const base64Image = await processImageFile(file);
-            setCurrentImage(base64Image);
-            frontendLogger.info('[HomeAnalyze]', 'Image compressed successfully', {
-                size: base64Image.length
-            });
-
-            frontendLogger.info('[HomeAnalyze]', 'Step 2/5: Calling API endpoint /api/analyze');
-            setAnalysisStep('analyzing');
-            const apiStartTime = Date.now();
-            const data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
+            if (controller.signal.aborted) return;
+            setAnalysisStep("analyzing");
+            setTaskStatus("正在提交任务，受理后可离开页面，稍后到我的AI任务取回。");
+            const result = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 imageBase64: base64Image,
-                language: language,
-                subjectId: initialNotebookId || autoSelectedNotebookId || undefined
-            }, { timeout: aiTimeout }); // Use configured timeout
-            const apiDuration = Date.now() - apiStartTime;
-            frontendLogger.info('[HomeAnalyze]', 'API response received, validating data', {
-                apiDuration
-            });
-
-            // Validate response data
-            if (!data || typeof data !== 'object') {
-                frontendLogger.error('[HomeAnalyze]', 'Validation failed - invalid response data', {
-                    data
-                });
-                throw new Error('Invalid API response: data is null or not an object');
-            }
-            frontendLogger.info('[HomeAnalyze]', 'Response data validated successfully');
-
-            frontendLogger.info('[HomeAnalyze]', 'Step 3/5: Setting processing state and progress to 100%');
-            setAnalysisStep('processing');
-            setProgress(100);
-            frontendLogger.info('[HomeAnalyze]', 'Progress updated to 100%');
-
-            frontendLogger.info('[HomeAnalyze]', 'Step 4/5: Setting parsed data and auto-selecting notebook');
-            const dataSize = JSON.stringify(data).length;
-            // Auto-select notebook based on subject
-            if (data.subject) {
-                const matchedNotebook = notebooks.find(n =>
-                    n.name.includes(data.subject!) || data.subject!.includes(n.name)
-                );
-                if (matchedNotebook) {
-                    setAutoSelectedNotebookId(matchedNotebook.id);
-                    frontendLogger.info('[HomeAnalyze]', 'Auto-selected notebook', {
-                        notebook: matchedNotebook.name,
-                        subject: data.subject
-                    });
-                }
-            }
-            const setDataStart = Date.now();
-            setParsedData(data);
-            const setDataDuration = Date.now() - setDataStart;
-            frontendLogger.info('[HomeAnalyze]', 'Parsed data set successfully', {
-                dataSize,
-                setDataDuration
-            });
-
-            frontendLogger.info('[HomeAnalyze]', 'Step 5/5: Switching to review page');
-            const setStepStart = Date.now();
-            setStep("review");
-            const setStepDuration = Date.now() - setStepStart;
-            frontendLogger.info('[HomeAnalyze]', 'Step switched to review', {
-                setStepDuration
-            });
-            const totalDuration = Date.now() - startTime;
-            frontendLogger.info('[HomeAnalyze]', 'Analysis completed successfully', {
-                totalDuration
-            });
-        } catch (error: any) {
-            const errorDuration = Date.now() - startTime;
-            frontendLogger.error('[HomeError]', 'Analysis failed', {
-                errorDuration,
-                error: error.message || String(error)
-            });
-
-            // 安全的错误处理逻辑，防止在报错时二次报错
-            try {
-                let errorMessage = t.common?.messages?.analysisFailed || 'Analysis failed, please try again';
-
-                // ApiError 的结构：error.data.message 包含后端返回的错误类型
-                const backendErrorType = error?.data?.message;
-
-                if (backendErrorType && typeof backendErrorType === 'string') {
-                    // 检查是否是已知的 AI 错误类型
-                    if (t.errors && typeof t.errors === 'object' && backendErrorType in t.errors) {
-                        const mappedError = (t.errors as any)[backendErrorType];
-                        if (typeof mappedError === 'string') {
-                            errorMessage = mappedError;
-                            frontendLogger.info('[HomeError]', `Matched error type: ${backendErrorType}`, {
-                                errorMessage
-                            });
-                        }
-                    } else {
-                        // 使用后端返回的具体错误消息
-                        errorMessage = backendErrorType;
-                        frontendLogger.info('[HomeError]', 'Using backend error message', {
-                            errorMessage
-                        });
-                    }
-                } else if (error?.message) {
-                    // Fallback：检查 error.message（用于非 API 错误）
-                    if (error.message.includes('fetch') || error.message.includes('network')) {
-                        errorMessage = t.errors?.AI_CONNECTION_FAILED || '网络连接失败';
-                    } else if (typeof error.data === 'string') {
-                        frontendLogger.info('[HomeError]', 'Raw error data', {
-                            errorDataPreview: error.data.substring(0, 100)
-                        });
-                        errorMessage += ` (${error.status || 'Error'})`;
-                    }
-                }
-
-                alert(errorMessage);
-            } catch (innerError) {
-                frontendLogger.error('[HomeError]', 'Failed to process error message', {
-                    innerError: String(innerError)
-                });
-                alert('Analysis failed. Please try again.');
+                originalImageBase64: originalImage,
+                questionText: extraText,
+                mode: aiMode,
+                review,
+                language,
+                subjectId: initialNotebookId || undefined,
+            }, { timeout: aiTimeout, signal: controller.signal });
+            if (controller.signal.aborted) return;
+            showAnalysis(result, originalImage, initialNotebookId || undefined);
+        } catch {
+            if (!controller.signal.aborted) {
+                setTaskStatus("解题未完成，请到我的AI任务查看详情；离开或刷新不会取消后台任务，不要连续重复提交。");
+                alert(t.common?.messages?.analysisFailed || "解题未完成，请到我的AI任务查看详情。");
             }
         } finally {
-            // Always reset analysis state, even if setState throws
-            frontendLogger.info('[HomeAnalyze]', 'Finally: Resetting analysis state to idle');
-            setAnalysisStep('idle');
-            frontendLogger.info('[HomeAnalyze]', 'Analysis state reset complete');
+            if (activeRequest.current === controller) {
+                activeRequest.current = null;
+                if (!controller.signal.aborted) setAnalysisStep("idle");
+            }
         }
     };
 
@@ -283,87 +279,41 @@ function HomeContent() {
             if (finalData.subjectId) {
                 router.push(`/notebooks/${finalData.subjectId}`);
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             frontendLogger.error('[HomeSave]', 'Save failed', {
-                errorStatus: error?.status,
-                errorMessage: error?.data?.message || error?.message || String(error),
-                errorData: error?.data,
+                errorStatus: error instanceof ApiError ? error.status : undefined,
             });
             alert(t.common?.messages?.saveFailed || 'Failed to save');
         }
     };
 
     const handleTextSubmit = async (questionText: string) => {
-        const startTime = Date.now();
-        frontendLogger.info('[HomeTextSubmit]', 'Starting text-based analysis', { textLength: questionText.length });
-
+        if (activeRequest.current || !questionText.trim()) return;
+        const controller = new AbortController();
+        activeRequest.current = controller;
+        setTaskId(null);
+        setTaskStatus("正在提交文字解题任务，请勿重复提交。");
         try {
-            setAnalysisStep('analyzing');
-
-            // Infer subject from auto-selected notebook
-            const targetNotebookId = initialNotebookId || autoSelectedNotebookId;
-            const matchedNotebook = targetNotebookId
-                ? notebooks.find(n => n.id === targetNotebookId)
-                : undefined;
-
-            const result = await apiClient.post<{
-                answerText: string;
-                analysis: string;
-                knowledgePoints: string[];
-                wrongAnswerText: string;
-                mistakeAnalysis: string;
-                mistakeStatus: string;
-            }>("/api/reanswer", {
+            setAnalysisStep("analyzing");
+            const result = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 questionText,
+                mode: "text",
+                review,
                 language,
-                subject: matchedNotebook?.name || undefined,
-            }, { timeout: aiTimeout });
-
-            setAnalysisStep('processing');
-            setProgress(100);
-
-            const parsed: ParsedQuestion = {
-                questionText,
-                answerText: result.answerText,
-                analysis: result.analysis,
-                knowledgePoints: result.knowledgePoints || [],
-                wrongAnswerText: result.wrongAnswerText || "",
-                mistakeAnalysis: result.mistakeAnalysis || "",
-                mistakeStatus: (result.mistakeStatus as any) || "unknown",
-                subject: "数学", // Default, will be overridden by notebook selection
-                requiresImage: false,
-            };
-
-            setCurrentImage(null); // No image for text input
-            setParsedData(parsed);
-            setStep("review");
-
-            const totalDuration = Date.now() - startTime;
-            frontendLogger.info('[HomeTextSubmit]', 'Text analysis completed', { totalDuration });
-        } catch (error: any) {
-            const errorDuration = Date.now() - startTime;
-            frontendLogger.error('[HomeTextSubmit]', 'Analysis failed', {
-                errorDuration,
-                error: error.message || String(error)
-            });
-
-            try {
-                let errorMessage = t.common?.messages?.analysisFailed || 'Analysis failed, please try again';
-                const backendErrorType = error?.data?.message;
-                if (backendErrorType && typeof backendErrorType === 'string') {
-                    if (t.errors && typeof t.errors === 'object' && backendErrorType in t.errors) {
-                        const mappedError = (t.errors as any)[backendErrorType];
-                        if (typeof mappedError === 'string') errorMessage = mappedError;
-                    } else {
-                        errorMessage = backendErrorType;
-                    }
-                }
-                alert(errorMessage);
-            } catch {
-                alert('Analysis failed. Please try again.');
+                subjectId: initialNotebookId || undefined,
+            }, { timeout: aiTimeout, signal: controller.signal });
+            if (controller.signal.aborted) return;
+            showAnalysis(result, null, initialNotebookId || undefined);
+        } catch {
+            if (!controller.signal.aborted) {
+                setTaskStatus("解题未完成，请到我的AI任务查看详情；不要连续重复提交。");
+                alert(t.common?.messages?.analysisFailed || "解题未完成，请到我的AI任务查看详情。");
             }
         } finally {
-            setAnalysisStep('idle');
+            if (activeRequest.current === controller) {
+                activeRequest.current = null;
+                if (!controller.signal.aborted) setAnalysisStep("idle");
+            }
         }
     };
 
@@ -412,10 +362,9 @@ function HomeContent() {
             if (data.subjectId) {
                 router.push(`/notebooks/${data.subjectId}`);
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             frontendLogger.error('[HomeDirectSave]', 'Save failed', {
-                errorStatus: error?.status,
-                errorMessage: error?.data?.message || error?.message || String(error),
+                errorStatus: error instanceof ApiError ? error.status : undefined,
             });
             setAnalysisStep('idle');
             alert(t.common?.messages?.saveFailed || 'Failed to save');
@@ -436,8 +385,7 @@ function HomeContent() {
     return (
         <main className="min-h-screen bg-background">
             <ProgressFeedback
-                status={analysisStep}
-                progress={progress}
+                status={analysisStep === "analyzing" ? "idle" : analysisStep}
                 message={getProgressMessage()}
             />
 
@@ -467,6 +415,7 @@ function HomeContent() {
                         size="lg"
                         className={`h-auto py-4 text-base shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : ""}`}
                         variant={step === "upload" ? "default" : "secondary"}
+                        disabled={analysisStep !== "idle"}
                         onClick={() => { setStep("upload"); setInputMode("image"); }}
                     >
                         <div className="flex items-center gap-2">
@@ -519,8 +468,24 @@ function HomeContent() {
                     )}
                 </div>
 
+                <section className="border rounded p-3 space-y-2" aria-label="AI任务状态">
+                    <div className="flex flex-wrap gap-4">
+                        <Link className="underline" href="/ai-tasks">我的AI任务（取回结果/取消）</Link>
+                        {taskId && <Link className="underline" href={`/?job=${encodeURIComponent(taskId)}`}>恢复本次任务</Link>}
+                    </div>
+                    <p role="status">{taskStatus}</p>
+                    <p className="text-sm">受理后的任务在后台继续运行，刷新或离开页面不等于取消。结果仅保留24小时，请及时取回。</p>
+                    <p className="text-sm">年级是讲解偏好，不是解题限制，正确性优先。请核对图形标注与AI结果。</p>
+                </section>
+
                 {step === "upload" && (
                     <div className="space-y-4">
+                        {inputMode !== "direct" && (
+                            <label className="block">
+                                <input type="checkbox" checked={review} disabled={analysisStep !== "idle"} onChange={e => setReview(e.target.checked)} />
+                                第二个AI独立复核（需链中至少两个可用模型，增加费用）
+                            </label>
+                        )}
                         {/* Input mode tabs */}
                         <div className="flex gap-2 border-b">
                             <button
@@ -529,6 +494,7 @@ function HomeContent() {
                                         ? "border-primary text-primary"
                                         : "border-transparent text-muted-foreground hover:text-foreground"
                                 }`}
+                                disabled={analysisStep !== "idle"}
                                 onClick={() => setInputMode("image")}
                             >
                                 <Upload className="h-4 w-4" />
@@ -540,6 +506,7 @@ function HomeContent() {
                                         ? "border-primary text-primary"
                                         : "border-transparent text-muted-foreground hover:text-foreground"
                                 }`}
+                                disabled={analysisStep !== "idle"}
                                 onClick={() => setInputMode("text")}
                             >
                                 <PenLine className="h-4 w-4" />
@@ -551,6 +518,7 @@ function HomeContent() {
                                         ? "border-primary text-primary"
                                         : "border-transparent text-muted-foreground hover:text-foreground"
                                 }`}
+                                disabled={analysisStep !== "idle"}
                                 onClick={() => setInputMode("direct")}
                             >
                                 <PenLine className="h-4 w-4" />
@@ -559,24 +527,34 @@ function HomeContent() {
                         </div>
 
                         {inputMode === "image" ? (
-                            <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
+                            <div className="space-y-3">
+                                <label className="block">图片处理方式
+                                    <select className="border rounded p-2 ml-2 bg-background" value={aiMode} disabled={analysisStep !== "idle"} onChange={e => setAiMode(e.target.value as "direct" | "transcribe")}>
+                                        <option value="direct">直接发图＋补充文字解题</option>
+                                        <option value="transcribe">先AI转录，再带原图解题（增加一次调用）</option>
+                                    </select>
+                                </label>
+                                <textarea className="w-full border rounded p-2 bg-background" aria-label="图片补充文字" placeholder="可选：补充题目文字、看不清的标注或你的疑问。图形仍会传给AI。" value={extraText} disabled={analysisStep !== "idle"} onChange={e => setExtraText(e.target.value)} />
+                                <p className="text-sm text-muted-foreground">裁剪后的原图最多8MiB，将保留供核对和保存；另传压缩副本用于解题。</p>
+                                <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
+                            </div>
                         ) : inputMode === "text" ? (
                             <TextInputZone
                                 onSubmit={handleTextSubmit}
                                 isAnalyzing={analysisStep !== 'idle'}
                                 defaultNotebookName={
-                                    (initialNotebookId || autoSelectedNotebookId)
-                                        ? notebooks.find(n => n.id === (initialNotebookId || autoSelectedNotebookId))?.name
+                                    selectedNotebookId
+                                        ? notebooks.find(n => n.id === selectedNotebookId)?.name
                                         : undefined
                                 }
                             />
                         ) : (
                             <DirectTextEditor
                                 onSubmit={handleDirectSave}
-                                defaultNotebookId={initialNotebookId || autoSelectedNotebookId || undefined}
+                                defaultNotebookId={selectedNotebookId || undefined}
                                 defaultNotebookName={
-                                    (initialNotebookId || autoSelectedNotebookId)
-                                        ? notebooks.find(n => n.id === (initialNotebookId || autoSelectedNotebookId))?.name
+                                    selectedNotebookId
+                                        ? notebooks.find(n => n.id === selectedNotebookId)?.name
                                         : undefined
                                 }
                                 isSaving={analysisStep === 'saving'}
@@ -600,7 +578,7 @@ function HomeContent() {
                         onSave={handleSave}
                         onCancel={() => setStep("upload")}
                         imagePreview={currentImage}
-                        initialSubjectId={initialNotebookId || autoSelectedNotebookId || undefined}
+                        initialSubjectId={selectedNotebookId || undefined}
                         aiTimeout={aiTimeout}
                     />
                 )}

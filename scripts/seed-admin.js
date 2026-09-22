@@ -3,7 +3,6 @@ const { hash } = require('bcryptjs');
 
 const DEFAULT_ADMIN = {
     email: 'admin@localhost',
-    password: '123456',
     name: 'Admin',
     role: 'admin',
     isActive: true,
@@ -11,29 +10,36 @@ const DEFAULT_ADMIN = {
     enrollmentYear: 2025,
 };
 
-async function seedAdmin({ prisma, hash: hashPassword }) {
-    const existingUser = await prisma.user.findUnique({
-        where: { email: DEFAULT_ADMIN.email },
-    });
+const INITIAL_ADMIN_GUIDANCE = 'For a new installation, set INITIAL_ADMIN_PASSWORD to a non-blank value of at least 12 characters and optionally set INITIAL_ADMIN_EMAIL. Resolve any existing non-admin account conflict manually.';
 
-    if (existingUser) {
-        await prisma.user.update({
-            where: { email: DEFAULT_ADMIN.email },
-            data: {
-                role: DEFAULT_ADMIN.role,
-                isActive: DEFAULT_ADMIN.isActive,
-                educationStage: existingUser.educationStage ?? DEFAULT_ADMIN.educationStage,
-                enrollmentYear: existingUser.enrollmentYear ?? DEFAULT_ADMIN.enrollmentYear,
-            },
-        });
-        return { action: 'updated', email: DEFAULT_ADMIN.email };
+async function seedAdmin({ prisma, hash: hashPassword, env = process.env }) {
+    // A disabled or renamed administrator still owns the installation. Never
+    // reset credentials, permissions, activation or education fields on restart.
+    const existingAdmin = await prisma.user.findFirst({
+        where: { role: DEFAULT_ADMIN.role },
+        select: { id: true },
+    });
+    if (existingAdmin) {
+        return { action: 'skipped' };
     }
 
-    const hashedPassword = await hashPassword(DEFAULT_ADMIN.password, 12);
+    const password = env.INITIAL_ADMIN_PASSWORD;
+    if (typeof password !== 'string' || password.length < 12 || !password.trim()) {
+        throw new Error(INITIAL_ADMIN_GUIDANCE);
+    }
+    const email = env.INITIAL_ADMIN_EMAIL?.trim() || DEFAULT_ADMIN.email;
+    const existingUser = await prisma.user.findUnique({
+        where: { email },
+        select: { id: true },
+    });
+    if (existingUser) {
+        throw new Error('Initial administrator bootstrap refused: the selected account already exists. Resolve the account conflict manually; no permissions were changed.');
+    }
 
+    const hashedPassword = await hashPassword(password, 12);
     await prisma.user.create({
         data: {
-            email: DEFAULT_ADMIN.email,
+            email,
             password: hashedPassword,
             name: DEFAULT_ADMIN.name,
             role: DEFAULT_ADMIN.role,
@@ -43,7 +49,7 @@ async function seedAdmin({ prisma, hash: hashPassword }) {
         },
     });
 
-    return { action: 'created', email: DEFAULT_ADMIN.email };
+    return { action: 'created' };
 }
 
 async function main() {
@@ -53,10 +59,8 @@ async function main() {
         const result = await seedAdmin({ prisma, hash });
         if (result.action === 'created') {
             console.log('Success! Admin user created.');
-            console.log(`Email: ${result.email}`);
-            console.log(`Password: ${DEFAULT_ADMIN.password}`);
         } else {
-            console.log('Admin user already exists. Updated defaults.');
+            console.log('An administrator already exists. No changes made.');
         }
     } finally {
         await prisma.$disconnect();
@@ -64,9 +68,10 @@ async function main() {
 }
 
 if (require.main === module) {
-    main().catch((error) => {
-        console.error(error);
-        process.exit(1);
+    main().catch(() => {
+        // Database and hashing errors may contain credentials or account data.
+        console.error(`Admin initialization failed. ${INITIAL_ADMIN_GUIDANCE}`);
+        process.exitCode = 1;
     });
 }
 

@@ -8,7 +8,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
     mockPrismaErrorItem: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
     },
+    mockPrismaUser: { findUnique: vi.fn() },
+    mockPrismaSubject: { findFirst: vi.fn() },
+    mockSubmitJob: vi.fn(),
     mockPrismaPracticeRecord: {
         create: vi.fn(),
     },
@@ -29,9 +33,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/prisma', () => ({
     prisma: {
         errorItem: mocks.mockPrismaErrorItem,
+        user: mocks.mockPrismaUser,
+        subject: mocks.mockPrismaSubject,
         practiceRecord: mocks.mockPrismaPracticeRecord,
     },
 }));
+
+// Keep enqueue/auth/schema real; isolate durable storage, not the route itself.
+vi.mock('@/lib/ai-jobs/store', () => ({ submitJob: mocks.mockSubmitJob }));
 
 // Mock AI service
 vi.mock('@/lib/ai', () => ({
@@ -58,321 +67,162 @@ describe('/api/practice', () => {
         vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
     });
 
-    describe('POST /api/practice/generate (生成类似题目)', () => {
+    describe('POST /api/practice/generate (202持久任务契约)', () => {
+        const IMAGE = 'data:image/png;base64,AQID';
         const mockErrorItem = {
-            id: 'error-item-1',
-            questionText: '求解 x + 2 = 5',
+            id: 'error-item-1', userId: 'user-123',
+            questionText: '求解 x + 2 = 5', answerText: 'x = 3', analysis: '移项求解',
             knowledgePoints: '["一元一次方程", "移项"]',
-            subject: { id: 'math', name: '数学' },
+            subject: { id: 'math', name: '数学' }, gradeSemester: '初二上',
+            originalImageUrl: IMAGE,
         };
-
-        it('应该成功生成类似题目', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(mockErrorItem);
-            const aiResult = {
-                questionText: '求解 2x - 3 = 7',
-                answerText: 'x = 5',
-                analysis: '移项得 2x = 10, x = 5',
-                knowledgePoints: ['一元一次方程'],
-                subject: '数学',
-            };
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue(aiResult);
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                    difficulty: 'medium',
-                }),
-                headers: { 'Content-Type': 'application/json' },
+        function generateRequest(body: unknown, headers: Record<string, string> = {}) {
+            return new Request('http://localhost/api/practice/generate', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-request-id': 'practice-request-1', ...headers },
+                body: JSON.stringify(body),
             });
-
-            const response = await GENERATE_POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.questionText).toBe('求解 2x - 3 = 7');
-            expect(data.subject).toBe('数学');
+        }
+        beforeEach(() => {
+            mocks.mockPrismaUser.findUnique.mockReset().mockResolvedValue({
+                id: 'user-123', role: 'user', isActive: true,
+                educationStage: null, enrollmentYear: null,
+            });
+            mocks.mockPrismaErrorItem.findFirst.mockReset().mockResolvedValue(mockErrorItem);
+            mocks.mockPrismaSubject.findFirst.mockReset();
+            mocks.mockSubmitJob.mockReset().mockResolvedValue({ id: 'job-practice-1', state: 'pending' });
+            mocks.mockAIService.generateSimilarQuestion.mockReset();
         });
 
-        it('应该支持不同难度级别', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(mockErrorItem);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '简单题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
+        it('返回202任务地址，提交阶段不直接调用AI生成题目', async () => {
+            const response = await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1' }));
+            expect(response.status).toBe(202);
+            expect(response.headers.get('Cache-Control')).toBe('no-store');
+            expect(await response.json()).toEqual({
+                jobId: 'job-practice-1', state: 'pending', statusUrl: '/api/ai/jobs/job-practice-1',
             });
-
-            const difficulties = ['easy', 'medium', 'hard', 'harder'];
-
-            for (const difficulty of difficulties) {
-                const request = new Request('http://localhost/api/practice/generate', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        errorItemId: 'error-item-1',
-                        language: 'zh',
-                        difficulty,
-                    }),
-                    headers: { 'Content-Type': 'application/json' },
-                });
-
-                const response = await GENERATE_POST(request);
-                expect(response.status).toBe(200);
-            }
-
-            // 验证 AI 服务被调用时使用了不同难度
-            expect(mocks.mockAIService.generateSimilarQuestion).toHaveBeenCalledTimes(4);
+            expect(mocks.mockSubmitJob).toHaveBeenCalledExactlyOnceWith('user-123', 'practice',
+                expect.objectContaining({
+                    errorItemId: 'error-item-1', questionText: mockErrorItem.questionText,
+                    answerText: 'x = 3', analysis: '移项求解', subject: '数学', gradeSemester: '初二上',
+                    tags: ['一元一次方程', '移项'], imageBase64: IMAGE, difficulty: 'medium', language: 'zh',
+                }), 'practice-request-1');
+            expect(mocks.mockAIService.generateSimilarQuestion).not.toHaveBeenCalled();
+            expect(mocks.mockPrismaUser.findUnique).toHaveBeenCalledWith({
+                where: { id: 'user-123' }, select: { id: true, role: true, isActive: true },
+            });
         });
 
-        it('应该默认使用 medium 难度', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(mockErrorItem);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
+        it('错题查询限定owner，不采用客户端伪造的userId', async () => {
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', userId: 'other-user' }))).status).toBe(202);
+            expect(mocks.mockPrismaErrorItem.findFirst).toHaveBeenCalledExactlyOnceWith({
+                where: { id: 'error-item-1', userId: 'user-123' }, include: { subject: true },
             });
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                    // 不指定 difficulty
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            await GENERATE_POST(request);
-
-            expect(mocks.mockAIService.generateSimilarQuestion).toHaveBeenCalledWith(
-                expect.any(String),
-                expect.any(Array),
-                'zh',
-                'medium', // 默认难度
-                undefined
-            );
+            expect(mocks.mockPrismaErrorItem.findUnique).not.toHaveBeenCalled();
+            const [owner, , input] = mocks.mockSubmitJob.mock.calls[0];
+            expect(owner).toBe('user-123');
+            expect(input).not.toHaveProperty('userId');
         });
 
-        it('应该返回 404 当错题不存在', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(null);
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'not-exist',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await GENERATE_POST(request);
-            const data = await response.json();
-
+        it('不存在或不属于用户的错题均返回404，不泄露题目', async () => {
+            mocks.mockPrismaErrorItem.findFirst.mockResolvedValue(null);
+            const response = await GENERATE_POST(generateRequest({ errorItemId: 'foreign-item' }));
             expect(response.status).toBe(404);
-            expect(data.message).toBe('Item not found');
+            expect(await response.json()).toEqual({ message: 'NOT_FOUND' });
+            expect(mocks.mockSubmitJob).not.toHaveBeenCalled();
         });
 
-        it('应该正确解析知识点标签', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(mockErrorItem);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: ['一元一次方程'],
-            });
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            await GENERATE_POST(request);
-
-            expect(mocks.mockAIService.generateSimilarQuestion).toHaveBeenCalledWith(
-                '求解 x + 2 = 5',
-                ['一元一次方程', '移项'], // 解析后的标签数组
-                'zh',
-                'medium',
-                undefined
-            );
+        it.each([{}, { errorItemId: 123 }])('缺少或无效错题id返回400：%j', async (body) => {
+            expect((await GENERATE_POST(generateRequest(body))).status).toBe(400);
+            expect(mocks.mockPrismaErrorItem.findFirst).not.toHaveBeenCalled();
+            expect(mocks.mockSubmitJob).not.toHaveBeenCalled();
         });
 
-        it('应该处理无效的知识点 JSON', async () => {
-            const errorItemWithInvalidTags = {
-                ...mockErrorItem,
-                knowledgePoints: 'invalid json{',
+        it.each(['easy', 'medium', 'hard', 'harder'])('保留目标难度%s', async (difficulty) => {
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', difficulty }))).status).toBe(202);
+            expect(mocks.mockSubmitJob).toHaveBeenCalledWith('user-123', 'practice',
+                expect.objectContaining({ difficulty }), 'practice-request-1');
+        });
+
+        it('保留英文与用户校正文本，使用错题保存的年级和知识点', async () => {
+            const body = {
+                errorItemId: 'error-item-1', language: 'en', questionText: 'Corrected question',
+                gradeSemester: '高三', subject: '伪造学科', tags: ['伪造标签'],
             };
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithInvalidTags);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
-            });
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await GENERATE_POST(request);
-
-            expect(response.status).toBe(200);
-            // 应该使用空数组作为标签
-            expect(mocks.mockAIService.generateSimilarQuestion).toHaveBeenCalledWith(
-                expect.any(String),
-                [], // 空数组
-                'zh',
-                'medium',
-                undefined
-            );
+            expect((await GENERATE_POST(generateRequest(body))).status).toBe(202);
+            expect(mocks.mockSubmitJob).toHaveBeenCalledWith('user-123', 'practice', expect.objectContaining({
+                language: 'en', questionText: 'Corrected question', subject: '数学',
+                gradeSemester: '初二上', tags: ['一元一次方程', '移项'],
+            }), 'practice-request-1');
         });
 
-        it('应该处理空的知识点', async () => {
-            const errorItemWithNoTags = {
-                ...mockErrorItem,
-                knowledgePoints: null,
-            };
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithNoTags);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
-            });
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await GENERATE_POST(request);
-
-            expect(response.status).toBe(200);
+        it('显式图片和原图保留，不能丢弃为纯文字任务', async () => {
+            const image = 'data:image/jpeg;base64,BAUG';
+            const body = { errorItemId: 'error-item-1', imageBase64: image, originalImageBase64: IMAGE };
+            expect((await GENERATE_POST(generateRequest(body))).status).toBe(202);
+            expect(mocks.mockSubmitJob).toHaveBeenCalledWith('user-123', 'practice',
+                expect.objectContaining(body), 'practice-request-1');
         });
 
-        it('应该从数据库获取正确的学科', async () => {
-            const errorItemWithPhysics = {
-                ...mockErrorItem,
-                subject: { id: 'physics', name: '物理' },
-            };
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithPhysics);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '物理题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
-                subject: undefined, // AI 返回的可能没有学科
-            });
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await GENERATE_POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.subject).toBe('物理'); // 应该从数据库注入
+        it('原错题没有图片时可以提交纯文字练习', async () => {
+            mocks.mockPrismaErrorItem.findFirst.mockResolvedValue({ ...mockErrorItem, originalImageUrl: null });
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', mode: 'text' }))).status).toBe(202);
+            expect(mocks.mockSubmitJob.mock.calls[0][2].imageBase64).toBeUndefined();
         });
 
-        it('应该处理未知学科为"其他"', async () => {
-            const errorItemWithUnknownSubject = {
-                ...mockErrorItem,
-                subject: { id: 'unknown', name: '未知学科' },
-            };
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithUnknownSubject);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
-            });
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await GENERATE_POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.subject).toBe('其他');
+        it('已有几何图不能被mode=text静默丢弃', async () => {
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', mode: 'text' }))).status).toBe(400);
+            expect(mocks.mockSubmitJob).not.toHaveBeenCalled();
         });
 
-        it('应该处理没有关联学科的错题', async () => {
-            const errorItemWithNoSubject = {
-                ...mockErrorItem,
-                subject: null,
-            };
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(errorItemWithNoSubject);
-            mocks.mockAIService.generateSimilarQuestion.mockResolvedValue({
-                questionText: '题目',
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
-            });
-
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await GENERATE_POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.subject).toBe('其他');
+        it.each(['invalid json', '', null])('损坏或空知识点回退为空标签：%j', async (knowledgePoints) => {
+            mocks.mockPrismaErrorItem.findFirst.mockResolvedValue({ ...mockErrorItem, knowledgePoints });
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1' }))).status).toBe(202);
+            expect(mocks.mockSubmitJob.mock.calls[0][2].tags).toEqual([]);
         });
 
-        it('应该处理 AI 服务错误', async () => {
-            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue(mockErrorItem);
-            mocks.mockAIService.generateSimilarQuestion.mockRejectedValue(
-                new Error('AI service unavailable')
-            );
+        it('没有关联学科时不伪造学科名称', async () => {
+            mocks.mockPrismaErrorItem.findFirst.mockResolvedValue({ ...mockErrorItem, subject: null });
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1' }))).status).toBe(202);
+            expect(mocks.mockSubmitJob.mock.calls[0][2].subject).toBeUndefined();
+        });
 
-            const request = new Request('http://localhost/api/practice/generate', {
-                method: 'POST',
-                body: JSON.stringify({
-                    errorItemId: 'error-item-1',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
+        it('显式subjectId同样按用户权限校验', async () => {
+            mocks.mockPrismaSubject.findFirst.mockResolvedValue({ name: '物理' });
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', subjectId: 'physics-1' }))).status).toBe(202);
+            expect(mocks.mockPrismaSubject.findFirst).toHaveBeenCalledWith({ where: { id: 'physics-1', userId: 'user-123' } });
+            expect(mocks.mockSubmitJob.mock.calls[0][2].subject).toBe('物理');
+        });
 
-            const response = await GENERATE_POST(request);
-            const data = await response.json();
+        it('其他用户的学科不能被关联到任务', async () => {
+            mocks.mockPrismaSubject.findFirst.mockResolvedValue(null);
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', subjectId: 'foreign-subject' }))).status).toBe(404);
+            expect(mocks.mockSubmitJob).not.toHaveBeenCalled();
+        });
 
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('AI service unavailable');
+        it('未登录返回401，不查询错题或入队', async () => {
+            vi.mocked(getServerSession).mockResolvedValue(null);
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1' }))).status).toBe(401);
+            expect(mocks.mockPrismaErrorItem.findFirst).not.toHaveBeenCalled();
+            expect(mocks.mockSubmitJob).not.toHaveBeenCalled();
+        });
+
+        it.each([null, { id: 'user-123', role: 'admin', isActive: false }])('实时停用/删除用户被拒绝：%j', async (user) => {
+            mocks.mockPrismaUser.findUnique.mockResolvedValue(user);
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1' }))).status).toBe(403);
+            expect(mocks.mockPrismaErrorItem.findFirst).not.toHaveBeenCalled();
+            expect(mocks.mockSubmitJob).not.toHaveBeenCalled();
+        });
+
+        it('跨站请求返回403', async () => {
+            expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1' }, { origin: 'https://untrusted.example' }))).status).toBe(403);
+            expect(mocks.mockSubmitJob).not.toHaveBeenCalled();
+        });
+
+        it.each([['AI_QUEUE_FULL', 429], ['REQUEST_CONFLICT', 409]])('队列拒绝%s返回%d，而非同步AI错误', async (code, status) => {
+            mocks.mockSubmitJob.mockRejectedValue(new Error(code));
+            const response = await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1' }));
+            expect(response.status).toBe(status);
+            expect(await response.json()).toEqual({ message: code });
         });
     });
 

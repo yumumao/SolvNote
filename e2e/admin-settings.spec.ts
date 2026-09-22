@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
 
+// Seed and login must use the same explicit test-only credential; no weak fallback.
+const adminPassword = process.env.INITIAL_ADMIN_PASSWORD ?? '';
+if (adminPassword.length < 12) {
+    throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
+}
+
 test('Admin can configure OpenAI settings with multi-instance support', async ({ page }) => {
     // 增加测试超时时间
     test.setTimeout(60000);
@@ -7,7 +13,7 @@ test('Admin can configure OpenAI settings with multi-instance support', async ({
     // 1. Login as Admin
     await page.goto('/login');
     await page.locator('input[name="email"]').fill('admin@localhost');
-    await page.locator('input[name="password"]').fill('123456');
+    await page.locator('input[name="password"]').fill(adminPassword);
     await page.locator('button[type="submit"]').click();
 
     // Wait for login to complete

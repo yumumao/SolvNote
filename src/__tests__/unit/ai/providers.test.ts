@@ -127,8 +127,9 @@ describe('AI Provider 初始化', () => {
     });
 
     describe('AI Service Factory', () => {
-        it('应该根据配置返回 OpenAI Provider', async () => {
+        it('旧OpenAI配置也返回ManagedAIService', async () => {
             const { getAIService } = await import('@/lib/ai');
+            const { ManagedAIService } = await import('@/lib/ai/managed-service');
             vi.mocked(getAppConfig).mockReturnValue({
                 aiProvider: 'openai',
                 openai: {
@@ -148,11 +149,12 @@ describe('AI Provider 初始化', () => {
             const service = getAIService();
 
             expect(service).toBeDefined();
-            expect(service.constructor.name).toBe('OpenAIProvider');
+            expect(service).toBeInstanceOf(ManagedAIService);
         });
 
-        it('应该根据配置返回 Gemini Provider', async () => {
+        it('旧Gemini配置也返回ManagedAIService', async () => {
             const { getAIService } = await import('@/lib/ai');
+            const { ManagedAIService } = await import('@/lib/ai/managed-service');
             vi.mocked(getAppConfig).mockReturnValue({
                 aiProvider: 'gemini',
                 gemini: { apiKey: 'test-gemini-key', model: 'gemini-2.0-flash' },
@@ -162,11 +164,12 @@ describe('AI Provider 初始化', () => {
             const service = getAIService();
 
             expect(service).toBeDefined();
-            expect(service.constructor.name).toBe('GeminiProvider');
+            expect(service).toBeInstanceOf(ManagedAIService);
         });
 
-        it('配置未知 provider 时应该默认返回 Gemini Provider', async () => {
+        it('未知旧provider不再回退Gemini，仍返回ManagedAIService', async () => {
             const { getAIService } = await import('@/lib/ai');
+            const { ManagedAIService } = await import('@/lib/ai/managed-service');
             vi.mocked(getAppConfig).mockReturnValue({
                 aiProvider: 'unknown',
                 gemini: { apiKey: 'test-gemini-key' },
@@ -175,7 +178,7 @@ describe('AI Provider 初始化', () => {
             const service = getAIService();
 
             expect(service).toBeDefined();
-            expect(service.constructor.name).toBe('GeminiProvider');
+            expect(service).toBeInstanceOf(ManagedAIService);
         });
     });
 });

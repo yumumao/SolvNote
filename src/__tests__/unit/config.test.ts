@@ -7,32 +7,50 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-// Mock fs module
-vi.mock('fs', () => ({
-    default: {
+// Never read real configuration or send fixture contents to the application logger.
+vi.mock('fs', () => {
+    const filesystem = {
         existsSync: vi.fn(),
         readFileSync: vi.fn(),
         writeFileSync: vi.fn(),
-    },
-    existsSync: vi.fn(),
-    readFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-}));
+        mkdirSync: vi.fn(),
+    };
+    return { default: filesystem, ...filesystem };
+});
 
-// Store original env
-const originalEnv = { ...process.env };
+const loggerMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }));
+vi.mock('@/lib/logger', () => ({ createLogger: () => loggerMock }));
+
+const configEnvKeys = [
+    'AI_PROVIDER', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL',
+    'GOOGLE_API_KEY', 'GEMINI_BASE_URL', 'GEMINI_MODEL',
+    'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT',
+    'AZURE_OPENAI_API_VERSION', 'AZURE_OPENAI_MODEL',
+] as const;
+
+const legacyConfig = {
+    aiProvider: 'openai',
+    allowRegistration: false,
+    openai: {
+        apiKey: ['synthetic', 'legacy', 'credential'].join('-'),
+        baseUrl: 'https://legacy.example.test/v1',
+        model: 'synthetic-model',
+    },
+    prompts: { analyze: 'synthetic prompt' },
+    timeouts: { analyze: 90000 },
+};
 
 describe('config module', () => {
     beforeEach(() => {
-        vi.clearAllMocks();
-        // Reset environment variables
-        process.env = { ...originalEnv };
+        vi.resetAllMocks();
+        // Each import sees only synthetic configuration, never host AI credentials.
+        for (const key of configEnvKeys) vi.stubEnv(key, undefined);
         // Clear module cache to re-import with fresh state
         vi.resetModules();
     });
 
     afterEach(() => {
-        process.env = originalEnv;
+        vi.unstubAllEnvs();
     });
 
     describe('getAppConfig', () => {
@@ -99,13 +117,18 @@ describe('config module', () => {
 
         it('应该在配置文件解析失败时返回默认值', async () => {
             vi.mocked(fs.existsSync).mockReturnValue(true);
-            vi.mocked(fs.readFileSync).mockReturnValue('invalid json{');
+            vi.mocked(fs.readFileSync).mockReturnValue(
+                JSON.stringify(legacyConfig).slice(0, -1)
+            );
 
             const { getAppConfig } = await import('@/lib/config');
             const config = getAppConfig();
 
-            // 应该回退到默认配置
-            expect(config.aiProvider).toBeDefined();
+            // Parsing errors can contain source snippets: log only a fixed message.
+            expect(config.aiProvider).toBe('gemini');
+            expect(loggerMock.error.mock.calls).toEqual([['Failed to read config file']]);
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+            expect(fs.mkdirSync).not.toHaveBeenCalled();
         });
 
         it('应该使用环境变量的模型名称', async () => {
@@ -135,7 +158,136 @@ describe('config module', () => {
         });
     });
 
+    describe('legacy read safety', () => {
+        it('应该仅在内存迁移旧版 flat 配置并保留其他字段', async () => {
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(legacyConfig));
+
+            const { getAppConfig } = await import('@/lib/config');
+            const config = getAppConfig();
+            const instance = config.openai?.instances?.[0];
+
+            expect(config.openai?.instances).toHaveLength(1);
+            expect(instance).toEqual({ ...legacyConfig.openai, id: expect.any(String), name: 'Default' });
+            expect(instance?.id).not.toBe('');
+            expect(config.openai?.activeInstanceId).toBe(instance?.id);
+            expect(config).toMatchObject({
+                aiProvider: 'openai',
+                allowRegistration: false,
+                prompts: legacyConfig.prompts,
+                timeouts: legacyConfig.timeouts,
+            });
+            expect(config.gemini).toBeDefined();
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+            expect(fs.mkdirSync).not.toHaveBeenCalled();
+            expect(loggerMock.error).not.toHaveBeenCalled();
+        });
+
+        it('重复读取旧 JSON 不应修改模拟磁盘中的原文件', async () => {
+            const originalJson = JSON.stringify(legacyConfig);
+            let storedJson = originalJson;
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockImplementation(() => storedJson);
+            vi.mocked(fs.writeFileSync).mockImplementation((_file, content) => {
+                storedJson = String(content);
+            });
+
+            const { getAppConfig } = await import('@/lib/config');
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const config = getAppConfig();
+                expect(config.openai?.instances).toHaveLength(1);
+                expect(config.openai?.activeInstanceId).toBe(config.openai?.instances?.[0]?.id);
+            }
+
+            expect(storedJson).toBe(originalJson);
+            expect(fs.readFileSync).toHaveBeenCalledTimes(2);
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+            expect(fs.mkdirSync).not.toHaveBeenCalled();
+        });
+
+        it('只读文件系统仍应返回内存迁移结果而非回退默认值', async () => {
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(legacyConfig));
+            vi.mocked(fs.writeFileSync).mockImplementation(() => {
+                throw new Error('Synthetic read-only filesystem');
+            });
+
+            const { getAppConfig } = await import('@/lib/config');
+            const config = getAppConfig();
+
+            expect(config.aiProvider).toBe('openai');
+            expect(config.openai?.instances?.[0]).toMatchObject(legacyConfig.openai);
+            expect(loggerMock.error).not.toHaveBeenCalled();
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+        });
+
+        it('无凭据的旧格式应保留空配置且不写盘', async () => {
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ openai: { apiKey: '' } }));
+
+            const { getAppConfig } = await import('@/lib/config');
+
+            expect(getAppConfig().openai).toEqual({ instances: [], activeInstanceId: undefined });
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+        });
+
+        it('内存迁移仍应补齐旧配置的默认 URL 和模型', async () => {
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+                openai: { apiKey: legacyConfig.openai.apiKey },
+            }));
+
+            const { getAppConfig } = await import('@/lib/config');
+
+            expect(getAppConfig().openai?.instances?.[0]).toMatchObject({
+                apiKey: legacyConfig.openai.apiKey,
+                baseUrl: 'https://api.openai.com/v1',
+                model: 'gpt-4o',
+            });
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+        });
+
+        it('读取旧格式的激活实例也不应写盘', async () => {
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(legacyConfig));
+
+            const { getActiveOpenAIConfig } = await import('@/lib/config');
+
+            expect(getActiveOpenAIConfig()).toMatchObject(legacyConfig.openai);
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+        });
+
+        it('读取异常应回退默认值且日志不含原始异常或内容', async () => {
+            const readError = new Error(JSON.stringify(legacyConfig));
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockImplementation(() => { throw readError; });
+
+            const { getAppConfig } = await import('@/lib/config');
+
+            expect(getAppConfig().aiProvider).toBe('gemini');
+            expect(loggerMock.error.mock.calls).toEqual([['Failed to read config file']]);
+            expect(fs.writeFileSync).not.toHaveBeenCalled();
+        });
+    });
+
     describe('updateAppConfig', () => {
+        it('显式更新旧格式应只写一次并保存内存迁移及合并结果', async () => {
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(legacyConfig));
+
+            const { updateAppConfig } = await import('@/lib/config');
+            const result = updateAppConfig({ prompts: { similar: 'synthetic update' } });
+
+            expect(result.openai?.instances?.[0]).toMatchObject(legacyConfig.openai);
+            expect(result.openai?.activeInstanceId).toBe(result.openai?.instances?.[0]?.id);
+            expect(result.allowRegistration).toBe(false);
+            expect(result.prompts).toEqual({ ...legacyConfig.prompts, similar: 'synthetic update' });
+            expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+            expect(fs.writeFileSync).toHaveBeenCalledWith(
+                path.join(process.cwd(), 'config', 'app-config.json'),
+                JSON.stringify(result, null, 2)
+            );
+        });
         it('应该成功写入配置文件', async () => {
             vi.mocked(fs.existsSync).mockReturnValue(false);
             vi.mocked(fs.writeFileSync).mockImplementation(() => { });
@@ -172,13 +324,19 @@ describe('config module', () => {
 
         it('应该在写入失败时抛出错误', async () => {
             vi.mocked(fs.existsSync).mockReturnValue(false);
-            vi.mocked(fs.writeFileSync).mockImplementation(() => {
-                throw new Error('Permission denied');
-            });
+            const writeError = new Error(JSON.stringify(legacyConfig));
+            vi.mocked(fs.writeFileSync).mockImplementation(() => { throw writeError; });
 
             const { updateAppConfig } = await import('@/lib/config');
+            let caught: unknown;
+            try {
+                updateAppConfig({ aiProvider: 'openai' });
+            } catch (error) {
+                caught = error;
+            }
 
-            expect(() => updateAppConfig({ aiProvider: 'openai' })).toThrow();
+            expect(caught).toBe(writeError);
+            expect(loggerMock.error.mock.calls).toEqual([['Failed to write config file']]);
         });
 
         it('应该更新提示词配置', async () => {

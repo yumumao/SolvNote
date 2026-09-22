@@ -1,80 +1,41 @@
-type RequestOptions = RequestInit & {
-    params?: Record<string, string>;
-    timeout?: number; // 超时时间（毫秒），默认 60000
-};
-
-export class ApiError extends Error {
-    constructor(public status: number, public statusText: string, public data: unknown) {
-        super(`API Error: ${status} ${statusText}`);
-        this.name = 'ApiError';
-    }
+type RequestOptions=RequestInit&{params?:Record<string,string>;timeout?:number};
+export class ApiError extends Error{constructor(public status:number,public statusText:string,public data:unknown){super(`API Error: ${status} ${statusText}`);this.name='ApiError'}}
+export async function waitForAIJob<T>(id:string,signal?:AbortSignal):Promise<T>{
+ if(!/^[a-zA-Z0-9_-]+$/.test(id))throw new ApiError(400,'Invalid job',{});
+ const deadline=Date.now()+24*60*60*1000;
+ while(Date.now()<deadline){
+ if(signal?.aborted)throw new ApiError(499,'Polling stopped',{message:'AI_POLLING_STOPPED_JOB_CONTINUES',jobId:id});
+ const job=await request<{state:string;result:T;errorCode?:string}>(`/api/ai/jobs/${id}`,{signal,timeout:30000});
+ if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('ai-job-progress',{detail:{id,state:job.state}}));
+ if(job.state==='success')return job.result;
+ if(['failed','cancelled','unknown'].includes(job.state))throw new ApiError(422,'AI task stopped',{message:job.errorCode||`AI_${job.state.toUpperCase()}`,jobId:id});
+ await new Promise(r=>setTimeout(r,2000));
+ }
+ throw new ApiError(408,'Task expired',{message:'AI_JOB_EXPIRED',jobId:id});
 }
-
-async function request<T>(url: string, options: RequestOptions = {}): Promise<T> {
-    const { params, headers, timeout = 60000, ...rest } = options;
-
-    let finalUrl = url;
-    if (params) {
-        const searchParams = new URLSearchParams(params);
-        finalUrl += `?${searchParams.toString()}`;
-    }
-
-    const defaultHeaders: HeadersInit = {
-        'Content-Type': 'application/json',
-    };
-
-    // 创建 AbortController 用于超时控制
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-    try {
-        const res = await fetch(finalUrl, {
-            headers: {
-                ...defaultHeaders,
-                ...headers,
-            },
-            signal: controller.signal,
-            ...rest,
-        });
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-            let errorData;
-            try {
-                errorData = await res.json();
-            } catch {
-                errorData = await res.text();
-            }
-            throw new ApiError(res.status, res.statusText, errorData);
-        }
-
-        // Handle empty responses (e.g. 204 No Content)
-        if (res.status === 204) {
-            return {} as T;
-        }
-
-        try {
-            return await res.json();
-        } catch {
-            // If JSON parse fails but response was OK, return text or empty object?
-            // For now, assume JSON APIs.
-            return {} as T;
-        }
-    } catch (error) {
-        clearTimeout(timeoutId);
-        if (error instanceof Error && error.name === 'AbortError') {
-            throw new ApiError(408, 'Request Timeout', {
-                message: 'AI_TIMEOUT_ERROR'
-            });
-        }
-        throw error;
-    }
+async function request<T>(url:string,options:RequestOptions={}):Promise<T>{
+ const {params,headers,timeout=60000,signal:callerSignal,...rest}=options;
+ const finalUrl=params?`${url}?${new URLSearchParams(params)}`:url;
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeout);
+ const mergedHeaders=new Headers(headers);if(!mergedHeaders.has('Content-Type'))mergedHeaders.set('Content-Type','application/json');
+ if(rest.method==='POST'&&!mergedHeaders.has('X-Request-ID'))mergedHeaders.set('X-Request-ID',crypto.randomUUID());
+ try{
+ const res=await fetch(finalUrl,{...rest,headers:mergedHeaders,signal:callerSignal?AbortSignal.any([callerSignal,controller.signal]):controller.signal});
+ const text=await res.text();let data:unknown;try{data=text?JSON.parse(text):{}}catch{data=text}
+ clearTimeout(timer);
+ if(!res.ok)throw new ApiError(res.status,res.statusText,data);
+ if(res.status===202){
+ const accepted=data as {jobId:string};if(!accepted.jobId)throw new ApiError(502,'Invalid task response',{});
+ if(typeof window!=='undefined'){try{localStorage.setItem('last-ai-job',accepted.jobId)}catch{}window.dispatchEvent(new CustomEvent('ai-job-progress',{detail:{id:accepted.jobId,state:'pending'}}))}
+ return await waitForAIJob<T>(accepted.jobId,callerSignal||undefined);
+ }
+ return data as T;
+ }catch(e){if(e instanceof Error&&e.name==='AbortError')throw new ApiError(408,'Request Timeout',{message:'AI_REQUEST_TIMEOUT_CHECK_TASKS'});throw e}finally{clearTimeout(timer)}
 }
-
-export const apiClient = {
-    get: <T>(url: string, options?: RequestOptions) => request<T>(url, { ...options, method: 'GET' }),
-    post: <TResponse, TBody = any>(url: string, body: TBody, options?: RequestOptions) => request<TResponse>(url, { ...options, method: 'POST', body: JSON.stringify(body) }),
-    put: <TResponse, TBody = any>(url: string, body: TBody, options?: RequestOptions) => request<TResponse>(url, { ...options, method: 'PUT', body: JSON.stringify(body) }),
-    patch: <TResponse, TBody = any>(url: string, body: TBody, options?: RequestOptions) => request<TResponse>(url, { ...options, method: 'PATCH', body: JSON.stringify(body) }),
-    delete: <T>(url: string, options?: RequestOptions) => request<T>(url, { ...options, method: 'DELETE' }),
+export const apiClient={
+ get:<T>(url:string,options?:RequestOptions)=>request<T>(url,{...options,method:'GET'}),
+ post:<TResponse,TBody=unknown>(url:string,body:TBody,options?:RequestOptions)=>request<TResponse>(url,{...options,method:'POST',body:JSON.stringify(body)}),
+ put:<TResponse,TBody=unknown>(url:string,body:TBody,options?:RequestOptions)=>request<TResponse>(url,{...options,method:'PUT',body:JSON.stringify(body)}),
+ patch:<TResponse,TBody=unknown>(url:string,body:TBody,options?:RequestOptions)=>request<TResponse>(url,{...options,method:'PATCH',body:JSON.stringify(body)}),
+ delete:<T>(url:string,options?:RequestOptions)=>request<T>(url,{...options,method:'DELETE'}),
 };

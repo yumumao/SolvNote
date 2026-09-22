@@ -1,71 +1,59 @@
 #!/bin/sh
 set -e
 
-# Define paths
-SOURCE_DB="/app/prisma/dev.db"
+cd /app
 TARGET_DB="/app/data/dev.db"
 SEED_MARKER="/app/data/.seed_completed"
 VERSION_FILE="/app/data/.app_version"
-# Use local Prisma CLI from node_modules
-PRISMA_BIN="node /app/node_modules/prisma/build/index.js"
+PRISMA_BIN="/app/node_modules/prisma/build/index.js"
 SEED_ADMIN_SCRIPT="/app/dist-scripts/scripts/seed-admin.js"
 REBUILD_TAGS_SCRIPT="/app/dist-scripts/scripts/rebuild-system-tags.js"
 
-# Get current app version from package.json
-CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown")
+CURRENT_VERSION=$(node -p "require('./package.json').version")
 
-# Fix permissions for data and config directories
+# Keep both persistent volumes, including the AI master key in /app/config.
+# A fresh image contains no pre-seeded database or private configuration.
+mkdir -p /app/data /app/config
 chown -R nextjs:nodejs /app/data /app/config
 
-# Check if the persistent database exists
+FRESH_DATABASE=false
 if [ ! -s "$TARGET_DB" ]; then
-    echo "[Entrypoint] Initializing database..."
-    if [ -f "$SOURCE_DB" ]; then
-        echo "[Entrypoint] Copying pre-packaged database from $SOURCE_DB to $TARGET_DB"
-        cp "$SOURCE_DB" "$TARGET_DB"
-        # Ensure correct permissions
-        chown nextjs:nodejs "$TARGET_DB"
-        # Mark as seeded since pre-packaged DB includes seed data
-        touch "$SEED_MARKER"
-        # Record initial version
-        echo "$CURRENT_VERSION" > "$VERSION_FILE"
-    else
-        echo "[Entrypoint] Source database not found at $SOURCE_DB. Initializing with migrations."
-    fi
-else
-    echo "[Entrypoint] Database already exists at $TARGET_DB."
+    FRESH_DATABASE=true
+    echo "[Entrypoint] Initializing database from migrations..."
 fi
 
-# Check for version upgrade
 PREVIOUS_VERSION=""
 if [ -f "$VERSION_FILE" ]; then
     PREVIOUS_VERSION=$(cat "$VERSION_FILE")
 fi
 
-# Run migrations to ensure DB schema is available and up to date.
+# Fail closed: a migration failure is NOT the same as no pending migrations.
+# Run initialization as the application user so new SQLite files stay writable.
 echo "[Entrypoint] Running database migrations to sync schema..."
-cd /app && $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma && {
-    echo "[Entrypoint] Migrations completed successfully."
-} || echo "[Entrypoint] Migration failed or no pending migrations."
-
-# Always run seed after migrations to ensure admin user has correct role/isActive
-# (migration may have reset role to default 'user' for existing installs)
-echo "[Entrypoint] Ensuring admin user exists with correct role..."
-cd /app && node "$SEED_ADMIN_SCRIPT" && {
-    echo "[Entrypoint] Admin seed completed successfully."
-} || echo "[Entrypoint] Admin seed failed (non-fatal, continuing...)."
-touch "$SEED_MARKER" 2>/dev/null
-
-# Check if version changed - rebuild system tags automatically
-if [ "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]; then
-    echo "[Entrypoint] Version upgrade detected: $PREVIOUS_VERSION -> $CURRENT_VERSION"
-    echo "[Entrypoint] Rebuilding system tags to sync with new version..."
-    cd /app && node "$REBUILD_TAGS_SCRIPT" && {
-        echo "[Entrypoint] System tags rebuilt successfully."
-    } || echo "[Entrypoint] Tag rebuild failed (non-fatal, continuing...)."
-    # Update version marker
-    echo "$CURRENT_VERSION" > "$VERSION_FILE"
+if ! su-exec nextjs:nodejs node "$PRISMA_BIN" migrate deploy --schema=./prisma/schema.prisma; then
+    echo "[Entrypoint] Database migration failed; refusing to start the application." >&2
+    exit 1
 fi
+echo "[Entrypoint] Migrations completed successfully."
+
+# This must also run on existing volumes after migrations (role/isActive repair).
+echo "[Entrypoint] Ensuring admin user exists with correct role..."
+if ! su-exec nextjs:nodejs node "$SEED_ADMIN_SCRIPT"; then
+    echo "[Entrypoint] Admin initialization failed; refusing to start the application." >&2
+    exit 1
+fi
+
+# Fresh volumes need tags even if an old version marker survived a DB restore.
+# Record successful initialization only after ALL required steps succeeded.
+if [ "$FRESH_DATABASE" = true ] || [ "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]; then
+    echo "[Entrypoint] Initializing/updating system tags for version $CURRENT_VERSION..."
+    if ! su-exec nextjs:nodejs node "$REBUILD_TAGS_SCRIPT"; then
+        echo "[Entrypoint] Tag initialization failed; leaving version marker unchanged for retry." >&2
+        exit 1
+    fi
+fi
+touch "$SEED_MARKER"
+printf '%s\n' "$CURRENT_VERSION" > "$VERSION_FILE"
 
 # HTTPS Setup
 CERT_DIR="/app/certs"

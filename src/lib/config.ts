@@ -127,18 +127,11 @@ export function getAppConfig(): AppConfig {
             const fileContent = fs.readFileSync(CONFIG_FILE_PATH, 'utf-8');
             const userConfig = JSON.parse(fileContent);
 
-            // 检测并迁移旧版 OpenAI 配置
+            // 只在内存中迁移旧版配置；读取/预览不得改写原 JSON。
             let openaiConfig = userConfig.openai;
             if (isLegacyOpenAIConfig(userConfig.openai)) {
-                logger.info('Detected legacy OpenAI config, migrating to multi-instance format...');
+                logger.info('Detected legacy OpenAI config, migrating in memory only');
                 openaiConfig = migrateOpenAIConfig(userConfig.openai);
-                // 持久化迁移结果
-                const migratedConfig = {
-                    ...userConfig,
-                    openai: openaiConfig,
-                };
-                fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(migratedConfig, null, 2));
-                logger.info('Legacy OpenAI config migrated successfully');
             }
 
             // Merge with default to ensure all fields exist
@@ -154,8 +147,8 @@ export function getAppConfig(): AppConfig {
                 prompts: { ...DEFAULT_CONFIG.prompts, ...userConfig.prompts },
                 timeouts: { ...DEFAULT_CONFIG.timeouts, ...userConfig.timeouts },
             };
-        } catch (error) {
-            logger.error({ error }, 'Failed to read config file');
+        } catch {
+            logger.error('Failed to read config file');
             return DEFAULT_CONFIG;
         }
     }
@@ -181,7 +174,7 @@ export function updateAppConfig(newConfig: Partial<AppConfig>) {
         fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(updatedConfig, null, 2));
         return updatedConfig;
     } catch (error) {
-        logger.error({ error }, 'Failed to write config file');
+        logger.error('Failed to write config file');
         throw error;
     }
 }

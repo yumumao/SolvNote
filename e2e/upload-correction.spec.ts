@@ -1,31 +1,53 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 
+// Seed and login must use the same explicit test-only credential; no weak fallback.
+const adminPassword = process.env.INITIAL_ADMIN_PASSWORD ?? '';
+if (adminPassword.length < 12) {
+    throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
+}
+
 test('Upload image, correct, save, and verify in notebook', async ({ page }) => {
     // 增加测试超时时间
     test.setTimeout(90000);
 
-    // Mock specific API calls to avoid external dependencies (AI)
+    // Accept once, then poll a durable job without contacting an AI provider.
+    const jobId = 'synthetic-upload-job';
+    const analysisResult = {
+        questionText: '2 + 2 = ?',
+        answerText: '4',
+        analysis: 'Simple addition analysis.',
+        knowledgePoints: ['Math', 'Addition'],
+        subject: '数学',
+        requiresImage: false
+    };
+    let analyzeRequests = 0;
+    let pollRequests = 0;
     await page.route('**/api/analyze', async route => {
-        // Return predictable mock analysis
+        expect(route.request().method()).toBe('POST');
+        analyzeRequests += 1;
+        await route.fulfill({
+            status: 202,
+            contentType: 'application/json',
+            body: JSON.stringify({ jobId, state: 'pending', statusUrl: `/api/ai/jobs/${jobId}` })
+        });
+    });
+    await page.route(`**/api/ai/jobs/${jobId}`, async route => {
+        expect(route.request().method()).toBe('GET');
+        pollRequests += 1;
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify({
-                questionText: '2 + 2 = ?',
-                answerText: '4',
-                analysis: 'Simple addition analysis.',
-                knowledgePoints: ['Math', 'Addition'],
-                subject: '数学', // Try to match the one we will create
-                requiresImage: false
-            })
+            body: JSON.stringify(pollRequests === 1
+                ? { id: jobId, state: 'running' }
+                : { id: jobId, state: 'success', result: analysisResult })
         });
     });
 
     // 1. Login
     await page.goto('/login');
     await page.getByLabel(/邮箱|Email/).fill('admin@localhost');
-    await page.getByLabel(/^密码$|^Password$/).fill('123456');
+    await page.getByLabel(/^密码$|^Password$/).fill(adminPassword);
     await page.getByRole('button', { name: /登录|Login/ }).click();
     await page.waitForURL('**/', { timeout: 15000 });
 
@@ -37,7 +59,7 @@ test('Upload image, correct, save, and verify in notebook', async ({ page }) => 
     try {
         await expect(page.getByRole('link', { name: '数学' })).toBeVisible({ timeout: 3000 });
         console.log('Notebook math already exists.');
-    } catch (e) {
+    } catch {
         console.log('Notebook math not found, creating...');
         // Create it
         await page.getByRole('button', { name: /新建|New|Create/ }).first().click();
@@ -70,7 +92,7 @@ test('Upload image, correct, save, and verify in notebook', async ({ page }) => 
     // Click Confirm
     await page.getByRole('button', { name: /确认|Confirm/ }).click();
 
-    // 6. Wait for Editor (Mocked analysis returns immediately)
+    // 6. Wait for Editor after 202 acceptance and running/success polling
     // Look for Editor Title "校对" or "Review"
     await expect(page.getByRole('heading', { level: 2 })).toContainText(/校对|Review|Correct/, { timeout: 10000 });
 
@@ -79,6 +101,8 @@ test('Upload image, correct, save, and verify in notebook', async ({ page }) => 
     // Use first textarea which corresponds to Question
     const questionBox = page.locator('textarea').nth(0);
     await expect(questionBox).toHaveValue('2 + 2 = ?', { timeout: 5000 }); // From mock
+    expect(analyzeRequests).toBe(1);
+    expect(pollRequests).toBeGreaterThanOrEqual(2);
     await questionBox.fill('试题：2 + 2 = ?');
 
     // Verify knowledge points (from mock)
