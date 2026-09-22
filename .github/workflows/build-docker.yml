@@ -156,6 +156,15 @@ jobs:
           cache-from: type=gha,scope=wrong-notebook-native-${{ matrix.arch }},version=2
           cache-to: type=gha,scope=wrong-notebook-native-${{ matrix.arch }},version=2,mode=max
 
+      # No alias can move until BOTH native images actually start with fresh and
+      # retained synthetic volumes. A successful build alone is insufficient.
+      - name: Verify native container startup and retained administrator
+        timeout-minutes: 8
+        env:
+          IMAGE_REF: ${{ needs.prepare.outputs.image }}@${{ steps.build.outputs.digest }}
+        shell: bash
+        run: bash scripts/smoke-container.sh
+
       - name: Export digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
