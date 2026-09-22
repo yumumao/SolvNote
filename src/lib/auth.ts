@@ -40,7 +40,7 @@ export const authOptions: NextAuthOptions = {
                 password: { label: "Password", type: "password" }
             },
             async authorize(credentials) {
-                logger.debug({ email: credentials?.email }, 'Authorize called');
+                logger.debug('Authorize called');
                 if (!credentials?.email || !credentials?.password) {
                     logger.debug('Missing credentials');
                     return null
@@ -70,7 +70,7 @@ export const authOptions: NextAuthOptions = {
                     return null
                 }
 
-                logger.info({ email: user.email }, 'Login successful');
+                logger.info('Login successful');
 
                 return {
                     id: user.id,
@@ -81,17 +81,17 @@ export const authOptions: NextAuthOptions = {
             }
         })
     ],
-    // Enable debug messages in the console
-    debug: true,
+    // Keep authentication debug output disabled in production and development
+    debug: false,
     logger: {
-        error(code, metadata) {
-            logger.error({ code, metadata }, 'NextAuth error');
+        error(code) {
+            logger.error({ code }, 'NextAuth error');
         },
         warn(code) {
             logger.warn({ code }, 'NextAuth warning');
         },
-        debug(code, metadata) {
-            logger.debug({ code, metadata }, 'NextAuth debug');
+        debug(code) {
+            logger.debug({ code }, 'NextAuth debug');
         }
     },
     callbacks: {

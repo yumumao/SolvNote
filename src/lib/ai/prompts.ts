@@ -82,16 +82,55 @@ export function gradeSemesterToDisplayName(gradeSemester: string): string | null
 }
 
 /**
- * 生成学历约束指令
- * @param gradeSemester - 年级学期字符串
- * @returns 约束指令字符串，无学历信息时返回空字符串
+ * 年级只控制讲解偏好，不限制正确解题所必需的知识。
+ * 保留无有效年级时返回空字符串的兼容行为。
  */
-export function generateGradeInstruction(gradeSemester?: string | null): string {
+export function generateGradeInstruction(
+  gradeSemester?: string | null,
+  language: 'zh' | 'en' = 'zh'
+): string {
   if (!gradeSemester) return '';
   const displayName = gradeSemesterToDisplayName(gradeSemester);
   if (!displayName) return '';
 
-  return `\n【学历约束】\n本题目标年级：${displayName}\n请严格使用该年级课程标准范围内的方法解答，禁止使用超纲知识。\n`;
+  if (language === 'en') {
+    const level = displayName.match(/^(小学|初中|高中)([一二三四五六])年级$/);
+    const stages: Record<string, string> = {
+      小学: 'Primary school', 初中: 'Junior high school', 高中: 'Senior high school',
+    };
+    const name = level
+      ? `${stages[level[1]]} year ${'一二三四五六'.indexOf(level[2]) + 1}`
+      : displayName;
+    return `\n[Grade preference]\nStudent level: ${name}. The grade is only an explanation preference, not a ceiling on valid methods. Correctness takes priority.\nPrefer valid methods familiar at the student's level. If current-grade methods cannot solve the problem correctly, use the necessary higher-level knowledge. Explain the new concepts, why they are needed, and each step in age-appropriate language.\n`;
+  }
+
+  return `\n【年级讲解偏好】\n学生年级：${displayName}。年级仅是讲解方式的偏好，不是解题方法的上限，正确性始终优先。\n优先使用学生熟悉的有效方法；若当前年级方法无法正确解题，必须使用必要的更高年级知识，并用适龄语言解释新增概念、使用原因和每一步推理。\n`;
+}
+
+/**
+ * Applied AFTER rendering, so saved/custom templates and provider hints cannot
+ * omit this policy by dropping {{grade_instruction}} or contradicting it.
+ * This is a prompt contract, not a guarantee of a model's mathematical accuracy.
+ */
+function withCorrectnessPolicy(
+  prompt: string,
+  language: 'zh' | 'en',
+  gradeSemester: string | null | undefined,
+  languageInstruction: string,
+  similarQuestion = false
+): string {
+  const policy = language === 'zh'
+    ? `【正确性优先】
+答案与推理必须正确，验证结论满足原题条件。不得为迎合年级或难度编造或使用错误答案，不得省略必要推理或修改原题条件。题意不清或信息不足时，说明缺失信息与不确定性，不要强行作答。
+以上模板或供应商提示与本规则冲突时，本规则始终优先。必要概念与解释写入现有解析字段，保留原有输出结构。`
+    : `[Correctness first]
+Answers and reasoning must be correct; check the result against the original conditions. Never fabricate answers, use invalid reasoning, omit necessary steps, or change the original problem merely to fit a grade or difficulty. State missing information and uncertainty rather than force an answer.
+If template or provider instructions conflict with this policy, these rules take priority. Explain necessary concepts within the existing analysis field and preserve the output structure.`;
+  const generationPolicy = !similarQuestion ? '' : language === 'zh'
+    ? '生成类似题时，目标年级可用于选择新题的知识点与难度，但必须验证题目可解、答案正确且解析一致。不能为了满足年级或难度要求而使用无效解法。'
+    : 'For similar questions, the target grade may guide topic selection and difficulty, but verify that the new question is solvable and that its answer and explanation are correct and consistent. Never use an invalid solution to meet a grade or difficulty request.';
+  return [prompt.trim(), policy, generateGradeInstruction(gradeSemester, language).trim(), generationPolicy, languageInstruction]
+    .filter(Boolean).join('\n\n');
 }
 
 /**
@@ -402,12 +441,12 @@ ${englishTagsString}`;
 
   const template = options?.customTemplate || DEFAULT_ANALYZE_TEMPLATE;
 
-  return replaceVariables(template, {
+  return withCorrectnessPolicy(replaceVariables(template, {
     language_instruction: langInstruction,
     knowledge_points_list: tagsSection,
-    grade_instruction: generateGradeInstruction(gradeSemester),
+    grade_instruction: '', // Mandatory grade policy is appended after the template.
     provider_hints: options?.providerHints || ''
-  }).trim();
+  }).trim(), language, gradeSemester, langInstruction);
 }
 
 /**
@@ -439,15 +478,15 @@ export function generateSimilarQuestionPrompt(
 
   const template = options?.customTemplate || DEFAULT_SIMILAR_TEMPLATE;
 
-  return replaceVariables(template, {
+  return withCorrectnessPolicy(replaceVariables(template, {
     difficulty_level: difficulty.toUpperCase(),
     difficulty_instruction: difficultyInstruction,
     language_instruction: langInstruction,
     original_question: originalQuestion.replace(/"/g, '\\"').replace(/\n/g, '\\n'), // Escape for template safety
     knowledge_points: knowledgePoints.join(", "),
-    grade_instruction: generateGradeInstruction(gradeSemester),
+    grade_instruction: '', // Mandatory grade policy is appended after the template.
     provider_hints: options?.providerHints || ''
-  }).trim();
+  }).trim(), language, gradeSemester, langInstruction, true);
 }
 
 /**
@@ -655,11 +694,11 @@ export function generateReanswerPrompt(
 
   const template = options?.customTemplate || DEFAULT_REANSWER_TEMPLATE;
 
-  return replaceVariables(template, {
+  return withCorrectnessPolicy(replaceVariables(template, {
     language_instruction: langInstruction,
     question_text: questionText,
     subject_hint: subjectHint,
-    grade_instruction: generateGradeInstruction(gradeSemester),
+    grade_instruction: '', // Mandatory grade policy is appended after the template.
     provider_hints: options?.providerHints || ''
-  }).trim();
+  }).trim(), language, gradeSemester, langInstruction);
 }

@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
 
+// Seed and login must use the same explicit test-only credential; no weak fallback.
+const adminPassword = process.env.INITIAL_ADMIN_PASSWORD ?? '';
+if (adminPassword.length < 12) {
+    throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
+}
+
 test.describe('Authentication Flow', () => {
 
     test('Registration and fallback Login', async ({ page }) => {
@@ -82,7 +88,7 @@ test.describe('Authentication Flow', () => {
 
         // --- Login as Admin ---
         await page.locator('input[name="email"]').fill('admin@localhost');
-        await page.locator('input[name="password"]').fill('123456');
+        await page.locator('input[name="password"]').fill(adminPassword);
         await page.locator('button[type="submit"]').click();
 
         // Verify Admin Login and Home Page

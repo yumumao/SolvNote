@@ -1,240 +1,145 @@
-# Smart Wrong Notebook (智能错题本)
+# 错题本·YUS继续开发版
 
-一个基于 AI 的智能错题管理系统，帮助学生高效整理、分析和复习错题。
+基于[wttwins/wrong-notebook](https://github.com/wttwins/wrong-notebook)继续开发的AI错题整理与解题网站。保留原项目的账户、学科错题本、裁剪上传、知识点、练习和打印等能力，本分支重点改进AI配置互通、图文解题、长任务可靠性和容器发布流程。
 
-## ✨ 主要功能
+> 这不是从零原创的项目。感谢上游作者及贡献者。文末说明来源与许可核实情况。
 
-- **🤖 AI 智能分析**：自动识别题目内容，生成解析、知识点标签和同类练习题。
-- **⚙️ 灵活的 AI 配置**：支持 **Google Gemini** 和 **OpenAI** (及兼容接口) 两种 AI 提供商，可直接在网页设置中动态切换和配置。
-- **📚 多错题本管理**：支持按科目（如数学、物理、英语）创建和管理多个错题本。
-- **🏷️ 智能标签系统**：自动提取知识点标签，支持自定义标签管理。
-- **🔍 多维度筛选**：支持按掌握状态、时间范围、知识点标签、年级学期、试卷等级等多种条件筛选错题。
-- **🖨️ 灵活导出打印**：一键导出筛选后的错题，支持自定义打印内容（答案/解析/知识点）和图片缩放比例，可直接打印或保存为 PDF。
-- **📝 智能练习**：基于错题生成相似的练习题，巩固薄弱环节。
-- **📊 数据统计**：可视化展示错题掌握情况和学习进度。
-- **🔐 用户管理**：支持多用户注册、登录，数据安全隔离。
-- **🛡️ 管理员后台**：提供用户管理功能，可禁用/启用用户、删除违规用户。
+## 本分支新增与改进
 
+- **两层AI配置**：连接管理地址、协议和独立Key，同一连接下配置多个模型及文字/读图能力；默认共用调用顺序，兼容高级独立文字/视觉链。支持Chat Completions、Responses、Codex Responses、Gemini原生接口、Azure部署。
+- **检测与合并**：服务端比较同地址真实Key，管理员预览重复连接/模型并选择保留项；冲突默认分开，确认后才保存，不泄露密钥或自动改变模型能力。
+- **与ScanDex互通**：管理员可导入ScanDex导出的加密AI配置，先解密预览，再选择合并或替换。普通用户和匿名访客不能查看、修改或导入凭据。
+- **保留题图**：支持文字、图片、补充文字＋图片，以及先转录再带图解题。请求可以压缩，原裁剪图保留供核对和恢复；几何题不能仅靠OCR描述替代原图。
+- **可选第二模型复核**：独立复核仍携带原图，并与前序步骤共享调用预算。至少需要两个可用模型；不是无限重试，也不是默认同时调用所有AI。
+- **持久AI任务**：提交接口快速返回任务ID，页面轮询进度。刷新、关页不使任务随HTTP请求消失，可从AI任务页查看、取消和取回结果。
+- **正确性优先**：年级影响讲解方式，不是知识禁区。例如五年级用户问初中题，允许使用初中方法，说明新增概念和推导；不能为了符合年级给出错误答案。自定义提示词同样受这条规则约束。
+- **安全与部署**：AI配置、临时任务输入和结果在SQLite中加密；修补AI管理端点权限与外部URL访问边界；GHCR双架构改为原生并行构建。
 
-## 📸 屏幕截图功能 (HTTPS 设置)
+## AI配置的使用方式
 
-本应用的屏幕截图功能依赖浏览器的安全上下文 (HTTPS)。在 Docker 或局域网环境中使用时，请参考 **[HTTPS 配置指南](doc/HTTPS_SETUP.md)** 启用内置 HTTPS 支持。
+1. 管理员登录，打开设置中的AI配置入口，或访问`/admin/ai`。
+2. 添加供应商、协议、HTTPS接口地址、API密钥与模型；或者在ScanDex管理员AI设置中导出加密文件，再到这里导入。
 
-## 📱 PWA 支持 (添加到主屏幕)
+   ScanDex须包含本分支对应的加密导出功能，且运行中的后端已加载新版本；只更新静态页面不会让旧后端自动获得导出接口。
+3. 连接层填写协议、HTTPS地址和独立Key；同地址可添加不同Key连接。同一连接下添加多个模型，分别勾选文字/读图能力。默认只维护一份调用顺序，按任务能力筛选；不兼容的旧文字/视觉顺序保留在高级设置中，不强行扩充任务成员。声明读图能力不会让纯文本模型自动具备识图能力。
+4. 先预览导入内容，再确认合并或替换。合并以相同ID的导入项覆盖，导入链顺序优先；替换只替换AI配置，不改用户、题目和其他设置。
+5. 如有重复项，先保存编辑，再点击**检测与合并**。检测只比较服务端已保存的真实Key，不调用AI、不写配置、不返回密钥或可复用指纹。同地址不同Key仍保留为独立连接；完整地址、协议、API版本和非空真实Key均相同才建议合并。
+6. 在预览中选择保留哪个连接/模型，或保持分开。同连接按实际模型/部署名去重，不按显示名称。能力或启用状态有冲突时默认分开，不自动取能力并集；修改选择后必须重新预览。
+7. 核对合并前后两类任务顺序，再确认应用。引用会重映射，按各任务原顺序保留首次出现位置并去重，不自动加入新任务；选择停用或能力较少的保留项可能移除链成员。预览5分钟有效，配置版本变化后须重新检测。
+8. 解题后人工核对题干、图形条件、答案与推导，再保存到错题本。
 
-本项目支持 PWA (Progressive Web App)，您可以将应用添加到手机主屏幕，获得原生应用般的使用体验。
+导出文件采用独立口令保护，至少12字符。口令与网站密码、API密钥不同，不保存在错题本。请分别保管文件与口令；加密文件仍属于敏感备份，不要放进公开仓库。
 
-**功能特性**：
-- 🚀 **快速启动**：点击主屏幕图标直接打开，无需输入网址。
-- 📱 **沉浸体验**：全屏运行，无浏览器地址栏干扰。
-- 🎨 **原色适配**：应用图标和启动画面适配系统主题。
+网站只允许公共HTTPS上游，不支持导入本机代理地址、内网AI服务或自定义请求头。出口会拒绝内网/保留IP、凭据型URL和重定向。**这与本地ScanDex的网络边界不同**，不是复制本机所有设置。
 
-**使用方法**：
+协议、白名单与后续消费者约定见[AI配置交换格式](docs/portable-ai-config.md)。
 
-- **iPhone / iPad (Safari)**: 点击底部 **分享** 按钮 -> 选择 **"添加到主屏幕"**。
-- **Android (Chrome)**: 点击右上角 **菜单** -> 选择 **"添加到主屏幕"** 或 **"安装应用"**。
+### 导入报错排查
 
-## 🛠️ 技术栈
+连接/模型合并功能没有升级交换格式，仍使用`portable-ai-config v1`。不要仅凭旧版通用提示认定口令错误。
 
-- **框架**: [Next.js 16](https://nextjs.org/) (App Router)
-- **UI 库**: [React 19](https://react.dev/)
-- **数据库**: [SQLite](https://www.sqlite.org/) (via [Prisma](https://www.prisma.io/))
-- **样式**: [Tailwind CSS v4](https://tailwindcss.com/) + [Shadcn UI](https://ui.shadcn.com/)
-- **AI**: Google Gemini API / OpenAI API / Azure OpenAI
-- **认证**: [NextAuth.js](https://next-auth.js.org/)
+- `IMPORT_CONFIG_INCOMPATIBLE`：口令验证已通过，但配置校验失败；界面只显示字段位置与固定原因，不回显URL、Key或字段原值。例如`providers.0.baseUrl`指第1条连接地址。
+- ScanDex本地可导出的HTTP、带查询参数等地址不一定符合云端策略；即使停用也会校验。请核对对应连接，本站不会自动转HTTPS、删除查询参数或丢弃条目。模型显示名称支持200字符，与实际模型名上限一致。
+- `IMPORT_ORIGIN_REJECTED`：检查的是**错题本页面地址与错题本后台的`NEXTAUTH_URL`**，不是ScanDex地址或导出文件来源。两项目可以在不同域名、不同端口。本站协议、主机和端口须一致；本地`localhost`和`127.0.0.1`不能混用。该错误发生在读取导入文件之前，与口令无关。修正地址后重新登录并预览，不能通过关闭同源保护解决。401/403还须核对管理员权限。
+- `AI_MASTER_KEY_MISSING`、`AI_MASTER_KEY_INVALID`或`IMPORT_STORAGE_UNAVAILABLE`：检查持久卷、权限、数据库迁移及配对主钥，不要删除数据库或生成新钥覆盖旧钥。
+- `CONFIG_CONFLICT`、`IMPORT_PREVIEW_INVALID`：重新预览；确认导入时若网络超时，先刷新核对是否已保存，不要重复提交。
+- 仍显示旧版笼统提示时，确认运行中的错题本后台已更新。排查只需错误代码及发生在预览还是确认阶段，**不要发送导出文件、口令、API密钥或完整网络日志**。
 
-## 🚀 快速开始
+## 长任务、超时与费用边界
 
-### 方式一：使用 Docker 部署
+- 默认全站单个AI任务执行，最多30个待处理/运行中任务；每用户最多5个。
+- 单任务最多3次上游尝试，每次最多180秒，总执行窗口最多600秒；等待排队的时间不计入执行窗口。
+- 转录、解题、回退和复核共享3次预算。例如转录＋解题＋复核正常会用完3次，任一阶段回退可能使后续阶段无法执行。
+- 429按同一域名＋密钥的额度组持久冷却；链内另一个使用同一额度组的模型不会立即重复冲击限流。
+- 网络中断、响应流不完整或进程崩溃后无法确认受理状态时，标为`unknown`，**不自动重新发送**。请先查看供应商记录，再决定是否手动重新提交；无法保证上游未计费。
+- 取消尽力停止后续处理，不能撤回已被上游受理的请求，也不承诺退费。
+- 临时任务及其图片、结果保留24小时，后台会清理到期记录。结果尚未保存为错题时，请及时取回。
+- 不实时展示模型思维过程；任务页展示任务状态和模型尝试记录。顺序回退和复核也不能保证AI解答永远正确。
 
-#### 1. 启动服务
+原来的长HTTP请求已拆成提交＋轮询，但上游网络、模型排队和供应商故障仍可能导致任务失败；本项目不承诺完全消除超时。
 
-您可以选择 **直接使用命令** (适合快速测试) 或 **Docker Compose** (适合长期运行)。
+## Zeabur部署与持久化
 
-**选项 A：直接使用 Docker 命令**
+继续使用现有两个卷，不需要换数据库：
 
-```bash
-docker run -d --name wrong-notebook \
-  -e NEXTAUTH_SECRET="your_secret_key" \
-  -p 3000:3000 \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/config:/app/config \
-  ghcr.io/wttwins/wrong-notebook
-```
+|卷|挂载目录|用途|
+|---|---|---|
+|`wrong-notebook-config`|`/app/config`|旧配置文件、AI加密主钥|
+|`wrong-notebook-data`|`/app/data`|SQLite数据库、账户、错题、加密AI配置及任务|
 
-**选项 B：使用 Docker Compose (推荐)**
+关键环境变量：
 
-使用 `docker-compose.yml` 文件进行管理。
+|变量|说明|
+|---|---|
+|`DATABASE_URL`|容器默认`file:/app/data/dev.db`，保持与原部署一致|
+|`NEXTAUTH_URL`|实际HTTPS站点地址；不要填写示例域名部署|
+|`NEXTAUTH_SECRET`|自行生成足够长的随机值，放平台秘密变量，不提交Git|
+|`INITIAL_ADMIN_PASSWORD`|**仅首次无管理员时必需**，至少12字符；已有管理员不会被重置|
+|`INITIAL_ADMIN_EMAIL`|可选，首次管理员邮箱默认`admin@localhost`|
+|`AI_CONFIG_MASTER_KEY`|可选，32字节密钥的64位十六进制或base64；未设置时自动保存到`/app/config/ai-master.key`|
+|`AI_CONFIG_DIR`|非容器环境可覆盖主钥目录；容器无需设置|
 
-1.  **下载配置文件**：
-    ```bash
-    curl -o docker-compose.yml https://raw.githubusercontent.com/wttwins/wrong-notebook/refs/heads/main/docker-compose.yml
-    ```
-2.  **启动服务**：
-    ```bash
-    docker-compose up -d
-    ```
-3.  **查看日志**：
-    ```bash
-    docker-compose logs -f
-    ```
-4.  **停止服务**：
-    ```bash
-    docker-compose down
-    ```
+默认不再创建公开固定弱密码账户。已有旧安装请自行确认已修改默认密码；升级不会静默替换既有管理员密码。生产建议关闭不需要的注册，并使用HTTPS。
 
-### 方式二：本地源码运行
+### 升级前后
 
-#### 1. 克隆仓库
+1. **同时备份两个卷**，保持数据库与主钥匹配，并记录当前镜像标签/摘要。只备份数据库不能恢复加密内容。
+2. 部署新镜像。入口脚本在启动前运行Prisma迁移，迁移失败立即退出，不吞掉错误继续启动。
+3. 首次使用新AI配置时，从旧`config/app-config.json`迁移当前选中的供应商；旧OpenAI实例按原激活项优先排列。旧文件保留作为回滚来源，不删不覆盖。不兼容公共HTTPS等新契约的旧条目会跳过，管理员需在新页面补配或重新导入；不会为兼容旧条目而放宽网络安全边界。
+4. 管理员检查模型视觉能力、接口地址和双链顺序。旧配置不包含精确视觉能力声明，需要人工核对。
+5. 先用一条不含隐私的题目验证文字和视觉链，再验证任务页刷新恢复。
 
-```bash
-git clone https://github.com/wttwins/wrong-notebook.git
-cd wrong-notebook
-```
+新AI配置以SQLite为准，不再通过旧设置页编辑AI凭据；提示词等非AI连接设置仍沿用旧配置文件。请勿把`AI_WORKER_DISABLED=1`留在运行环境中，它仅供构建和离线测试使用。
 
-#### 2. 环境准备
+**主钥丢失或不匹配时停止解密，不自动替换主钥。**先恢复配对备份。不要直接删除数据库、主钥或手工重置加密列。回滚先停止应用，再恢复两个卷的配对备份及旧镜像，避免旧代码与新数据混写。
 
-确保已安装 Node.js (v18+) 和 npm。
+推荐Zeabur**单副本**，不按请求休眠。该worker依赖持续运行的Node进程，不适用于纯无服务器函数。数据库租约不代表已经验证跨主机共享SQLite多副本，暂不支持那种部署。
 
-#### 3. 安装依赖
+## GHCR构建
 
-```bash
-npm install
-```
+GitHub Actions的`Native Docker Build & Publish`工作流供手动发布与版本标签发布共用：
 
-#### 4. 配置环境变量
+- AMD64使用原生x86 runner，ARM64使用原生ARM runner，并行构建，避免通过QEMU编译整套应用。
+- 分架构缓存依赖与BuildKit层，两种架构成功后才合并并发布manifest。
+- 构建时不创建业务数据库、不执行seed；启动容器时迁移和初始化。
+- 排除本地数据库、密钥、导出包、日志、备份与开发私有目录；移除未使用的原生SQLite适配依赖。
 
-复制 `.env.example` 为 `.env` 并填入必要的配置：
+冷缓存、runner排队、字体下载和镜像上传仍需时间，**没有把某个耗时数字作为保证**。第一次及第二次缓存命中的Actions耗时才是提速验收依据。详见[部署与构建说明](docs/deployment-build.md)。
 
-```bash
-cp .env.example .env
-```
+## 本地开发与验证
 
-**基础配置**
+建议Node22、npm，Prisma锁定5.22。复制`.env.example`为本地环境文件并填写自行生成的值，不使用真实生产库做开发。
 
-| 环境变量 | 描述 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `DATABASE_URL` | 数据库连接地址 | `file:./dev.db` | SQLite 数据库路径 |
-| `NEXTAUTH_SECRET` | Auth 密钥 | 无 | 用于加密 Session，生产环境建议设置,可以使用 openssl rand -base64 32 生成一个随机字符串作为密钥 |
-| `NEXTAUTH_URL` | 访问地址 | `http://your-domain-name:3000` | 部署后的访问地址 |
-| `AUTH_TRUST_HOST` | 信任主机头 | `true` | 设置为 `true` 时自动推断 URL，适合 Docker/PaaS |
-| `LOG_LEVEL` | 日志级别 | `debug` (开发) / `info` (生产) | 可选值：`trace`, `debug`, `info`, `warn`, `error`, `fatal` |
-| `HTTP_PROXY` | HTTP 代理 | 无 | 设置 HTTP 代理 |
-| `HTTPS_PROXY` | HTTPS 代理 | 无 | 设置 HTTPS 代理 |
-
-**AI 配置**
-
-| 环境变量 | 描述 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `AI_PROVIDER` | AI 提供商 | `gemini` | 可选 `gemini`、`openai` 或 `azure` |
-
-**Gemini 配置**
-
-| 环境变量 | 描述 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `GOOGLE_API_KEY` | Gemini API Key | 无 | 使用 Gemini 时必填，从 [Google AI Studio](https://aistudio.google.com/apikey) 获取 |
-| `GEMINI_BASE_URL` | Gemini API 地址 | 无 | 可选，默认 `https://generativelanguage.googleapis.com`，通常无需修改 |
-| `GEMINI_MODEL` | Gemini 模型 | `gemini-2.5-flash` | 可选，如 `gemini-2.5-pro`、`gemini-3.0-flash` 等 |
-
-**OpenAI 配置**
-
-| 环境变量 | 描述 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `OPENAI_API_KEY` | OpenAI API Key | 无 | 使用 OpenAI 时必填，从 [OpenAI Platform](https://platform.openai.com/api-keys) 获取 |
-| `OPENAI_BASE_URL` | OpenAI API 地址 | 无 | 可选，默认 `https://api.openai.com/v1`；使用第三方兼容服务时填写对应地址 |
-| `OPENAI_MODEL` | OpenAI 模型 | `gpt-4o` | 可选，如 `gpt-4-turbo`、`o3`、`o4-mini` 等 |
-
-**Azure OpenAI 配置**
-
-| 环境变量 | 描述 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `AZURE_OPENAI_API_KEY` | Azure API Key | 无 | 使用 Azure OpenAI 时必填，从 Azure 门户获取 |
-| `AZURE_OPENAI_ENDPOINT` | Azure Endpoint | 无 | Azure 资源端点，如 `https://xxx.openai.azure.com` |
-| `AZURE_OPENAI_DEPLOYMENT` | 部署名称 | 无 | Azure 中配置的部署名称，如 `gpt-4o` |
-| `AZURE_OPENAI_API_VERSION` | API 版本 | `2024-02-15-preview` | 可选，Azure API 版本 |
-| `AZURE_OPENAI_MODEL` | Azure 模型 | `gpt-4o` | 可选，显示用的模型名称 |
-
-#### 5. 初始化数据库
-
-```bash
-npx prisma migrate dev
-npx prisma db seed
-```
-
-#### 6. 管理员账户
-
-默认管理员账户：
-- **邮箱**: `admin@localhost`
-- **密码**: `123456`
-
-> 管理员登录后，可在“设置” -> “用户管理”中管理系统用户。
-
-#### 7. 启动开发服务器
-
-```bash
+```sh
+npm ci
+npx prisma generate
+npx prisma migrate deploy
 npm run dev
 ```
 
-访问 [http://your-domain-name:3000](http://your-domain-name:3000) 开始使用。
+新安装管理员初始化需要先配置独立强密码，然后运行`node scripts/seed-admin.js`；可按需运行项目已有系统知识标签初始化脚本。不要将初始化输出、环境文件或测试数据库上传。
 
-## ⚙️ AI 模型配置
+```sh
+npm test
+npx tsc --noEmit
+npm run build
+npm run lint
+```
 
-本项目支持动态配置 AI 模型，无需重启服务器。
+新增测试包含加密互通、管理员权限、协议图片载荷、队列幂等与租约恢复、图文多阶段和年级正确性。集成测试只创建合成临时SQLite库，不连接线上数据，不调用真实AI。`src/__tests__/fixtures/scandex-portable*-v1.json`均是专门生成的公开测试夹具，不是用户设置。
 
-1.  **进入设置**：点击首页右上角的设置图标。
-2.  **选择提供商**：支持 Google Gemini、OpenAI 和 **Azure OpenAI**。
-3.  **填写参数**：
-    *   **通用参数**: API Key、Base URL（或 Endpoint）、Model Name（或 Deployment Name）。
-    *   **Azure 特有**: Deployment Name（部署名称）、API Version（API 版本）。
-4.  **保存生效**：点击保存后即刻生效。
+仓库原有全量ESLint债务单独列入验收记录，不把单元测试通过称作浏览器或部署验收。真实Docker/Zeabur和供应商调用需在部署阶段分别验证。
 
-> **注意**：网页配置会保存到 `config/app-config.json` 文件中，该文件的优先级高于 `.env` 环境变量。
+## 隐私与后续集成
 
-### 配置样例
+`.gitignore`和`.dockerignore`覆盖`.env*`、本地配置、数据库/WAL、主钥、加密导出、`.bak`、`.codex`、`.claude`等。**忽略规则不能从已有Git历史中删除已泄漏内容**；发现泄漏时仍需撤销凭据并单独处理历史。
 
-选择提供商后，填写对应参数即可。各服务商获取方式如下：
+AI处理会将用户明确提交的题图、文字和必要上下文发送至管理员配置的供应商；不要上传无关个人信息。任务短期数据加密不等于完整数据库加密，账户和已保存错题仍按原数据库模型存储。
 
-#### Google Gemini
+已实现ScanDex加密导出与本项目管理员导入，交换格式保持portable-ai-config v1。desktop-search、ImgToDoc和家庭健康服务继续通过各自原有的ScanDex接口使用AI设置，无需为本次连接/模型两层设置重复保存供应商Key；消费端独立导入仅在确需脱离ScanDex运行时另行适配。**本仓库不提供安装器，不改动家庭健康服务**。交换格式不携带本机路径、代理、服务口令或组件安装选项，为今后可选模块安装、可选依赖与按平台保存凭据保留边界。
 
-| 参数 | 获取方式 |
-| :--- | :--- |
-| API Key | [Google AI Studio](https://aistudio.google.com/apikey) → 创建 API Key |
-| Base URL | 默认 `https://generativelanguage.googleapis.com`，通常无需修改 |
-| 模型 | `gemini-2.5-flash`（推荐）、`gemini-2.5-pro`、`gemini-3.0-flash` 等 |
+## 上游来源与许可说明
 
-#### OpenAI
-
-| 参数 | 获取方式 |
-| :--- | :--- |
-| API Key | [OpenAI Platform](https://platform.openai.com/api-keys) → Create new secret key |
-| Base URL | 默认 `https://api.openai.com/v1` |
-| 模型 | `gpt-4o`（推荐）、`gpt-4-turbo`、`o3`、`o4-mini` 等 |
-
-> **兼容模式**：OpenAI 提供商兼容所有支持 OpenAI API 格式的第三方服务。只需将 Base URL 改为对应服务地址，即可使用硅基流动、智谱 GLM、月之暗面 Kimi、通义千问 DashScope 等平台的模型。模型名称需填写对应平台的完整模型 ID。
-
-#### Azure OpenAI
-
-| 参数 | 获取方式 |
-| :--- | :--- |
-| API Key | Azure 门户 → 你的 OpenAI 资源 → 密钥和终结点 |
-| Endpoint | Azure 门户 → 你的 OpenAI 资源 → 终结点，如 `https://xxx.openai.azure.com` |
-| 部署名称 | Azure 中配置的模型部署名称，如 `gpt-4o` |
-| API 版本 | 默认 `2024-02-15-preview` |
-| 模型 | 显示用的模型名称，如 `gpt-4o` |
-
-## 🛠️ 实用脚本
-
-在 `scripts/` 目录下提供了一些实用脚本，用于维护和调试：
-
-- **重置密码**:
-  ```bash
-  node scripts/reset-password.js <邮箱> <新密码>
-  ```
-  示例:  
-  ```bash
-  node scripts/reset-password.js user@example.com 123456 
-  ```
-
-## 📄 许可证
-
-MIT License
+- 原项目：`wttwins/wrong-notebook`；本仓库：`yumumao/wrong-notebook-yus`。
+- 本分支属于继续修改，原有功能、代码与设计归其原作者/贡献者；本README重点描述本分支变更，不代表上游也有这些特性。
+- 上游README曾声明MIT，但本次核对的上游仓库及当前代码快照未发现独立LICENSE文件，GitHub许可字段为空。因此这里不擅自新增许可证，也不作额外再授权承诺；再分发或商用前请向上游核实许可范围。

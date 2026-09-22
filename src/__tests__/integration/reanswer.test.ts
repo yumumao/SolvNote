@@ -1,435 +1,139 @@
-/**
- * /api/reanswer API 集成测试
- * 测试重新回答问题接口
- */
+/** /api/reanswer集成测试：真实enqueue和输入校验，隔离外部存储与AI。 */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Use vi.hoisted to ensure mocks are initialized before module imports
 const mocks = vi.hoisted(() => ({
-    mockAIService: {
-        reanswerQuestion: vi.fn(),
-    },
-    mockSession: {
-        user: {
-            email: 'user@example.com',
-            name: 'Test User',
-        },
-        expires: '2025-12-31',
-    },
+    session: vi.fn(),
+    user: { findUnique: vi.fn() },
+    subject: { findFirst: vi.fn() },
+    submitJob: vi.fn(),
 }));
+vi.mock('next-auth', () => ({ getServerSession: mocks.session }));
+vi.mock('@/lib/auth', () => ({ authOptions: {} }));
+vi.mock('@/lib/prisma', () => ({ prisma: { user: mocks.user, subject: mocks.subject } }));
+vi.mock('@/lib/ai-jobs/store', () => ({ submitJob: mocks.submitJob }));
 
-// Mock AI service
-vi.mock('@/lib/ai', () => ({
-    getAIService: vi.fn(() => mocks.mockAIService),
-}));
-
-// Mock next-auth
-vi.mock('next-auth', () => ({
-    getServerSession: vi.fn(() => Promise.resolve(mocks.mockSession)),
-}));
-
-vi.mock('@/lib/auth', () => ({
-    authOptions: {},
-}));
-
-// Import after mocks
 import { POST } from '@/app/api/reanswer/route';
 
-describe('/api/reanswer', () => {
+const IMAGE = 'data:image/png;base64,AQID';
+const ORIGINAL_IMAGE = 'data:image/jpeg;base64,BAUG';
+function request(body: unknown, headers: Record<string, string> = {}) {
+    return new Request('http://localhost/api/reanswer', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-request-id': 'reanswer-request-1', ...headers },
+        body: JSON.stringify(body),
+    });
+}
+
+describe('POST /api/reanswer (202持久任务契约)', () => {
     beforeEach(() => {
-        vi.clearAllMocks();
+        vi.resetAllMocks();
+        mocks.session.mockResolvedValue({ user: { id: 'user-123', role: 'admin' } });
+        mocks.user.findUnique.mockResolvedValue({
+            id: 'user-123', role: 'user', isActive: true,
+            educationStage: null, enrollmentYear: null,
+        });
+        mocks.submitJob.mockResolvedValue({ id: 'job-reanswer-1', state: 'pending' });
     });
 
-    describe('POST /api/reanswer (重新回答问题)', () => {
-        it('应该成功重新回答问题', async () => {
-            const aiResult = {
-                answerText: 'x = 3',
-                analysis: '移项得 x = 5 - 2 = 3',
-                knowledgePoints: ['一元一次方程', '移项'],
-            };
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue(aiResult);
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求解 x + 2 = 5',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.answerText).toBe('x = 3');
-            expect(data.analysis).toContain('移项');
+    it('文字重解返回202，不在提交响应中返回答案', async () => {
+        const response = await POST(request({ questionText: '求解 x + 2 = 5' }));
+        expect(response.status).toBe(202);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(await response.json()).toEqual({
+            jobId: 'job-reanswer-1', state: 'pending', statusUrl: '/api/ai/jobs/job-reanswer-1',
         });
-
-        it('应该支持指定学科', async () => {
-            const aiResult = {
-                answerText: 'The answer is B',
-                analysis: 'Grammar analysis...',
-                knowledgePoints: ['Grammar', 'Tenses'],
-            };
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue(aiResult);
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: 'Choose the correct answer: He ___ to school yesterday.',
-                    language: 'zh',
-                    subject: '英语',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-
-            expect(response.status).toBe(200);
-            expect(mocks.mockAIService.reanswerQuestion).toHaveBeenCalledWith(
-                expect.any(String),
-                'zh',
-                '英语',
-                undefined,
-                undefined
-            );
-        });
-
-        it('应该支持附带图片', async () => {
-            const aiResult = {
-                answerText: '∠A = 60°',
-                analysis: '根据三角形内角和定理...',
-                knowledgePoints: ['三角形', '内角和'],
-            };
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue(aiResult);
-
-            const imageBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCA...';
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求图中 ∠A 的度数',
-                    language: 'zh',
-                    subject: '数学',
-                    imageBase64,
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-
-            expect(response.status).toBe(200);
-            expect(mocks.mockAIService.reanswerQuestion).toHaveBeenCalledWith(
-                expect.any(String),
-                'zh',
-                '数学',
-                imageBase64,
-                undefined
-            );
-        });
-
-        it('应该支持英文语言', async () => {
-            const aiResult = {
-                answerText: 'x = 3',
-                analysis: 'By transposition, x = 5 - 2 = 3',
-                knowledgePoints: ['Linear Equations'],
-            };
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue(aiResult);
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: 'Solve: x + 2 = 5',
-                    language: 'en',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-
-            expect(response.status).toBe(200);
-            expect(mocks.mockAIService.reanswerQuestion).toHaveBeenCalledWith(
-                expect.any(String),
-                'en',
-                undefined,
-                undefined,
-                undefined
-            );
-        });
-
-        it('应该默认使用中文语言', async () => {
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue({
-                answerText: '答案',
-                analysis: '解析',
-                knowledgePoints: [],
-            });
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求解方程',
-                    // 不指定 language
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-
-            expect(response.status).toBe(200);
-            expect(mocks.mockAIService.reanswerQuestion).toHaveBeenCalledWith(
-                expect.any(String),
-                'zh', // 默认中文
-                undefined,
-                undefined,
-                undefined
-            );
-        });
-
-        it('应该拒绝空的题目文本', async () => {
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(400);
-            expect(data.message).toBe('Missing question text');
-        });
-
-        it('应该拒绝只有空格的题目文本', async () => {
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '   ',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(400);
-            expect(data.message).toBe('Missing question text');
-        });
-
-        it('应该拒绝缺少题目文本的请求', async () => {
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(400);
-            expect(data.message).toBe('Missing question text');
+        expect(mocks.submitJob).toHaveBeenCalledExactlyOnceWith('user-123', 'reanswer',
+            expect.objectContaining({ questionText: '求解 x + 2 = 5', language: 'zh' }), 'reanswer-request-1');
+        expect(mocks.user.findUnique).toHaveBeenCalledWith({
+            where: { id: 'user-123' }, select: { id: true, role: true, isActive: true },
         });
     });
 
-    describe('错误处理', () => {
-        it('应该处理 AI 认证错误', async () => {
-            mocks.mockAIService.reanswerQuestion.mockRejectedValue(
-                new Error('AI_AUTH_ERROR: Invalid API key')
-            );
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求解方程',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('AI_AUTH_ERROR');
-        });
-
-        it('应该处理 AI 连接错误', async () => {
-            mocks.mockAIService.reanswerQuestion.mockRejectedValue(
-                new Error('AI_CONNECTION_FAILED')
-            );
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求解方程',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('AI_CONNECTION_FAILED');
-        });
-
-        it('应该处理 AI 响应错误', async () => {
-            mocks.mockAIService.reanswerQuestion.mockRejectedValue(
-                new Error('AI_RESPONSE_ERROR')
-            );
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求解方程',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('AI_RESPONSE_ERROR');
-        });
-
-        it('应该处理其他未知错误', async () => {
-            mocks.mockAIService.reanswerQuestion.mockRejectedValue(
-                new Error('Unknown error occurred')
-            );
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求解方程',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('Unknown error occurred');
-        });
-
-        it('应该处理没有错误消息的异常', async () => {
-            mocks.mockAIService.reanswerQuestion.mockRejectedValue(new Error());
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: '求解方程',
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(500);
-            expect(data.message).toBe('Failed to reanswer question');
-        });
+    it('几何图与原始图片保留，不能降级为纯文字', async () => {
+        const body = { questionText: '根据附图求角度', imageBase64: IMAGE, originalImageBase64: ORIGINAL_IMAGE, mimeType: 'image/png' };
+        expect((await POST(request(body))).status).toBe(202);
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining(body), 'reanswer-request-1');
     });
 
-    describe('复杂场景', () => {
-        it('应该正确处理长文本题目', async () => {
-            const longQuestionText = '已知函数 f(x) = ax² + bx + c，其中 a > 0。' +
-                '若 f(x) 在 x = 1 处取得最小值 -1，且 f(0) = 0。' +
-                '(1) 求函数 f(x) 的解析式；' +
-                '(2) 求函数 f(x) 在区间 [-1, 2] 上的最大值和最小值；' +
-                '(3) 若不等式 f(x) > m 在 x ∈ [0, 2] 上恒成立，求 m 的取值范围。';
+    it('纯图片也可提交重解任务', async () => {
+        expect((await POST(request({ imageBase64: IMAGE }))).status).toBe(202);
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer',
+            expect.objectContaining({ imageBase64: IMAGE, questionText: '' }), 'reanswer-request-1');
+    });
 
-            const aiResult = {
-                answerText: '(1) f(x) = x² - 2x; (2) 最大值 0, 最小值 -1; (3) m < -1',
-                analysis: '详细解析...',
-                knowledgePoints: ['二次函数', '最值', '不等式'],
-            };
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue(aiResult);
+    it('英文、年级与校正文本传入队列', async () => {
+        const body = { questionText: 'Solve x + 2 = 5', language: 'en', gradeSemester: 'primary_3', subject: '数学' };
+        expect((await POST(request(body))).status).toBe(202);
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining(body), 'reanswer-request-1');
+    });
 
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: longQuestionText,
-                    language: 'zh',
-                    subject: '数学',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
+    it('按owner校验学科，不信任客户端学科名称', async () => {
+        mocks.subject.findFirst.mockResolvedValue({ name: '物理' });
+        expect((await POST(request({ questionText: 'q', subjectId: 'physics-1', subject: '伪造名称' }))).status).toBe(202);
+        expect(mocks.subject.findFirst).toHaveBeenCalledWith({ where: { id: 'physics-1', userId: 'user-123' } });
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer',
+            expect.objectContaining({ subject: '物理' }), 'reanswer-request-1');
+    });
 
-            const response = await POST(request);
-            const data = await response.json();
+    it('其他用户的学科返回404，不入队', async () => {
+        mocks.subject.findFirst.mockResolvedValue(null);
+        expect((await POST(request({ questionText: 'q', subjectId: 'foreign-subject' }))).status).toBe(404);
+        expect(mocks.submitJob).not.toHaveBeenCalled();
+    });
 
-            expect(response.status).toBe(200);
-            expect(data.answerText).toBeDefined();
-            expect(mocks.mockAIService.reanswerQuestion).toHaveBeenCalledWith(
-                longQuestionText,
-                'zh',
-                '数学',
-                undefined,
-                undefined
-            );
-        });
+    it('忽略客户端伪造的owner，任务始终属于当前用户', async () => {
+        expect((await POST(request({ questionText: 'q', userId: 'other-user' }))).status).toBe(202);
+        const [owner, , input] = mocks.submitJob.mock.calls[0];
+        expect(owner).toBe('user-123');
+        expect(input).not.toHaveProperty('userId');
+    });
 
-        it('应该正确处理包含特殊字符的题目', async () => {
-            const questionWithSpecialChars = '求解 √(x² + 1) = x + 1 的解集';
+    it.each([null, { user: {} }])('无有效session返回401：%j', async (session) => {
+        mocks.session.mockResolvedValue(session);
+        expect((await POST(request({ questionText: 'q' }))).status).toBe(401);
+        expect(mocks.submitJob).not.toHaveBeenCalled();
+    });
 
-            const aiResult = {
-                answerText: 'x = 0',
-                analysis: '平方两边...',
-                knowledgePoints: ['根式方程'],
-            };
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue(aiResult);
+    it.each([null, { id: 'user-123', role: 'admin', isActive: false }])('实时用户不存在或停用返回403：%j', async (user) => {
+        mocks.user.findUnique.mockResolvedValue(user);
+        expect((await POST(request({ questionText: 'q' }))).status).toBe(403);
+        expect(mocks.submitJob).not.toHaveBeenCalled();
+    });
 
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: questionWithSpecialChars,
-                    language: 'zh',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
+    it('拒绝跨站重解请求', async () => {
+        expect((await POST(request({ questionText: 'q' }, { origin: 'https://untrusted.example' }))).status).toBe(403);
+        expect(mocks.submitJob).not.toHaveBeenCalled();
+    });
 
-            const response = await POST(request);
+    it.each([
+        {}, { questionText: '' }, { questionText: '   ' },
+        { questionText: 'q', imageBase64: 'invalid...' },
+        { questionText: 'q', imageBase64: IMAGE, mode: 'text' },
+        { questionText: 'q', mimeType: 'image/svg+xml' },
+    ])('缺失题目或无效图片请求返回400：%j', async (body) => {
+        expect((await POST(request(body))).status).toBe(400);
+        expect(mocks.submitJob).not.toHaveBeenCalled();
+    });
 
-            expect(response.status).toBe(200);
-        });
+    it.each([
+        ['长文本', '这是一道包含完整条件的题目。'.repeat(200)],
+        ['特殊字符', 'a < b && b > c；x² + y² = z²；"引号"与换行\n条件'],
+        ['LaTeX', String.raw`求解 $\frac{x+1}{2}=3$，保留 $\sqrt{x}$。`],
+    ])('完整保留%s，不在提交时改写题目', async (_name, questionText) => {
+        expect((await POST(request({ questionText }))).status).toBe(202);
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining({ questionText }), 'reanswer-request-1');
+    });
 
-        it('应该正确处理包含 LaTeX 的题目', async () => {
-            const questionWithLatex = '求 $\\int_0^1 x^2 dx$ 的值';
+    it('已存在的任务仍返回202和真实状态，不重复同步解题', async () => {
+        mocks.submitJob.mockResolvedValue({ id: 'job-existing', state: 'running' });
+        const response = await POST(request({ questionText: 'q' }));
+        expect(response.status).toBe(202);
+        expect(await response.json()).toEqual({ jobId: 'job-existing', state: 'running', statusUrl: '/api/ai/jobs/job-existing' });
+    });
 
-            const aiResult = {
-                answerText: '$\\frac{1}{3}$',
-                analysis: '使用积分公式...',
-                knowledgePoints: ['定积分'],
-            };
-            mocks.mockAIService.reanswerQuestion.mockResolvedValue(aiResult);
-
-            const request = new Request('http://localhost/api/reanswer', {
-                method: 'POST',
-                body: JSON.stringify({
-                    questionText: questionWithLatex,
-                    language: 'zh',
-                    subject: '数学',
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            });
-
-            const response = await POST(request);
-            const data = await response.json();
-
-            expect(response.status).toBe(200);
-            expect(data.answerText).toContain('frac');
-        });
+    it.each([['AI_QUEUE_FULL', 429], ['REQUEST_CONFLICT', 409]])('队列拒绝%s时返回%d', async (code, status) => {
+        mocks.submitJob.mockRejectedValue(new Error(code));
+        const response = await POST(request({ questionText: 'q' }));
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual({ message: code });
     });
 });

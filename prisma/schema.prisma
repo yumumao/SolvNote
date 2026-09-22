@@ -139,3 +139,57 @@ model PracticeRecord {
   
   createdAt DateTime @default(now())
 }
+
+// Opaque encrypted configuration. Encryption key lives in persistent /app/config,
+// not in the database or the portable export passphrase.
+model AiConfiguration {
+ id String @id
+ revision Int @default(1)
+ payload String
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+}
+
+model AiJob {
+ id String @id @default(cuid())
+ userId String
+ kind String
+ state String @default("pending")
+ requestKey String
+ input String
+ result String?
+ errorCode String?
+ attempts Int @default(0)
+ leaseOwner String?
+ leaseUntil DateTime?
+ cancelRequested Boolean @default(false)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ expiresAt DateTime
+ attemptsLog AiAttempt[]
+ @@unique([userId, requestKey])
+ @@index([state, createdAt])
+ @@index([userId, createdAt])
+}
+
+model AiAttempt {
+ id String @id @default(cuid())
+ jobId String
+ job AiJob @relation(fields:[jobId], references:[id], onDelete:Cascade)
+ modelId String
+ state String
+ errorCode String?
+ startedAt DateTime @default(now())
+ finishedAt DateTime?
+}
+
+model AiWorkerLease {
+ id String @id
+ owner String
+ until DateTime
+}
+
+model AiCooldown {
+ id String @id
+ until DateTime
+}

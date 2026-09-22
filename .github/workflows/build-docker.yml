@@ -1,32 +1,194 @@
-name: Manual Docker Build & Publish
+name: Native Docker Build & Publish
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Docker image tag (default: latest)'
+        description: 'Docker image tag (both amd64 and arm64; default: latest)'
         required: false
         default: 'latest'
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Single image tag when release_tags is false'
+        required: false
+        default: 'latest'
+        type: string
+      release_tags:
+        description: 'Publish semver and SHA tags from a v* Git tag'
+        required: false
+        default: false
+        type: boolean
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+permissions:
+  contents: read
+
+# Manual and tag releases share aliases (major/minor/latest), not just input tags.
+# Keep the lock only here, never in the caller; queue instead of canceling releases.
+concurrency:
+  group: ghcr-native-publish-${{ github.repository }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      metadata: ${{ steps.meta.outputs.json }}
+      labels: ${{ steps.meta.outputs.labels }}
+    steps:
+      - name: Validate tag and normalize registry name
+        id: image
+        env:
+          IMAGE_TAG: ${{ inputs.tag || 'latest' }}
+          RELEASE_TAGS: ${{ inputs.release_tags || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo 'Invalid Docker tag' >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAGS" == true && "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo 'Release tags require a v-prefixed Git tag' >&2
+            exit 1
+          fi
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Extract shared Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: '7'
+        with:
+          images: ${{ steps.image.outputs.image }}
+          # Semver auto-latest excludes prereleases; manual mode emits only its input.
+          flavor: latest=${{ inputs.release_tags && 'auto' || 'false' }}
+          tags: |
+            type=raw,value=${{ steps.image.outputs.tag }},enable=${{ !inputs.release_tags }}
+            type=semver,pattern={{version}},enable=${{ inputs.release_tags || false }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ inputs.release_tags || false }}
+            type=semver,pattern={{major}},enable=${{ inputs.release_tags || false }}
+            type=sha,prefix=sha-,enable=${{ inputs.release_tags || false }}
+
+      - name: Verify complete tag set before building
+        id: verify
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          RELEASE_TAGS: ${{ inputs.release_tags || false }}
+          METADATA: ${{ steps.meta.outputs.json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { IMAGE, IMAGE_TAG, RELEASE_TAGS, METADATA, GITHUB_REF, GITHUB_SHA } = process.env;
+          const tags = JSON.parse(METADATA).tags;
+          let expected = [IMAGE_TAG];
+          const prerelease = /^refs\/tags\/v\d+\.\d+\.\d+-/.test(GITHUB_REF);
+          if (RELEASE_TAGS === 'true') {
+            const ref = GITHUB_REF.replace(/^refs\/tags\/v/, '');
+            const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z.-]+)?$/.exec(ref);
+            if (stable) {
+              const [, major, minor, patch] = stable;
+              expected = [`${major}.${minor}.${patch}`, `${major}.${minor}`, major, 'latest'];
+            } else if (prerelease) {
+              expected = [ref.split('+')[0]];
+            } else {
+              throw new Error('Release requires a valid semver Git tag');
+            }
+            expected.push(`sha-${GITHUB_SHA.slice(0, 7)}`);
+          } else if (prerelease && IMAGE_TAG === 'latest') {
+            throw new Error('A prerelease Git tag cannot publish latest');
+          }
+          expected = expected.map(tag => `${IMAGE}:${tag}`).sort();
+          if (!Array.isArray(tags) || JSON.stringify([...new Set(tags)].sort()) !== JSON.stringify(expected)) {
+            throw new Error('Docker metadata does not match the expected release tag set');
+          }
+          console.log(`Verified ${expected.length} publication tags`);
+          NODE
+
+  build:
+    name: Build native ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
+      # Each platform runs on matching hardware; never copy native deps across arch.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      # Set up QEMU for multi-arch builds
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=wrong-notebook-native-${{ matrix.arch }},version=2
+          cache-to: type=gha,scope=wrong-notebook-native-${{ matrix.arch }},version=2,mode=max
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/digests/$ARCH.txt"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.arch }}.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish verified multi-architecture manifest
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download both digests from this attempt
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: image-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -34,16 +196,35 @@ jobs:
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # No aliases are published until BOTH builds and the combined-platform check pass.
+      - name: Create and inspect manifest
+        id: publish
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          METADATA: ${{ needs.prepare.outputs.metadata }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          amd64_digest=$(cat "$RUNNER_TEMP/digests/amd64.txt")
+          arm64_digest=$(cat "$RUNNER_TEMP/digests/arm64.txt")
+          [[ "$amd64_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$arm64_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          mapfile -t tags < <(jq -er '.tags[]' <<< "$METADATA")
+          (( ${#tags[@]} > 0 ))
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            [[ "$tag" == "$IMAGE:"* ]]
+            tag_args+=(--tag "$tag")
+          done
+          sources=("$IMAGE@$amd64_digest" "$IMAGE@$arm64_digest")
+          platform_check='[.manifests[].platform | select(.os == "linux") | .architecture] | unique == ["amd64", "arm64"]'
+          docker buildx imagetools create --dry-run "${sources[@]}" > "$RUNNER_TEMP/combined-manifest.json"
+          jq -e "$platform_check" "$RUNNER_TEMP/combined-manifest.json"
+          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools inspect "$tag" --raw | jq -e "$platform_check"
+          done

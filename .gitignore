@@ -69,3 +69,17 @@ upload_test_output*.txt
 # data
 /data/
 .next-prebuilt/
+
+# Private runtime and AI credentials
+.codex/
+.claude/
+*.bak
+*.aiconfig.enc.json
+*.key
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+config/app-config.json
+config/ai-master.key
+data/

@@ -108,13 +108,22 @@ jobs:
           echo "Changelog:"
           echo "$CHANGELOG"
 
-      - name: Commit version update
+      - name: Commit version update on the default branch tip only
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          # Tags may point to an older commit or a feature branch. Never push
+          # that history into the default branch, and never assume it is main.
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse FETCH_HEAD)" ]; then
+            echo 'Tag is not the current default-branch tip; skipping version commit.'
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
-          git push origin HEAD:main
+          git push origin "HEAD:$DEFAULT_BRANCH"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
