@@ -57,7 +57,7 @@ import { GET, POST } from "@/app/api/ai/config/route";
 import { POST as DEDUP } from "@/app/api/ai/config/deduplicate/route";
 import { POST as IMPORT } from "@/app/api/ai/config/import/route";
 import { AIRequestError } from "@/lib/ai-access";
-import { sealExport } from "@/lib/ai-config/crypto";
+import { sealExport, openExport } from "@/lib/ai-config/crypto";
 import { protect, unprotect } from "@/lib/ai-config/vault";
 import * as store from "@/lib/ai-config/store";
 import { mergeConfig } from "@/lib/ai-config/schema";
@@ -1272,4 +1272,102 @@ it("returns safe field diagnostics after decryption without creating a key or co
     expect(existsSync(file)).toBe(false);
     expect(await shared.db.aiConfiguration.count()).toBe(0);
     expect(shared.legacy).not.toHaveBeenCalled();
+});
+
+
+describe("administrator portable export", () => {
+    const exportRequest = (body = {password: PASSWORD, revision: 1}, headers = {}) =>
+        new Request(`${ORIGIN}/api/ai/config/export`, {method: "POST", headers: {"content-type": "application/json", Origin: ORIGIN, ...headers}, body: JSON.stringify(body)});
+    const runExport = async (req: Request) => (await import("@/app/api/ai/config/export/route")).POST(req);
+    it("exports only encrypted saved AI config, roundtrips into import, with no writes", async () => {
+        const before = await row();
+        const response = await runExport(exportRequest());
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.headers.get("content-disposition")).toContain("attachment;");
+        const text = await response.text();
+        expect(text).not.toContain(current.providers[0].apiKey);
+        expect(text).not.toContain(PASSWORD);
+        const envelope = JSON.parse(text);
+        expect(await openExport(envelope, PASSWORD)).toEqual(current);
+        const result = await IMPORT(request("import", {action: "preview", mode: "replace", password: PASSWORD, envelope}));
+        expect(result.status).toBe(200);
+        expect(await row()).toEqual(before);
+    });
+    it("denies nonadmin and foreign origins before reading body or config", async () => {
+        for (const role of [null, "user", "admin"] as const) {
+            shared.current = role ? {id: "synthetic", role, isActive: true} : null;
+            const req = exportRequest(undefined, role === "admin" ? {Origin: "https://foreign.invalid"} : {});
+            const read = vi.spyOn(req, "body", "get");
+            const load = vi.spyOn(store, "loadAIConfig");
+            try {
+                const response = await runExport(req);
+                expect(response.status).toBe(role ? 403 : 401);
+                expect(response.headers.get("cache-control")).toBe("no-store");
+                expect(read).not.toHaveBeenCalled(); expect(load).not.toHaveBeenCalled();
+            } finally {read.mockRestore(); load.mockRestore();}
+        }
+    });
+    it("rejects stale revision, invalid content type and short passwords without exporting", async () => {
+        expect((await runExport(exportRequest({password: PASSWORD, revision: 0}))).status).toBe(409);
+        expect((await runExport(exportRequest({password: "short", revision: 1}))).status).toBe(400);
+        expect((await runExport(exportRequest(undefined, {"content-type": "text/plain"}))).status).toBe(415);
+        await expectStored(current, 1);
+    });
+    it("does not initialize storage or a master key when exporting legacy config", async () => {
+        await shared.db.aiConfiguration.deleteMany(); const file = freshFileVault();
+        shared.legacy.mockReturnValue({aiProvider: "openai", openai: {instances: [{id: "fixture", name: "Fixture", apiKey: "synthetic-legacy-only", baseUrl: "https://example.com/v1", model: "synthetic"}]}});
+        const response = await runExport(exportRequest({password: PASSWORD, revision: 0}));
+        expect(response.status).toBe(200);
+        expect(existsSync(file)).toBe(false);
+        expect((await openExport(await response.json(), PASSWORD)).providers[0].apiKey).toBe("synthetic-legacy-only");
+        expect(await shared.db.aiConfiguration.count()).toBe(0);
+    });
+    it("rejects oversized/chunked bodies before reading saved keys", async () => {
+        const load = vi.spyOn(store, "loadAIConfig");
+        try {
+            for (const headers of [{}, {"content-length": "9000"}]) {
+                const req = exportRequest({password: "x".repeat(9000), revision: 1}, headers);
+                const response = await runExport(req);
+                expect(response.status).toBe(413);
+                expect(await response.json()).toEqual({message:"BODY_TOO_LARGE"});
+            }
+            expect(load).not.toHaveBeenCalled();
+        } finally {load.mockRestore();}
+    });
+    it("uses fresh salt/IV and keeps the exported snapshot immutable", async () => {
+        const before=await row();
+        const a=await (await runExport(exportRequest())).json();
+        const b=await (await runExport(exportRequest())).json();
+        expect(a.salt).not.toBe(b.salt); expect(a.iv).not.toBe(b.iv);
+        expect(await openExport(a,PASSWORD)).toEqual(await openExport(b,PASSWORD));
+        expect(await row()).toEqual(before);
+    });
+    it("never leaks vault errors or configuration values", async () => {
+        const spy = vi.spyOn(store, "loadAIConfig").mockRejectedValueOnce(Error("synthetic-private-value"));
+        try {
+            const response = await runExport(exportRequest());
+            expect(response.status).toBe(400);
+            expect(await response.json()).toEqual({message: "INVALID_REQUEST_OR_CONFIGURATION"});
+        } finally {spy.mockRestore();}
+    });
+});
+
+describe("admin-only origin diagnostic", () => {
+    const get = async () => (await import("@/app/api/ai/config/origin/route")).GET(new Request("http://internal:3000/api/ai/config/origin", {headers: {"X-Forwarded-Host": "forged.invalid"}}));
+    it("reports the explicit canonical origin, never internal or forwarded hosts", async () => {
+        vi.stubEnv("NEXTAUTH_URL", ORIGIN + "/api/auth?private=value");
+        const response = await get(); expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(await response.json()).toEqual({state: "configured", canonicalOrigin: ORIGIN});
+    });
+    it("distinguishes missing and invalid config without disclosing invalid values", async () => {
+        vi.stubEnv("NEXTAUTH_URL", ""); expect(await (await get()).json()).toEqual({state: "missing", canonicalOrigin: null});
+        vi.stubEnv("NEXTAUTH_URL", "https://private:private@example.invalid");
+        expect(await (await get()).json()).toEqual({state: "invalid", canonicalOrigin: null});
+    });
+    it("does not expose the deployment address to ordinary users", async () => {
+        shared.current = {id: "synthetic", role: "user", isActive: true};
+        const response = await get(); expect(response.status).toBe(403);
+        expect(await response.text()).not.toContain(ORIGIN);
+    });
 });

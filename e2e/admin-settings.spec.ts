@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, pbkdf2Sync, createDecipheriv } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
 
 // Seed and login share this explicit fixture; never use a deployment default.
@@ -92,5 +93,39 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     await persisted.locator('summary').filter({ hasText: 'E2E vision' }).click();
     await expect(persisted.getByLabel('上游模型/部署名', { exact: true }).nth(1)).toHaveValue('synthetic-vision');
     await expect(persisted.getByLabel('支持读图（多模态）', { exact: true }).nth(1)).toBeChecked();
+    // Native browser download + independent Node decryption + actual import preview.
+    await expect(page.locator('summary').filter({hasText:'站点地址检查'})).toContainText('地址一致');
+    const savedRevision = (await page.request.get('/api/ai/config').then(r=>r.json())).revision;
+    await page.getByRole('button',{name:'导出配置',exact:true}).click();
+    const passphrase = 'synthetic-' + randomUUID();
+    await page.getByLabel('设置导出口令',{exact:true}).fill(passphrase);
+    await page.getByLabel('再次输入导出口令',{exact:true}).fill(passphrase);
+    const downloading = page.waitForEvent('download');
+    await page.getByRole('button',{name:'加密并下载',exact:true}).click();
+    const download=await downloading;
+    expect(download.suggestedFilename()).toBe('wrong-notebook.aiconfig.enc.json');
+    const bytes=await readFile((await download.path())!);expect(bytes.length).toBeLessThanOrEqual(1024*1024);
+    const envelope=JSON.parse(bytes.toString('utf8'));
+    expect(Object.keys(envelope).sort()).toEqual(['format','v','alg','kdf','iter','salt','iv','data'].sort());
+    expect(envelope.format).toBe('portable-ai-config');expect(envelope.v).toBe(1);expect(envelope.iter).toBe(300000);
+    const key=pbkdf2Sync(passphrase,Buffer.from(envelope.salt,'base64'),300000,32,'sha256');
+    const cipher=Buffer.from(envelope.data,'base64');
+    const decipher=createDecipheriv('aes-256-gcm',key,Buffer.from(envelope.iv,'base64'));
+    decipher.setAuthTag(cipher.subarray(-16));
+    const restored=JSON.parse(Buffer.concat([decipher.update(cipher.subarray(0,-16)),decipher.final()]).toString('utf8'));
+    expect(restored.chains).toEqual(config.chains);expect(restored.models).toEqual(config.models);
+    expect(restored.providers.filter((p:{name:string})=>[firstName,secondName].includes(p.name))).toHaveLength(2);
+    expect(bytes.toString('utf8').includes(passphrase)).toBe(false);
+    for(const p of restored.providers) if(p.apiKey) expect(bytes.toString('utf8').includes(p.apiKey)).toBe(false);
+    await expect(page.getByLabel('设置导出口令',{exact:true})).toBeEmpty();
+    await page.getByRole('button',{name:'关闭',exact:true}).click();
+    await page.getByRole('button',{name:'导入配置',exact:true}).click();
+    await page.getByLabel('加密配置文件').setInputFiles({name:'synthetic.aiconfig.enc.json',mimeType:'application/json',buffer:bytes});
+    await page.getByLabel('导出口令',{exact:true}).fill(passphrase);
+    const previewing=page.waitForResponse(r=>r.url().endsWith('/api/ai/config/import'));
+    await page.getByRole('button',{name:'解密并预览（不写入）',exact:true}).click();
+    const previewResponse=await previewing;expect(previewResponse.status()).toBe(200);
+    const preview=await previewResponse.json();expect(preview.config.models).toEqual(config.models);
+    expect((await page.request.get('/api/ai/config').then(r=>r.json())).revision).toBe(savedRevision);
     expect(externalRequests).toEqual([]);
 });

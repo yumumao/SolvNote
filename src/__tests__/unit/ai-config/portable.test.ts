@@ -76,3 +76,10 @@ describe("portable AI config", () => {
         ).not.toHaveProperty("proxy");
     });
 });
+
+
+it("refuses an export too large for portable import and whitespace-only passphrases", async () => {
+    const huge = {...config, providers: Array.from({length: 50}, (_, i) => ({...config.providers[0], id: i ? `p${i}` : "p", apiKey: "x".repeat(16384)}))};
+    await expect(sealExport(huge, "synthetic-passphrase-only")).rejects.toThrow("EXPORT_TOO_LARGE");
+    await expect(sealExport(config, " ".repeat(12))).rejects.toThrow("PASSPHRASE_LENGTH");
+});

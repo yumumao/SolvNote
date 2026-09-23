@@ -58,13 +58,13 @@ export async function sealExport(
     config: unknown,
     password: string,
 ): Promise<ExportEnvelope> {
-    if (password.length < 12 || password.length > 1024)
+    if (password.length < 12 || password.length > 1024 || !password.trim())
         throw Error("PASSPHRASE_LENGTH");
     const c = parseConfig(config);
     const salt = randomBytes(16);
     const key = await derive(password, salt, 300000, 32, "sha256");
     const enc = encryptWithKey(JSON.stringify(c), key);
-    return {
+    const envelope: ExportEnvelope = {
         format: "portable-ai-config",
         v: 1,
         alg: "AES-256-GCM",
@@ -73,6 +73,8 @@ export async function sealExport(
         salt: salt.toString("base64"),
         ...enc,
     };
+    if (Buffer.byteLength(JSON.stringify(envelope), "utf8") > MAX_EXPORT_BYTES) throw Error("EXPORT_TOO_LARGE");
+    return envelope;
 }
 export async function openExport(raw: unknown, password: string) {
     if (
