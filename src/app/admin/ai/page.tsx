@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { AIConfigExport } from "@/components/ai-config-export";
+import { AIOriginStatus } from "@/components/ai-origin-status";
 import { AIConfigDeduplicate } from "@/components/ai-config-deduplicate";
 import { apiClient } from "@/lib/api-client";
 import { importErrorMessage } from "@/lib/ai-config/import-errors";
@@ -159,6 +161,7 @@ export default function AIManagement() {
         <header className="flex flex-wrap items-start justify-between gap-3">
             <div><h1 className="text-2xl font-bold">AI设置</h1><p className="text-sm text-muted-foreground mt-1">先添加连接，再添加这把Key可用的模型。</p></div>
             <div className="flex flex-wrap gap-2">
+                <AIConfigExport disabled={busy || !loaded || dirty} revision={revision} />
                 <AIConfigDeduplicate disabled={busy || !loaded || dirty} onApplied={(c, r) => { acceptConfig(c, r); setMessage("已应用合并，调用顺序已更新。密钥仍由服务端加密保存。"); }} />
                 <Dialog open={importOpen} onOpenChange={(open) => {
                     if (importInFlight.current) return;
@@ -193,6 +196,7 @@ export default function AIManagement() {
                 <button className="bg-primary text-primary-foreground rounded-md px-4 py-2 disabled:opacity-40" disabled={busy || !loaded || !dirty} onClick={save}>{busy ? "处理中…" : "保存设置"}</button>
             </div>
         </header>
+        <AIOriginStatus />
         <p role="status" className="text-sm rounded-md bg-muted p-3">{message}{dirty && " · 有未保存修改"}</p>
         <fieldset disabled={busy || !loaded} className="space-y-6 min-w-0">
             <section className="space-y-3">

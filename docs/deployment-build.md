@@ -121,3 +121,14 @@ ScanDex负责导出文件，错题本页面负责将文件提交给错题本后�
 - 若前面明确提示`INITIAL_ADMIN_PASSWORD`：仅当目标数据库没有任何管理员时才要求设置至少12字符的非空初始密码；已存在管理员（包括停用的管理员）应保持不变。旧站突然触发首次初始化时先检查实际镜像、`DATABASE_URL`和`/app/data`挂载，不要在错误的新库里盲目创建新管理员。
 - 确认Zeabur镜像来源是`ghcr.io/yumumao/wrong-notebook-yus`及对应发布digest。日志中的容器显示名可能沿用创建服务时的旧名称，不能仅凭显示名认定当前仍在使用上游镜像。
 - `scripts/smoke-container.sh`只供隔离CI/显式本地Docker验收，自动新建并清理自己的合成容器和卷；绝不指向真实卷。管理员和会话测试值随机生成到临时env文件，不写日志或镜像，两个持久卷及数据库不会放进公开artifact。
+
+## 导入或导出被同源校验拒绝
+
+`IMPORT_ORIGIN_REJECTED`不代表ScanDex口令错误，也不是两个项目必须同域名。校验在错题本读取导入文件之前发生；给错题本增加导出功能不会绕过此保护。
+
+1. 管理员打开`/admin/ai`的站点地址检查，核对浏览器页面地址与后台NEXTAUTH_URL。
+2. 确认浏览器使用的是错题本正式域名，再在Zeabur环境变量中设置`NEXTAUTH_URL=https://你的错题本正式域名`。只用协议、主机和必要端口；不要填ScanDex地址、API供应商地址、容器内部地址或口令。localhost与127.0.0.1是两个不同origin。
+3. 保留`wrong-notebook-config → /app/config`及`wrong-notebook-data → /app/data`，重新部署使环境变量生效；从正式地址重新登录，再预览导入。
+4. 地址一致仍报错时，核对浏览器Network中失败请求的Origin与Sec-Fetch-Site及代理是否改写它们。不要发送Cookie、Authorization、Key、口令或导入文件来排错。不要关闭同源校验，也不要用未经验证的X-Forwarded-Host任意放行。
+
+诊断接口仅管理员可读；旧镜像没有该接口时页面会提示暂不可用，需要部署新后台。登录成功本身不能证明受保护的AI写入接口地址配置正确。修改本地源码或发布镜像也不等于已修改Zeabur环境变量。
