@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="440" viewBox="0 0 800 440" role="img" aria-labelledby="title desc">
+  <title id="title">智能错题本：从题图到理解，再到复习</title>
+  <desc id="desc">功能流程示意，不是界面截图。读准题目、讲清思路、追问纠错、存题复习。题图是证据，解析可追问，错题可编辑。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#eef6ff"/><stop offset="1" stop-color="#f0fdfa"/></linearGradient>
+  </defs>
+  <rect width="800" height="440" rx="24" fill="url(#bg)"/>
+  <g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+    <text x="36" y="59" font-size="34" font-weight="700" fill="#102d4e">把一道题，变成一次学会。</text>
+    <text x="36" y="98" font-size="22" fill="#415a70">给出答案，也交代方法、理由与检验。</text>
+    <rect x="36" y="130" width="352" height="110" rx="16" fill="#fff" stroke="#c9dcec"/>
+    <rect x="412" y="130" width="352" height="110" rx="16" fill="#fff" stroke="#b8ded9"/>
+    <rect x="36" y="260" width="352" height="110" rx="16" fill="#fff" stroke="#d4d0eb"/>
+    <rect x="412" y="260" width="352" height="110" rx="16" fill="#fff" stroke="#e5d5b4"/>
+    <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <g stroke="#2563a6"><rect x="57" y="156" width="30" height="36" rx="4"/><path d="M63 179l6-7 5 5 5-9 8 12M65 164h.01"/><path d="M79 193l5 5 10-12"/></g>
+      <g stroke="#0f766e"><path d="M433 186h8v-9h9v-10h10v-11h10M439 158h9M443.5 153.5v9"/></g>
+      <g stroke="#7050a0"><path d="M59 286h29a4 4 0 014 4v18a4 4 0 01-4 4H73l-10 8v-8h-4a4 4 0 01-4-4v-18a4 4 0 014-4zM64 295h19M64 303h12"/></g>
+      <g stroke="#966422"><rect x="435" y="285" width="29" height="36" rx="4"/><path d="M442 285v13l7-4 7 4v-13M442 309l5 5 10-10"/></g>
+    </g>
+    <text x="108" y="171" font-size="25" font-weight="700" fill="#173b60">01 读准题目</text>
+    <text x="108" y="209" font-size="20" fill="#415a70">原图核对，疑点补读</text>
+    <text x="484" y="171" font-size="25" font-weight="700" fill="#12584f">02 讲清思路</text>
+    <text x="484" y="209" font-size="20" fill="#415a70">分步推导，解释依据</text>
+    <text x="108" y="301" font-size="25" font-weight="700" fill="#593c7e">03 追问纠错</text>
+    <text x="108" y="339" font-size="20" fill="#415a70">补充条件，换个讲法</text>
+    <text x="484" y="301" font-size="25" font-weight="700" fill="#77511d">04 存题复习</text>
+    <text x="484" y="339" font-size="20" fill="#415a70">编辑错因，归纳知识</text>
+    <text x="400" y="410" text-anchor="middle" font-size="21" fill="#36566b">题图是证据 · 解析可追问 · 错题可编辑</text>
+  </g>
+</svg>
