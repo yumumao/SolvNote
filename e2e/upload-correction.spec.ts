@@ -7,9 +7,18 @@ if (adminPassword.length < 12) {
     throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
 }
 
-test('Upload image, correct, save, and verify in notebook', async ({ page }) => {
+test('Legacy direct image task can be corrected, saved, and verified in notebook', async ({ page, baseURL }) => {
     // 增加测试超时时间
     test.setTimeout(90000);
+
+    const externalRequests: string[] = [];
+    await page.route('**/*', route => {
+        if (new URL(route.request().url()).origin !== new URL(baseURL!).origin) {
+            externalRequests.push('blocked');
+            return route.abort();
+        }
+        return route.continue();
+    });
 
     // Accept once, then poll a durable job without contacting an AI provider.
     const jobId = 'synthetic-upload-job';
@@ -81,6 +90,10 @@ test('Upload image, correct, save, and verify in notebook', async ({ page }) => 
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
+    // The default is now a durable conversation; this regression protects the explicit legacy flow.
+    await expect(page.getByLabel('解题方式')).toHaveValue('conversation');
+    await page.getByLabel('解题方式').selectOption('direct');
+
     // 4. Upload Image
     const filePath = path.join(__dirname, './fixtures/math_test.png');
     // UploadZone handles drag-drop but exposes a hidden input
@@ -98,8 +111,10 @@ test('Upload image, correct, save, and verify in notebook', async ({ page }) => 
 
     // 7. Correct the Question Text
     // Prepend "试题：" to the question text
-    // Use first textarea which corresponds to Question
-    const questionBox = page.locator('textarea').nth(0);
+    // Math fields preview by default. Expand the actual question source before editing.
+    const questionField = page.locator('section').filter({ has: page.getByRole('heading', { name: '题目内容', exact: true }) });
+    await questionField.locator('summary').click();
+    const questionBox = page.getByLabel('题目内容标记代码', { exact: true });
     await expect(questionBox).toHaveValue('2 + 2 = ?', { timeout: 5000 }); // From mock
     expect(analyzeRequests).toBe(1);
     expect(pollRequests).toBeGreaterThanOrEqual(2);
@@ -120,7 +135,7 @@ test('Upload image, correct, save, and verify in notebook', async ({ page }) => 
 
     // 9. Save
     // Click "Save to Notebook" / "保存"
-    await page.getByRole('button', { name: /保存|Save/ }).click();
+    await page.getByRole('button', { name: '保存到错题本', exact: true }).click();
 
     // 10. Verify Redirection and Content
     // Should redirect to /notebooks/[id]
@@ -138,6 +153,8 @@ test('Upload image, correct, save, and verify in notebook', async ({ page }) => 
 
     // Verify Mastery Status (To Review / 待复习)
     await expect(page.locator('.badge, .inline-flex').filter({ hasText: /待复习|Review/ }).first()).toBeVisible();
+
+    expect(externalRequests).toEqual([]);
 
     // 11. Delete ALL Error Items (Cleanup) to ensure notebook can be deleted
     while (true) {

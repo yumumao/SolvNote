@@ -8,12 +8,12 @@ if (adminPassword.length < 12) {
     throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
 }
 
-test('Admin saves two-layer connections, models and capabilities without exposing keys', async ({ page }) => {
+test('Admin saves two-layer connections, models and capabilities without exposing keys', async ({ page, baseURL }) => {
     test.setTimeout(60000);
     // Only exercise our own app. Saving configuration must not contact a provider.
     const externalRequests: string[] = [];
     await page.route('**/*', async route => {
-        if (new URL(route.request().url()).origin !== 'http://127.0.0.1:3000') {
+        if (new URL(route.request().url()).origin !== new URL(baseURL!).origin) {
             externalRequests.push('blocked');
             return route.abort();
         }
@@ -30,17 +30,17 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     await page.getByRole('tab', { name: /AI Provider|AI 提供商/ }).click();
     await page.getByRole('link', { name: '打开AI配置、模型顺序与加密导入' }).click();
     await expect(page.getByRole('heading', { name: 'AI设置', exact: true })).toBeVisible();
-    await expect(page.getByRole('status')).toContainText('配置仅管理员可见');
+    await expect(page.getByLabel('AI设置保存栏', { exact: true }).getByRole('status')).toContainText('配置仅管理员可见');
 
     const suffix = randomUUID();
     const firstName = `E2E connection ${suffix}`;
     const secondName = `E2E alternate ${suffix}`;
     const endpoint = 'https://example.com/v1';
     await page.getByRole('button', { name: '＋添加连接', exact: true }).click();
-    await page.locator('details[open]').getByLabel('连接名称', { exact: true }).fill(firstName);
-    const first = page.locator('details').filter({
-        has: page.locator('summary > strong').filter({ hasText: new RegExp(`^${firstName}$`) }),
-    });
+    const first = page.getByRole('dialog');
+    await expect(first).toBeVisible();
+    await expect(first.locator('details')).toHaveCount(0);
+    await first.getByLabel('连接名称', { exact: true }).fill(firstName);
     await first.getByLabel('API基础地址', { exact: true }).fill(endpoint);
     await first.getByLabel('API密钥', { exact: true }).fill(`synthetic-${randomUUID()}`);
     await first.getByRole('button', { name: '＋添加模型', exact: true }).click();
@@ -52,7 +52,7 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     await first.getByLabel('支持读图（多模态）', { exact: true }).nth(1).check();
 
     await first.getByRole('button', { name: '同地址添加另一把Key', exact: true }).click();
-    const second = page.locator('details[open]').filter({ has: page.getByLabel('连接名称', { exact: true }) });
+    const second = page.getByRole('dialog');
     await second.getByLabel('连接名称', { exact: true }).fill(secondName);
     await expect(second.getByLabel('API基础地址', { exact: true })).toHaveValue(endpoint);
     await expect(second.getByLabel('API密钥', { exact: true })).toBeEmpty();
@@ -61,10 +61,22 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     await second.getByLabel('显示名称', { exact: true }).fill('E2E alternate text');
     await second.getByLabel('上游模型/部署名', { exact: true }).fill('synthetic-text');
 
+    await second.getByRole('button', { name: '关闭（保留草稿）', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // Models are opt-in to independent solving and transcription orders.
+    const textOrder = page.getByLabel('添加text链模型', { exact: true });
+    const visionOrder = page.getByLabel('添加vision链模型', { exact: true });
+    await expect(visionOrder.getByRole('option', { name: `E2E text · ${firstName}`, exact: true })).toHaveCount(0);
+    await textOrder.selectOption({ label: `E2E text · ${firstName}` });
+    await textOrder.selectOption({ label: `E2E vision · ${firstName}` });
+    await textOrder.selectOption({ label: `E2E alternate text · ${secondName}` });
+    await visionOrder.selectOption({ label: `E2E vision · ${firstName}` });
+    const saveBar = page.getByLabel('AI设置保存栏', { exact: true });
+    expect(await saveBar.evaluate(el => getComputedStyle(el).position)).toBe('fixed');
     const saving = page.waitForResponse(r => r.url().endsWith('/api/ai/config') && r.request().method() === 'POST');
-    await page.getByRole('button', { name: '保存设置', exact: true }).click();
+    await saveBar.getByRole('button', { name: '保存设置', exact: true }).click();
     expect((await saving).status()).toBe(200);
-    await expect(page.getByRole('status')).toContainText('配置已保存');
+    await expect(page.getByLabel('AI设置保存栏', { exact: true }).getByRole('status')).toContainText('配置已保存');
 
     const loading = page.waitForResponse(r => r.url().endsWith('/api/ai/config') && r.request().method() === 'GET');
     await page.reload();
@@ -87,12 +99,13 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     expect(config.chains.vision.filter((id: string) => models.some((m: { id: string }) => m.id === id)))
         .toEqual([models[1].id]);
 
-    await page.locator('summary').filter({ hasText: firstName }).click();
-    const persisted = page.locator('details[open]').filter({ has: page.getByLabel('连接名称', { exact: true }) });
+    await page.getByRole('button', { name: firstName, exact: true }).click();
+    const persisted = page.getByRole('dialog');
     await expect(persisted.getByLabel('API密钥', { exact: true })).toHaveValue('********');
-    await persisted.locator('summary').filter({ hasText: 'E2E vision' }).click();
     await expect(persisted.getByLabel('上游模型/部署名', { exact: true }).nth(1)).toHaveValue('synthetic-vision');
     await expect(persisted.getByLabel('支持读图（多模态）', { exact: true }).nth(1)).toBeChecked();
+    await expect(persisted.getByRole('button', { name: '保存全部AI设置', exact: true })).toBeVisible();
+    await persisted.getByRole('button', { name: '关闭（保留草稿）', exact: true }).click();
     // Native browser download + independent Node decryption + actual import preview.
     await expect(page.locator('summary').filter({hasText:'站点地址检查'})).toContainText('地址一致');
     const savedRevision = (await page.request.get('/api/ai/config').then(r=>r.json())).revision;
