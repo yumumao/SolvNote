@@ -1,5 +1,7 @@
 # 智能错题本 · YUS继续开发版
 
+**简体中文** | [English](README.en.md)
+
 **不止拍照出答案，更要讲清怎么想到、为什么成立、下次怎样自己做。**
 
 基于[wttwins/wrong-notebook](https://github.com/wttwins/wrong-notebook)继续开发，保留账户、学科错题本、裁剪上传、知识点、练习和打印，重点增强图文解析、多轮追问、几何辅助线与AI配置互通。

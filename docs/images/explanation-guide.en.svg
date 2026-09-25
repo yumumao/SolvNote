@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="414" viewBox="0 0 800 414" role="img" aria-labelledby="title desc">
+  <title id="title">A useful explanation: approach, steps, checks, and takeaways</title>
+  <desc id="desc">Explanation structure, not an actual AI answer. Explain the choice of method, justify each step, check the result, and extract a reusable method. Analyze personal mistakes only when the learner provides their work.</desc>
+  <rect width="800" height="414" rx="20" fill="#f8fafc"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="32" y="49" font-size="28" font-weight="700" fill="#173b60">Four things a useful explanation should make clear</text>
+    <path d="M55 116v234" fill="none" stroke="#cbdde9" stroke-width="3"/>
+    <g fill="#fff" stroke="#dce5ec"><rect x="88" y="78" width="680" height="68" rx="12"/><rect x="88" y="160" width="680" height="68" rx="12"/><rect x="88" y="242" width="680" height="68" rx="12"/><rect x="88" y="324" width="680" height="68" rx="12"/></g>
+    <g fill="#245e91"><circle cx="55" cy="112" r="19"/><circle cx="55" cy="194" r="19"/></g>
+    <g fill="#14796b"><circle cx="55" cy="276" r="19"/><circle cx="55" cy="358" r="19"/></g>
+    <g fill="#fff" font-size="20" text-anchor="middle" font-weight="700"><text x="55" y="119">1</text><text x="55" y="201">2</text><text x="55" y="283">3</text><text x="55" y="365">4</text></g>
+    <g font-size="24" font-weight="700" fill="#173b60"><text x="109" y="121">Plan</text><text x="109" y="203">Steps</text><text x="109" y="285">Check</text><text x="109" y="367">Learn</text></g>
+    <g font-size="20" fill="#3c5266"><text x="210" y="120">Use the givens and goal to explain the method.</text><text x="210" y="202">Justify each step and the purpose of added lines.</text><text x="210" y="284">Check the result against the original conditions.</text><text x="210" y="366">Keep a reusable method; analyze errors from your work.</text></g>
+  </g>
+</svg>
