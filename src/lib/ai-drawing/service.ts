@@ -4,8 +4,8 @@ import {loadAIConfig} from "../ai-config/store";
 import {callChain} from "../ai/chain";
 import {AIError} from "../ai/transport";
 import {dataImage} from "../ai/managed-service";
-import {parseJSON} from "../ai-dialogue/protocol";
-import {ConstructionSchema,compileConstruction,CONSTRUCTION_PROMPT} from "./construction";
+import {parseConstruction} from "./parse";
+import {compileConstruction,CONSTRUCTION_PROMPT} from "./construction";
 import {approvedImageEditor} from "./settings";
 export async function validateDrawingInput(kind:string,input:JobInput){
     if(kind==="construction")return;
@@ -17,7 +17,7 @@ export async function executeDrawing(kind:"construction"|"image_edit",input:JobI
     const image=dataImage(input.originalImageBase64||input.imageBase64,input.mimeType);
     const text=JSON.stringify({question:input.questionText,answer:input.answerText,analysis:input.analysis});
     if(kind==="construction"){
-        const plan=await callChain(CONSTRUCTION_PROMPT,text,image,raw=>{const plan=parseJSON(raw,ConstructionSchema);compileConstruction(plan);return plan;},{role:"solve",stage:"construction"});
+        const plan=await callChain(CONSTRUCTION_PROMPT,text,image,parseConstruction,{role:"solve",stage:"construction"});
         return {type:"construction" as const,plan};
     }
     if(!image||!input.drawingPlan||!input.confirmImageEdit)throw new AIError("AI_IMAGE_EDIT_INVALID_INPUT");

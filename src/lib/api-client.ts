@@ -1,4 +1,4 @@
-type RequestOptions=RequestInit&{params?:Record<string,string>;timeout?:number};
+type RequestOptions=RequestInit&{params?:Record<string,string>;timeout?:number;onJobAccepted?:(jobId:string)=>void};
 export class ApiError extends Error{constructor(public status:number,public statusText:string,public data:unknown){super(`API Error: ${status} ${statusText}`);this.name='ApiError'}}
 export async function waitForAIJob<T>(id:string,signal?:AbortSignal):Promise<T>{
  if(!/^[a-zA-Z0-9_-]+$/.test(id))throw new ApiError(400,'Invalid job',{});
@@ -14,7 +14,7 @@ export async function waitForAIJob<T>(id:string,signal?:AbortSignal):Promise<T>{
  throw new ApiError(408,'Task expired',{message:'AI_JOB_EXPIRED',jobId:id});
 }
 async function request<T>(url:string,options:RequestOptions={}):Promise<T>{
- const {params,headers,timeout=60000,signal:callerSignal,...rest}=options;
+ const {params,headers,timeout=60000,signal:callerSignal,onJobAccepted,...rest}=options;
  const finalUrl=params?`${url}?${new URLSearchParams(params)}`:url;
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeout);
  const mergedHeaders=new Headers(headers);if(!mergedHeaders.has('Content-Type'))mergedHeaders.set('Content-Type','application/json');
@@ -25,7 +25,8 @@ async function request<T>(url:string,options:RequestOptions={}):Promise<T>{
  clearTimeout(timer);
  if(!res.ok)throw new ApiError(res.status,res.statusText,data);
  if(res.status===202){
- const accepted=data as {jobId:string};if(!accepted.jobId)throw new ApiError(502,'Invalid task response',{});
+ const accepted=data as {jobId:string};if(typeof accepted.jobId!=='string'||!/^[a-zA-Z0-9_-]+$/.test(accepted.jobId))throw new ApiError(502,'Invalid task response',{});
+ onJobAccepted?.(accepted.jobId);
  if(typeof window!=='undefined'){try{localStorage.setItem('last-ai-job',accepted.jobId)}catch{}window.dispatchEvent(new CustomEvent('ai-job-progress',{detail:{id:accepted.jobId,state:'pending'}}))}
  return await waitForAIJob<T>(accepted.jobId,callerSignal||undefined);
  }

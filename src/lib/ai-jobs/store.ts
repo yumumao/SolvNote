@@ -1,3 +1,4 @@
+import { diagnosticMessage } from "../ai/diagnostics";
 import type { AiJob } from "@prisma/client";
 import { prisma } from "../prisma";
 import { loadAIConfig } from "../ai-config/store";
@@ -82,7 +83,7 @@ export async function readJob(userId: string, id: string, restore = false) {
     });
     return {
         ...publicJob(j),
-        attemptsLog: attempts.map(({metadata,...a})=>{const m=metadata?unprotect<import("../ai-dialogue/types").StepMetadata>(metadata):undefined;return {...a,...(m?{stage:m.stage,modelName:m.modelName,providerName:m.providerName,withImage:m.withImage}: {})};}),
+        attemptsLog: attempts.map(({metadata,...a})=>{const m=metadata?unprotect<import("../ai-dialogue/types").StepMetadata>(metadata):undefined;return {...a,...(m?{stage:m.stage,modelName:m.modelName,providerName:m.providerName,withImage:m.withImage,...(diagnosticMessage(m.diagnostic)?{diagnostic:m.diagnostic}:{})}: {})};}),
         ...(j.state === "success" && j.result
             ? { result: unprotect(j.result) }
             : {}),

@@ -288,6 +288,13 @@ describe.sequential("bounded drawing routes and jobs",()=>{
   const job=await readJob("alice",jobId);expect(job?.state).toBe("success");expect(job?.result).toMatchObject({type:"construction",plan:construction});expect(shared.send).toHaveBeenCalledTimes(1);expect(shared.send.mock.calls[0][3]).toContain("current edited question");expect(await readJob("bob",jobId)).toBeNull();
   expect((job?.attemptsLog[0] as unknown as {stage:string}).stage).toBe("construction");
  });
+ it("stops unsupported drawings once without spending the fallback model budget",async()=>{
+  shared.send.mockResolvedValue(JSON.stringify({unsupported:true}));
+  const r=await DRAW(req("/api/ai/drawing/construction",{questionText:"synthetic unsupported curve",answerText:"synthetic answer"}),{params:Promise.resolve({kind:"construction"})});
+  const {jobId}=await r.json();await processOne();const job=await readJob("alice",jobId);
+  expect(job?.state).toBe("failed");expect(job?.errorCode).toBe("AI_DRAWING_UNSUPPORTED");expect(shared.send).toHaveBeenCalledTimes(1);
+  expect(job?.attemptsLog[0]).toMatchObject({diagnostic:"DRAWING_UNSUPPORTED"});
+ });
  it("never dispatches editing when not activated or without explicit consent",async()=>{
   const response=await DRAW(req("/api/ai/drawing/image_edit",{questionText:"fixture",imageBase64:image,drawingPlan:construction}),{params:Promise.resolve({kind:"image_edit"})});expect(response.status).toBe(400);expect(shared.send).not.toHaveBeenCalled();
  });
