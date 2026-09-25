@@ -1,5 +1,7 @@
 /** Public, fixed-vocabulary diagnostics. Never include provider text, URLs, keys or schema values. */
 export const AI_DIAGNOSTIC_MESSAGES = {
+    DRAWING_UNSUPPORTED: "模型表示现有构造白名单无法表达必要图形，或题设不足；已停止，未自动换模型重试。请核对题目与构造说明。",
+    DRAWING_INVALID: "构造坐标或依赖不合法，例如圆弧两端半径不一致、引用点缺失或几何退化；未采用错误构图。",
     JSON_INVALID: "已收到正文，但不是完整有效的JSON；可能含额外说明或公式转义错误。",
     JSON_SCHEMA_INVALID: "已收到JSON，但必需字段缺失或类型不符合约定。",
     GEOMETRY_INVALID: "几何证据字段不合法，例如角的顶点、射线或编号冲突；未擅自修正题设。",

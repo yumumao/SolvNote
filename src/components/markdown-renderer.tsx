@@ -4,6 +4,7 @@ import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+import { normalizeMathMarkdown } from '@/lib/markdown-math';
 
 interface MarkdownRendererProps {
     content: string;
@@ -11,23 +12,7 @@ interface MarkdownRendererProps {
 }
 
 export function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
-    // Preprocess content to ensure proper paragraph breaks and LaTeX rendering
-    // Convert single line breaks to double line breaks for better readability
-    const processedContent = content
-        // Legacy escaped line breaks only; never corrupt LaTeX \neq, \nu or \nabla.
-        .replace(/\\n(?![a-zA-Z])/g, '\n')
-        // Preserve existing double line breaks with a unique marker
-        .replace(/\n\n/g, '\n\n###PRESERVE_BREAK###\n\n')
-        // Convert patterns that should be new paragraphs
-        .replace(/([。！？；])\n(?!\n)/g, '$1\n\n')  // Chinese punctuation followed by single newline
-        .replace(/([.!?;])\s*\n(?!\n)/g, '$1\n\n')   // English punctuation followed by single newline
-        .replace(/(\d+\))\s*\n(?!\n)/g, '$1\n\n')    // Numbered items like (1), (2)
-        .replace(/([\u2460-\u2473])\s*\n(?!\n)/g, '$1\n\n')  // Circled numbers ①②③
-        // Fix: Remove indentation for lines starting with circled numbers or (n) to prevent code block rendering
-        .replace(/\n\s+([\u2460-\u2473])/g, '\n$1')
-        .replace(/\n\s+(\d+\))/g, '\n$1')
-        // Restore preserved double line breaks (use flexible whitespace matching)
-        .replace(/\s*###PRESERVE_BREAK###\s*/g, '\n\n');
+    const processedContent = normalizeMathMarkdown(content);
 
     return (
         <div className={`markdown-content overflow-x-auto min-w-0 ${className}`}>
