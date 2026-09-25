@@ -4,15 +4,16 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { ParsedQuestion } from "@/lib/ai";
 import { calculateGrade } from "@/lib/grade-calculator";
+import { Textarea } from "@/components/ui/textarea";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Save, RefreshCw, Loader2, Box } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { frontendLogger } from "@/lib/frontend-logger";
-import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { MarkdownField } from "@/components/markdown-field";
 import { TagInput } from "@/components/tag-input";
 import { NotebookSelector } from "@/components/notebook-selector";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -22,6 +23,7 @@ import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave, type MistakeStatus } from "@/lib/mistake-status";
 import type { ReanswerQuestionResult, GeogebraAnalysisResult } from "@/lib/ai/types";
 import { buildReanswerRequestBody } from "@/lib/reanswer-request";
+import { AuxiliaryDrawing } from "@/components/auxiliary-drawing";
 import { GeogebraDemo } from "@/components/geogebra-demo";
 
 interface ParsedQuestionWithSubject extends ParsedQuestion {
@@ -276,7 +278,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                 <p className="text-sm">刷新或离开不会取消已受理的后台任务，请勿重复提交。年级仅作为讲解偏好，正确性优先。</p>
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-2">
+            <div className="space-y-6">
                 {/* 左侧：编辑区 */}
                 <div className="space-y-6">
                     {imagePreview && (
@@ -323,13 +325,8 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </div>
 
                     <div className="space-y-2">
-                        <Label>{t.editor.question}</Label>
-                        <Textarea
-                            value={data.questionText}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setData({ ...data, questionText: e.target.value })}
-                            className="min-h-[150px] font-mono text-sm"
-                            placeholder={t.editor.placeholder || "Supports Markdown and LaTeX..."}
-                        />
+                        <MarkdownField label={t.editor.question || "题目内容"} value={data.questionText || ""}
+                            onChange={value => setData(prev => ({ ...prev, questionText: value }))} emptyText={"暂无题目内容"}/>
                         <Button
                             variant="default"
                             size="sm"
@@ -374,23 +371,13 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </div>
 
                     <div className="space-y-2">
-                        <Label>{t.editor.answer}</Label>
-                        <Textarea
-                            value={data.answerText}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setData({ ...data, answerText: e.target.value })}
-                            className="min-h-[100px] font-mono text-sm"
-                            placeholder={t.editor.placeholder || "Supports Markdown and LaTeX..."}
-                        />
+                        <MarkdownField label={t.editor.answer || "参考答案"} value={data.answerText || ""}
+                            onChange={value => setData(prev => ({ ...prev, answerText: value }))} emptyText={"暂无参考答案"}/>
                     </div>
 
                     <div className="space-y-2">
-                        <Label>{t.editor.analysis}</Label>
-                        <Textarea
-                            value={data.analysis}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setData({ ...data, analysis: e.target.value })}
-                            className="min-h-[200px] font-mono text-sm"
-                            placeholder={t.editor.placeholder || "Supports Markdown and LaTeX..."}
-                        />
+                        <MarkdownField label={t.editor.analysis || "解题思路与步骤"} value={data.analysis || ""}
+                            onChange={value => setData(prev => ({ ...prev, analysis: value }))} emptyText={"暂无解析"}/>
                     </div>
 
                     <Card>
@@ -415,45 +402,26 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                                 </Select>
                             </div>
                             <div className="space-y-2">
-                                <Label>{t.editor.wrongAnswerText || "错误解答原文"}</Label>
-                                <Textarea
-                                    value={data.wrongAnswerText || ""}
-                                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setData({
-                                        ...data,
-                                        wrongAnswerText: e.target.value,
-                                        mistakeStatus: e.target.value.trim() ? "wrong_attempt" : data.mistakeStatus,
-                                    })}
-                                    className="min-h-[100px] font-mono text-sm"
-                                    placeholder={t.editor.wrongAnswerPlaceholder || "如果图片里没有错误解答，可留空"}
-                                />
+                                <Label htmlFor="wrong-answer-evidence">{t.editor.wrongAnswerText || "错误解答原文"}</Label>
+                                <Textarea id="wrong-answer-evidence" aria-label="错误解答原文" value={data.wrongAnswerText || ""}
+                                    onChange={e => setData(prev => ({ ...prev, wrongAnswerText: e.target.value, mistakeStatus: e.target.value.trim() ? "wrong_attempt" : prev.mistakeStatus }))}
+                                    className="min-h-[100px] font-mono text-sm" placeholder="填写原来的错误作答；不会做或未提供时可以留空"/>
+                                {data.wrongAnswerText && <details><summary className="cursor-pointer text-sm">预览错误解答中的公式</summary><MarkdownRenderer content={data.wrongAnswerText}/></details>}
                             </div>
                             <div className="space-y-2">
-                                <Label>{t.editor.mistakeAnalysis || "错因分析"}</Label>
-                                <Textarea
-                                    value={data.mistakeAnalysis || ""}
-                                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setData({
-                                        ...data,
-                                        mistakeAnalysis: e.target.value,
-                                    })}
-                                    className="min-h-[140px] font-mono text-sm"
-                                    placeholder={t.editor.mistakeAnalysisPlaceholder || "分析错误可能发生在哪一步、为什么错、导致什么后果"}
-                                />
+                                <Label htmlFor="mistake-analysis-input">{t.editor.mistakeAnalysis || "错因分析"}</Label>
+                                <Textarea id="mistake-analysis-input" aria-label="错因分析" value={data.mistakeAnalysis || ""}
+                                    onChange={e => setData(prev => ({ ...prev, mistakeAnalysis: e.target.value }))}
+                                    className="min-h-[140px] font-mono text-sm" placeholder="可直接填写或修改：错误发生在哪一步、原因、正确改法"/>
+                                {data.mistakeAnalysis && <details><summary className="cursor-pointer text-sm">预览错因分析中的公式</summary><MarkdownRenderer content={data.mistakeAnalysis}/></details>}
                             </div>
                         </CardContent>
                     </Card>
                 </div>
 
-                {/* 右侧：预览区 */}
-                <div className="space-y-6">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>{t.editor.preview?.question || "Question Preview"}</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <MarkdownRenderer content={data.questionText} />
-                        </CardContent>
-                    </Card>
-
+                {!!data.answerText.trim() && <AuxiliaryDrawing questionText={data.questionText} answerText={data.answerText} analysis={data.analysis} image={imagePreview} disabled={isReanswering||isAnalyzingGeogebra} onUseCommands={commands=>setData(prev=>({...prev,geogebraCommands:commands}))}/>}
+                {/* The preview and source now share each field; keep the existing durable GeoGebra action. */}
+                <div id="geogebra-demo" className="space-y-6">
                     {/* GeoGebra Dynamic Demo */}
                     {data.geogebraCommands ? (
                         <GeogebraDemo commands={data.geogebraCommands} height={350} onRegenerate={handleAnalyzeGeogebra} />
@@ -492,51 +460,6 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                         </div>
                     ) : null}
 
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>{t.editor.preview?.answer || "Answer Preview"}</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <MarkdownRenderer content={data.answerText} />
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>{t.editor.preview?.analysis || "Analysis Preview"}</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <MarkdownRenderer content={data.analysis} />
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>{t.editor.preview?.mistakeAnalysis || "错因分析预览"}</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-3 text-sm">
-                            <div className="text-muted-foreground">
-                                {t.editor.mistakeStatus || "作答状态"}：
-                                {data.mistakeStatus === 'wrong_attempt'
-                                    ? (t.editor.mistakeStatuses?.wrongAttempt || "做错了")
-                                    : data.mistakeStatus === 'not_attempted'
-                                        ? (t.editor.mistakeStatuses?.notAttempted || "不会做")
-                                        : (t.editor.mistakeStatuses?.unknown || "未判断")}
-                            </div>
-                            {data.wrongAnswerText && (
-                                <div>
-                                    <div className="font-medium mb-1">{t.editor.wrongAnswerText || "错误解答原文"}</div>
-                                    <MarkdownRenderer content={data.wrongAnswerText} />
-                                </div>
-                            )}
-                            {data.mistakeAnalysis && (
-                                <div>
-                                    <div className="font-medium mb-1">{t.editor.mistakeAnalysis || "错因分析"}</div>
-                                    <MarkdownRenderer content={data.mistakeAnalysis} />
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
                 </div>
             </div>
         </div>

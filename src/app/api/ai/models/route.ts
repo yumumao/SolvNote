@@ -14,8 +14,8 @@ const modelSchema = z.object({ id: z.string().min(1).max(256), owned_by: z.strin
 const geminiModelSchema = z.object({ name: z.string().min(1).max(256) });
 
 /** Explicitly retire the old query-secret API. No authentication or outbound work on GET. */
-export async function GET(_req?: Request) {
-    void _req;
+export async function GET(req: Request) {
+    void req;
     const response = aiJson({ error: 'Use POST with a JSON body' }, 405);
     response.headers.set('Allow', 'POST');
     return response;

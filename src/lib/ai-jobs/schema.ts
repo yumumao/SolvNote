@@ -1,6 +1,10 @@
 import { z } from "zod";
+import { ConstructionSchema } from "../ai-drawing/construction";
 export const JobInputSchema = z
     .object({
+        drawingPlan: ConstructionSchema.optional(),
+        drawingRevision: z.number().int().min(1).optional(),
+        confirmImageEdit: z.literal(true).optional(),
         originalImageBase64: z
             .string()
             .max(12 * 1024 * 1024)
@@ -72,7 +76,7 @@ export const JobInputSchema = z
             });
     });
 export type JobInput = z.infer<typeof JobInputSchema>;
-export type JobKind = "analyze" | "reanswer" | "practice" | "geogebra";
+export type JobKind = "analyze" | "reanswer" | "practice" | "geogebra" | "construction" | "image_edit";
 export const terminalStates = [
     "success",
     "failed",

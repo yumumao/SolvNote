@@ -1,4 +1,5 @@
-import { act, createElement, type ComponentProps } from 'react';
+import type { AIConversation } from "@/components/ai-conversation";
+import { act, createElement, useState, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CorrectionEditor } from '@/components/correction-editor';
@@ -8,7 +9,8 @@ import type { TextInputZone } from '@/components/text-input-zone';
 import type { ParsedQuestion } from '@/lib/ai/types';
 
 const mocks = vi.hoisted(() => ({
-    search: '', notebookId: 'owned-notebook', router: { push: vi.fn() }, processImage: vi.fn(),
+    conversation: null as ComponentProps<typeof AIConversation> | null,
+    search: '', notebookId: 'owned-notebook', router: { push: vi.fn(), replace: vi.fn() }, processImage: vi.fn(),
     editor: null as ComponentProps<typeof CorrectionEditor> | null,
     cropper: null as ComponentProps<typeof ImageCropper> | null,
     upload: null as ComponentProps<typeof UploadZone> | null,
@@ -20,11 +22,13 @@ vi.mock('@/lib/image-utils', () => ({ processImageFile: mocks.processImage }));
 vi.mock('@/lib/frontend-logger', () => ({ frontendLogger: mocks.logger }));
 vi.mock('@/contexts/LanguageContext', () => ({ useLanguage: () => ({ language: 'zh', t: { app: {}, common: { messages: {} }, errors: {} } }) }));
 vi.mock('@/components/ui/progress-feedback', () => ({ ProgressFeedback: ({ status }: { status: string }) => createElement('div', { 'data-overlay-status': status }) }));
-vi.mock('@/components/correction-editor', () => ({ CorrectionEditor: (props: ComponentProps<typeof CorrectionEditor>) => { mocks.editor = props; return createElement('div', { 'data-testid': 'editor' }); } }));
+vi.mock('@/components/correction-editor', () => ({ CorrectionEditor: (props: ComponentProps<typeof CorrectionEditor>) => { mocks.editor = props; const [initial] = useState(props.initialData); return createElement('div', { 'data-testid': 'editor' }, initial.answerText); } }));
 vi.mock('@/components/image-cropper', () => ({ ImageCropper: (props: ComponentProps<typeof ImageCropper>) => { mocks.cropper = props; return null; } }));
 vi.mock('@/components/upload-zone', () => ({ UploadZone: (props: ComponentProps<typeof UploadZone>) => { mocks.upload = props; return null; } }));
 vi.mock('@/components/text-input-zone', () => ({ TextInputZone: (props: ComponentProps<typeof TextInputZone>) => { mocks.text = props; return null; } }));
 import AddPage from '@/app/notebooks/[id]/add/page';
+
+vi.mock("@/components/ai-conversation", () => ({ AIConversation: (props: ComponentProps<typeof AIConversation>) => { mocks.conversation = props; return null; } }));
 
 const original = 'data:image/jpeg;base64,b3JpZ2luYWw=';
 const compressed = 'data:image/jpeg;base64,Y29tcHJlc3NlZA==';
@@ -52,6 +56,7 @@ beforeEach(() => {
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
         if (url.startsWith('/api/notebooks/')) return response({ id: mocks.notebookId, name: '数学' });
         if (url === '/api/settings') return response({ timeouts: { analyze: 180000 } });
+        if (url === '/api/ai/conversations') return response({id:'synthetic-conversation'},201);
         if (url === '/api/analyze') return response({ jobId: 'owned-job' }, 202);
         if (url === '/api/ai/jobs/owned-job?restore=1') return response({ id: 'owned-job', kind: jobKind, state: jobState, input: restoreInput, result: jobResult }, restoreStatus);
         if (url === '/api/ai/jobs/owned-job') return response({ id: 'owned-job', state: jobState, result: jobResult });
@@ -75,12 +80,13 @@ const crop = async (size = 10) => {
     await act(async () => { mocks.upload!.onImageSelect(new File(['source'], 'source.jpg')); });
     await act(async () => { mocks.cropper!.onCropComplete(new Blob([new Uint8Array(size)], { type: 'image/jpeg' })); });
 };
+const direct = async()=>{await act(async()=>{const select=host.querySelector<HTMLSelectElement>('[aria-label="解题方式"]')!;select.value="direct";select.dispatchEvent(new Event("change",{bubbles:true}));});};
 const textTab = async () => { await act(async () => { [...host.querySelectorAll('button')].find(b => b.textContent === '手动输入')!.click(); }); };
 const writes = () => fetchMock.mock.calls.filter(([, init]) => ['POST', 'DELETE'].includes(init?.method || ''));
 
 describe('notebook add durable jobs (synthetic, real apiClient + mocked fetch)', () => {
     it('retains crop original separately from compressed request and saves to the current notebook', async () => {
-        await render(); await crop();
+        await render(); await direct(); await crop();
         expect(bodyFor('/api/analyze')).toMatchObject({ imageBase64: compressed, originalImageBase64: original, subjectId: 'owned-notebook', mode: 'direct', review: false });
         expect(mocks.editor?.imagePreview).toBe(original);
         await act(async () => { await mocks.editor!.onSave({ ...result, subjectId: 'other-notebook' }); });
@@ -103,7 +109,7 @@ describe('notebook add durable jobs (synthetic, real apiClient + mocked fetch)',
         if (size > 8 * 1024 * 1024) { expect(writes()).toHaveLength(0); expect(alert).toHaveBeenCalledWith(expect.stringContaining('8MiB')); }
     });
     it('submits text through analyze 202 with notebook context and no image or fake subject', async () => {
-        await render(); await textTab();
+        await render(); await direct(); await textTab();
         await act(async () => { await mocks.text!.onSubmit('合成文字题'); });
         expect(bodyFor('/api/analyze')).toMatchObject({ questionText: '合成文字题', mode: 'text', subjectId: 'owned-notebook' });
         expect(bodyFor('/api/analyze').imageBase64).toBeUndefined(); expect(bodyFor('/api/analyze').subject).toBeUndefined();
@@ -145,7 +151,7 @@ describe('notebook add durable jobs (synthetic, real apiClient + mocked fetch)',
     it('stops only local polling on unmount, including image compression still in flight', async () => {
         let resolve!: (value: string) => void;
         mocks.processImage.mockImplementation(() => new Promise<string>(r => { resolve = r; }));
-        await render(); await crop();
+        await render(); await direct(); await crop();
         await act(async () => { root.render(null); });
         await act(async () => { resolve(compressed); });
         expect(writes()).toHaveLength(0);
@@ -163,14 +169,14 @@ describe('notebook add durable jobs (synthetic, real apiClient + mocked fetch)',
         expect(mocks.upload?.isAnalyzing).toBe(false); expect(fetchMock.mock.calls).toHaveLength(count); expect(writes()).toHaveLength(0);
     });
     it('guards duplicate submissions, keeps forms busy past 180s but leaves task navigation available', async () => {
-        jobState = 'running'; await render(); await crop(); await crop();
+        jobState = 'running'; await render(); await direct(); await crop(); await crop();
         await act(async () => { await vi.advanceTimersByTimeAsync(191000); });
         expect(mocks.upload?.isAnalyzing).toBe(true); expect(writes()).toHaveLength(1);
         expect(host.querySelector('[data-overlay-status=analyzing]')).toBeNull();
         expect(host.querySelector('a[href="/ai-tasks"]')).not.toBeNull(); expect(host.querySelector('a[href*="job=owned-job"]')).not.toBeNull();
     });
     it('deduplicates text submits and stops only local polling on navigation', async () => {
-        jobState = 'pending'; await render(); await textTab();
+        jobState = 'pending'; await render(); await direct(); await textTab();
         await act(async () => { void mocks.text!.onSubmit('合成文字题'); void mocks.text!.onSubmit('重复提交'); });
         expect(writes()).toHaveLength(1);
         await act(async () => { root.render(null); }); const count = fetchMock.mock.calls.length;
@@ -189,11 +195,31 @@ describe('notebook add durable jobs (synthetic, real apiClient + mocked fetch)',
         const normalFetch = fetchMock.getMockImplementation()!;
         fetchMock.mockImplementation((url: string, init?: RequestInit) => url === '/api/analyze'
             ? Promise.resolve(response({ message: 'synthetic-private-diagnostic' }, 500)) : normalFetch(url, init));
-        await render(); await crop();
+        await render(); await direct(); await crop();
         expect(mocks.editor).toBeNull(); expect(host.textContent).not.toContain('synthetic-private-diagnostic');
         expect(JSON.stringify(vi.mocked(alert).mock.calls)).not.toContain('synthetic-private-diagnostic');
         expect(JSON.stringify(mocks.logger.error.mock.calls)).not.toContain('synthetic-private-diagnostic');
         expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain('synthetic-private-diagnostic');
     });
 
+    it('defaults to the durable conversation without waiting for a short-job result',async()=>{
+        await render();expect(host.querySelector<HTMLSelectElement>('[aria-label="解题方式"]')?.value).toBe('conversation');await crop();
+        expect(bodyFor('/api/ai/conversations')).toMatchObject({imageBase64:compressed,originalImageBase64:original,mode:'transcribe',subjectId:'owned-notebook'});
+        expect(fetchMock.mock.calls.some(([u])=>u==='/api/analyze')).toBe(false);
+        expect(mocks.router.replace).toHaveBeenCalledWith('/notebooks/owned-notebook/add?conversation=synthetic-conversation');
+        expect(mocks.upload?.isAnalyzing).toBe(false);
+    });
+    it('creates a text-only conversation without fabricating an image',async()=>{
+        await render();await textTab();await act(async()=>{await mocks.text!.onSubmit('synthetic text');});
+        expect(bodyFor('/api/ai/conversations')).toMatchObject({questionText:'synthetic text',mode:'text'});
+        expect(bodyFor('/api/ai/conversations').imageBase64).toBeUndefined();
+    });
+
+});
+
+
+describe("shared inline conversation editor",()=>{
+ it("renders the shared conversation without a second manual retrieval callback",async()=>{
+  mocks.search="conversation=synthetic-conversation";await render();expect(mocks.conversation).toBeDefined();expect(mocks.conversation).not.toHaveProperty("onUseResult");
+ });
 });

@@ -6,6 +6,7 @@ import { buildRequest, decodeResponse, sendAI } from "@/lib/ai/transport";
 const network = vi.hoisted(() => ({ lookup: vi.fn(), fetch: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ lookup: network.lookup }));
 vi.mock("undici", () => ({
+    Client: class { constructor() { throw new Error("Unexpected proxy in direct-mode fixture"); } },
     fetch: network.fetch,
     Agent: class {
         async close() {

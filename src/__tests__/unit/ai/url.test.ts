@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("node:dns/promises", () => ({ lookup: mocks.lookup }));
 vi.mock("undici", () => ({
+    Client: class { constructor() { throw new Error("Unexpected proxy in direct-mode fixture"); } },
     fetch: mocks.fetch,
     Agent: class {
         constructor(options: unknown) {

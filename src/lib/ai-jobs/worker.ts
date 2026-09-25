@@ -10,6 +10,7 @@ import { generateGradeInstruction } from "../ai/prompts";
 import { aiRun, TOTAL_MS } from "./context";
 import { type JobInput } from "./schema";
 import { failureState } from "./store";
+import { executeDialogueJob, recoverDialogue } from "../ai-dialogue/execution";
 const LEASE_MS = 60000;
 const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
 export async function claimJob(owner: string) {
@@ -25,6 +26,8 @@ export async function claimJob(owner: string) {
             data: { owner, until: new Date(Date.now() + LEASE_MS) },
         });
         if (!lock.count) return null;
+        const stale = await tx.aiJob.findMany({where:{state:"running",leaseUntil:{lt:now},conversationId:{not:null}}});
+        for (const old of stale) await recoverDialogue(tx, old, now);
         // A crashed worker may already have incurred upstream charges. Never resend automatically.
         await tx.aiJob.updateMany({
             where: { state: "running", leaseUntil: { lt: now } },
@@ -65,6 +68,7 @@ export async function claimJob(owner: string) {
             where: { id: job.id },
             data: {
                 state: "running",
+                startedAt: new Date(),
                 leaseOwner: owner,
                 leaseUntil: new Date(Date.now() + LEASE_MS),
             },
@@ -72,6 +76,10 @@ export async function claimJob(owner: string) {
     });
 }
 async function execute(kind: string, input: JobInput) {
+    if(kind === "construction" || kind === "image_edit"){
+        const { executeDrawing } = await import("../ai-drawing/service");
+        return executeDrawing(kind,input);
+    }
     const service = new ManagedAIService();
     const image = dataImage(input.imageBase64, input.mimeType);
     let text = input.questionText;
@@ -125,7 +133,7 @@ async function execute(kind: string, input: JobInput) {
                 ...result,
                 subject: input.subject as typeof result.subject,
             };
-    } else
+    } else if(kind === "geogebra")
         result = await service.analyzeForGeogebra(
             text,
             input.answerText,
@@ -133,6 +141,7 @@ async function execute(kind: string, input: JobInput) {
             input.previousErrors,
             image,
         );
+    else throw new AIError("AI_UNKNOWN_JOB_KIND");
     if (input.review && kind !== "geogebra") {
         const run = aiRun.getStore();
         if (run) run.excludeModel = run.lastModel;
@@ -172,7 +181,7 @@ export async function processOne(owner: string = randomUUID()) {
     if (!job) return false;
     const controller = new AbortController();
     let executionCompleted = false;
-    const total = setTimeout(() => controller.abort(), TOTAL_MS);
+    const total = setTimeout(() => controller.abort(), job.kind === "dialogue" ? 1800000 : TOTAL_MS);
     const heartbeat = setInterval(() => {
         void (async () => {
             const now = new Date(Date.now() + LEASE_MS);
@@ -198,6 +207,10 @@ export async function processOne(owner: string = randomUUID()) {
         })().catch(() => controller.abort());
     }, 5000);
     try {
+        if (job.kind === "dialogue") {
+            await executeDialogueJob(job, owner, controller);
+            return true;
+        }
         const account = await prisma.user.findUnique({
             where: { id: job.userId },
             select: { isActive: true },

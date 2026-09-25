@@ -14,6 +14,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
 import { ArrowLeft, Upload, PenLine } from "lucide-react";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
+import { AIConversation } from "@/components/ai-conversation";
 import { TextInputZone } from "@/components/text-input-zone";
 
 type RestorableAnalyzeJob = {
@@ -39,15 +40,17 @@ function AddErrorContent({ notebookId }: { notebookId: string }) {
     const router = useRouter();
     const searchParams = useSearchParams();
     const restoreJobId = searchParams.get("job");
+    const conversationId = searchParams.get("conversation");
     const [step, setStep] = useState<"upload" | "review">("upload");
     const [analysisStep, setAnalysisStep] = useState<ProgressStatus>("idle");
     const [parsedData, setParsedData] = useState<ParsedQuestion | null>(null);
+    const [editorVersion, setEditorVersion] = useState(0);
     const [currentImage, setCurrentImage] = useState<string | null>(null);
     const { t, language } = useLanguage();
     const [notebook, setNotebook] = useState<Notebook | null>(null);
     const [config, setConfig] = useState<AppConfig | null>(null);
     const [extraText, setExtraText] = useState("");
-    const [aiMode, setAiMode] = useState<"direct" | "transcribe">("direct");
+    const [aiMode, setAiMode] = useState<"conversation" | "direct" | "transcribe">("conversation");
     const [review, setReview] = useState(false);
     const [taskStatus, setTaskStatus] = useState("");
     const [taskId, setTaskId] = useState<string | null>(null);
@@ -80,6 +83,7 @@ function AddErrorContent({ notebookId }: { notebookId: string }) {
             || !Array.isArray(result.knowledgePoints) || !result.knowledgePoints.every(point => typeof point === "string")) {
             throw new Error("INVALID_ANALYSIS_RESULT");
         }
+        setEditorVersion(version => version + 1);
         setParsedData(result);
         setCurrentImage(image);
         setStep("review");
@@ -190,6 +194,15 @@ function AddErrorContent({ notebookId }: { notebookId: string }) {
             if (controller.signal.aborted) return;
             setAnalysisStep("analyzing");
             setTaskStatus("正在提交任务，受理后可离开页面，稍后到我的AI任务取回。");
+            if (aiMode === "conversation") {
+                const { id } = await apiClient.post<{id:string}>("/api/ai/conversations", {
+                    imageBase64, originalImageBase64: originalImage, questionText: extraText,
+                    mode: "transcribe", review, language, subjectId: notebookId,
+                }, {timeout:30000,signal:controller.signal});
+                router.replace(`/notebooks/${encodeURIComponent(notebookId)}/add?conversation=${encodeURIComponent(id)}`);
+                setTaskStatus("会话已保存，可在这里补充条件和继续追问。");
+                return;
+            }
             const result = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 imageBase64, originalImageBase64: originalImage, questionText: extraText,
                 mode: aiMode, review, language, subjectId: notebookId,
@@ -217,6 +230,14 @@ function AddErrorContent({ notebookId }: { notebookId: string }) {
         setTaskStatus("正在提交文字解题任务，请勿重复提交。");
         try {
             setAnalysisStep("analyzing");
+            if (aiMode === "conversation") {
+                const { id } = await apiClient.post<{id:string}>("/api/ai/conversations", {
+                    questionText, mode:"text", review, language, subjectId:notebookId,
+                }, {timeout:30000,signal:controller.signal});
+                router.replace(`/notebooks/${encodeURIComponent(notebookId)}/add?conversation=${encodeURIComponent(id)}`);
+                setTaskStatus("文字解题会话已保存。");
+                return;
+            }
             const result = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 questionText, language, subjectId: notebookId, mode: "text", review,
             }, { timeout: aiTimeout, signal: controller.signal });
@@ -291,13 +312,15 @@ function AddErrorContent({ notebookId }: { notebookId: string }) {
                     <Link className="underline" href="/ai-tasks">我的AI任务（刷新后取回结果/取消）</Link>
                     <p role="status">{taskStatus}</p>
                     {taskId && <Link className="block underline" href={`/notebooks/${encodeURIComponent(notebookId)}/add?job=${encodeURIComponent(taskId)}`}>恢复本次任务</Link>}
-                    <p className="text-sm">受理后的任务在后台继续运行，刷新或离开不等于取消。结果仅保留24小时，请及时取回。</p>
+                    <p className="text-sm">受理后的任务在后台继续运行，刷新或离开不等于取消。旧式直接任务保留24小时；同题会话持久保存，可回到我的AI任务继续。</p>
                     <p className="text-sm">年级是讲解偏好，不是解题限制。请核对图形标注与AI结果。</p>
                 </div>
                 {/* Main Content */}
-                {step === "upload" && (
+                {conversationId && <AIConversation key={conversationId} id={conversationId} expectedSubjectId={notebookId}/>}
+                {step === "upload" && !conversationId && (
                     <div className="space-y-4">
                         <label className="block"><input type="checkbox" checked={review} disabled={analysisStep !== "idle"} onChange={e=>setReview(e.target.checked)} />第二个AI独立复核（需链中至少两个可用模型，增加费用）</label>
+                        <label className="block">解题方式<select className="border rounded p-2 ml-2 bg-background" aria-label="解题方式" value={aiMode} disabled={analysisStep !== "idle"} onChange={e=>setAiMode(e.target.value as "conversation"|"direct"|"transcribe")}><option value="conversation">同题会话：识图→解题→补读/问人（推荐）</option><option value="direct">旧式直接解题</option><option value="transcribe">旧式先转录再带图解题</option></select></label>
                         {/* Input mode tabs */}
                         <div className="flex gap-2 border-b">
                             <button
@@ -328,7 +351,7 @@ function AddErrorContent({ notebookId }: { notebookId: string }) {
 
                         {inputMode === "image" ? (
                             <div className="space-y-3">
-                                <label className="block">图片处理方式<select className="border rounded p-2 ml-2 bg-background" value={aiMode} disabled={analysisStep !== "idle"} onChange={e=>setAiMode(e.target.value as "direct"|"transcribe")}><option value="direct">直接发图＋补充文字解题</option><option value="transcribe">先AI转录，再带原图解题（增加一次调用）</option></select></label>
+
                                 <textarea className="w-full border rounded p-2 bg-background" aria-label="图片补充文字" placeholder="可选：补充题目文字、看不清的标注或你的疑问。图形仍会传给AI。" value={extraText} disabled={analysisStep !== "idle"} onChange={e=>setExtraText(e.target.value)} />
                                 <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
                             </div>
@@ -344,6 +367,7 @@ function AddErrorContent({ notebookId }: { notebookId: string }) {
 
                 {step === "review" && parsedData && (
                     <CorrectionEditor
+                        key={editorVersion}
                         initialData={parsedData}
                         imagePreview={currentImage}
                         onSave={handleSave}

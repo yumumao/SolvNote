@@ -15,24 +15,36 @@ interface GeogebraDemoProps {
     onSaveCommands?: (commands: string) => Promise<void>;
 }
 
+type GgbApi = {
+    [method: string]: unknown;
+    setSize: (width: number, height: number) => void;
+    evalCommand: (command: string) => boolean;
+    resetConstruction: () => void;
+    remove?: () => void;
+};
+type GgbWindow = Window & { GGBApplet?: new (options: Record<string, unknown>, html5: boolean) => { inject: (id: string) => void } };
+
 // ── Singleton script loader ─────────────────────────────────────────────
 let ggbScriptPromise: Promise<void> | null = null;
 
 function loadGeoGebraScript(): Promise<void> {
+    if (typeof window !== "undefined" && (window as GgbWindow).GGBApplet) return Promise.resolve();
     if (ggbScriptPromise) return ggbScriptPromise;
     ggbScriptPromise = new Promise<void>((resolve, reject) => {
-        if (typeof window !== "undefined" && (window as any).GGBApplet) {
-            resolve();
-            return;
-        }
         const s = document.createElement("script");
+        const fail = () => {
+            clearTimeout(timer); s.onload = null; s.onerror = null; s.remove();
+            ggbScriptPromise = null;
+            reject(new Error("GeoGebra script unavailable"));
+        };
+        const timer = setTimeout(fail, 15000);
         s.src = "https://www.geogebra.org/apps/deployggb.js";
         s.async = true;
-        s.onload = () => resolve();
-        s.onerror = () => {
-            ggbScriptPromise = null;
-            reject(new Error("Failed to load GeoGebra"));
+        s.onload = () => {
+            if (!(window as GgbWindow).GGBApplet) { fail(); return; }
+            clearTimeout(timer); s.onload = null; s.onerror = null; resolve();
         };
+        s.onerror = fail;
         document.head.appendChild(s);
     });
     return ggbScriptPromise;
@@ -99,12 +111,13 @@ function parseApiArgs(cmd: string): { m: string; a: unknown[] } | null {
     catch { return null; }
 }
 
-function runCommands(api: any, cmds: string[]) {
+function runCommands(api: GgbApi, cmds: string[]) {
     for (const cmd of cmds) {
         try {
             if (isApiCall(cmd)) {
                 const p = parseApiArgs(cmd);
-                if (p && typeof api[p.m] === 'function') api[p.m](...p.a);
+                const method = p && api[p.m];
+                if (p && typeof method === 'function') Reflect.apply(method, api, p.a);
             } else {
                 // Basic command validation: only allow safe characters
                 const sanitized = cmd.trim();
@@ -134,13 +147,14 @@ export function GeogebraDemo({
     // All GeoGebra DOM is injected via innerHTML in the effect, so
     // React's reconciler never touches the inside of this node.
     const ggbHostRef = useRef<HTMLDivElement>(null);
-    const apiRef = useRef<any>(null);
+    const apiRef = useRef<GgbApi | null>(null);
     const idRef = useRef(`ggb-${Math.random().toString(36).slice(2, 9)}`);
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState(true);
     const [regenerating, setRegenerating] = useState(false);
+    const [loadAttempt, setLoadAttempt] = useState(0);
 
     const cmds = useMemo(() => parseCommands(commands), [commands]);
 
@@ -148,13 +162,20 @@ export function GeogebraDemo({
     useEffect(() => {
         if (typeof window === "undefined" || cmds.length === 0) return;
 
-        let dead = false;
+        let dead = false, timedOut = false;
+        setLoading(true); setError(null);
+        const timer = setTimeout(() => {
+            if (dead) return;
+            timedOut = true; setLoading(false);
+            setError("GeoGebra加载超时。已生成的构造方案仍保留；辅助线可先看本地示意图，无需重新调用AI。");
+        }, 30000);
+        const host = ggbHostRef.current;
         const id = idRef.current;
 
         loadGeoGebraScript().then(() => {
-            if (dead) return;
-            const GGBApplet = (window as any).GGBApplet;
-            if (!GGBApplet) { setError("GeoGebra 未正确加载"); setLoading(false); return; }
+            if (dead || timedOut) return;
+            const GGBApplet = (window as GgbWindow).GGBApplet;
+            if (!GGBApplet) { clearTimeout(timer); setError("GeoGebra 未正确加载"); setLoading(false); return; }
 
             const el = ggbHostRef.current;
             if (!el) return;
@@ -174,8 +195,9 @@ export function GeogebraDemo({
                     enableRightClick: true,
                     enableShiftDragZoom: true,
                     language: "zh",
-                    appletOnLoad: (api: any) => {
-                        if (dead) return;
+                    appletOnLoad: (api: GgbApi) => {
+                        if (dead || timedOut) { api.remove?.(); return; }
+                        clearTimeout(timer);
                         apiRef.current = api;
                         const ggbDiv = ggbHostRef.current?.firstElementChild as HTMLElement | null;
                         if (ggbDiv) {
@@ -191,15 +213,15 @@ export function GeogebraDemo({
                 applet.inject(id);
             } catch (e) {
                 console.error("[GGB] Init failed:", e);
-                if (!dead) { setError("GeoGebra 初始化失败"); setLoading(false); }
+                if (!dead && !timedOut) { clearTimeout(timer); setError("GeoGebra 初始化失败"); setLoading(false); }
             }
         }).catch((e) => {
             console.error("[GGB] Script load failed:", e);
-            if (!dead) { setError("无法加载 GeoGebra 组件"); setLoading(false); }
+            if (!dead && !timedOut) { clearTimeout(timer); setError("无法加载GeoGebra组件。请检查浏览器网络；构造方案仍保留，无需重新调用AI。"); setLoading(false); }
         });
 
         return () => {
-            dead = true;
+            dead = true; clearTimeout(timer);
             // Cleanup GeoGebra instance to prevent memory leaks
             try {
                 const api = apiRef.current;
@@ -211,12 +233,9 @@ export function GeogebraDemo({
             }
             apiRef.current = null;
             // Clear injected DOM
-            if (ggbHostRef.current) {
-                ggbHostRef.current.innerHTML = '';
-            }
+            if (host) host.innerHTML = '';
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cmds, showToolBar, showAlgebraInput, showMenuBar]);
+    }, [cmds, showToolBar, showAlgebraInput, showMenuBar, height, loadAttempt]);
 
     // ── Resize when expanded toggles ────────────────────────────────────
     useEffect(() => {
@@ -294,7 +313,7 @@ export function GeogebraDemo({
              * The effect writes innerHTML directly, so React never
              * tries to reconcile DOM nodes inside this div.
              */}
-            <div ref={ggbHostRef} style={{ width: '100%' }} />
+            <div ref={ggbHostRef} hidden={!!error} style={{ width: '100%', minHeight: loading ? height : undefined }} />
 
             {/* Loading overlay — sibling, not child of ggbHost */}
             {loading && (
@@ -312,10 +331,11 @@ export function GeogebraDemo({
             {/* Error */}
             {error && (
                 <div
-                    className="flex items-center justify-center text-sm text-destructive"
-                    style={{ minHeight: height }}
+                    role="alert"
+                    className="flex flex-col gap-3 items-center justify-center p-4 text-sm text-destructive"
                 >
-                    {error}
+                    <p>{error}</p>
+                    <Button variant="outline" onClick={() => setLoadAttempt(v => v + 1)}>重新加载演示（不调用AI）</Button>
                 </div>
             )}
         </div>

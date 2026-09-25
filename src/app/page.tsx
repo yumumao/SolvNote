@@ -3,6 +3,7 @@
 import { useState, Suspense, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { AIConversation } from "@/components/ai-conversation";
 import { UploadZone } from "@/components/upload-zone";
 import { CorrectionEditor } from "@/components/correction-editor";
 import { ImageCropper } from "@/components/image-cropper";
@@ -46,10 +47,12 @@ function HomeContent() {
     const [step, setStep] = useState<"upload" | "review">("upload");
     const [analysisStep, setAnalysisStep] = useState<ProgressStatus>('idle');
     const [parsedData, setParsedData] = useState<ParsedQuestion | null>(null);
+    const [editorVersion, setEditorVersion] = useState(0);
     const [currentImage, setCurrentImage] = useState<string | null>(null);
     const { t, language } = useLanguage();
     const searchParams = useSearchParams();
     const router = useRouter();
+    const conversationId = searchParams.get("conversation");
     const initialNotebookId = searchParams.get("notebook");
     const [notebooks, setNotebooks] = useState<{ id: string; name: string }[]>([]);
     const [autoSelectedNotebookId, setAutoSelectedNotebookId] = useState<string | null>(null);
@@ -69,7 +72,7 @@ function HomeContent() {
     const [isCropperOpen, setIsCropperOpen] = useState(false);
 
     const [extraText, setExtraText] = useState("");
-    const [aiMode, setAiMode] = useState<"direct" | "transcribe">("direct");
+    const [aiMode, setAiMode] = useState<"conversation" | "direct" | "transcribe">("conversation");
     const [review, setReview] = useState(false);
     const [taskStatus, setTaskStatus] = useState("");
     const [taskId, setTaskId] = useState<string | null>(null);
@@ -111,6 +114,7 @@ function HomeContent() {
         if (!result || typeof result.questionText !== "string" || typeof result.answerText !== "string") {
             throw new Error("INVALID_ANALYSIS_RESULT");
         }
+        setEditorVersion(version => version + 1);
         setParsedData(result);
         setCurrentImage(image);
         setAutoSelectedNotebookId(subjectId || null);
@@ -224,6 +228,14 @@ function HomeContent() {
             if (controller.signal.aborted) return;
             setAnalysisStep("analyzing");
             setTaskStatus("正在提交任务，受理后可离开页面，稍后到我的AI任务取回。");
+            if (aiMode === "conversation") {
+                const {id} = await apiClient.post<{id:string}>("/api/ai/conversations", {
+                    imageBase64:base64Image, originalImageBase64:originalImage, questionText:extraText,
+                    mode:"transcribe", review, language, subjectId:initialNotebookId || undefined,
+                },{timeout:30000,signal:controller.signal});
+                if (!controller.signal.aborted) router.replace(`/?conversation=${encodeURIComponent(id)}`);
+                return;
+            }
             const result = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 imageBase64: base64Image,
                 originalImageBase64: originalImage,
@@ -295,6 +307,13 @@ function HomeContent() {
         setTaskStatus("正在提交文字解题任务，请勿重复提交。");
         try {
             setAnalysisStep("analyzing");
+            if (aiMode === "conversation") {
+                const {id} = await apiClient.post<{id:string}>("/api/ai/conversations", {
+                    questionText, mode:"text", review, language, subjectId:initialNotebookId || undefined,
+                },{timeout:30000,signal:controller.signal});
+                if (!controller.signal.aborted) router.replace(`/?conversation=${encodeURIComponent(id)}`);
+                return;
+            }
             const result = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 questionText,
                 mode: "text",
@@ -474,11 +493,12 @@ function HomeContent() {
                         {taskId && <Link className="underline" href={`/?job=${encodeURIComponent(taskId)}`}>恢复本次任务</Link>}
                     </div>
                     <p role="status">{taskStatus}</p>
-                    <p className="text-sm">受理后的任务在后台继续运行，刷新或离开页面不等于取消。结果仅保留24小时，请及时取回。</p>
+                    <p className="text-sm">受理后的任务在后台继续运行，刷新或离开页面不等于取消。旧式短任务保留24小时；同题会话持久保存，可从我的AI任务继续。</p>
                     <p className="text-sm">年级是讲解偏好，不是解题限制，正确性优先。请核对图形标注与AI结果。</p>
                 </section>
 
-                {step === "upload" && (
+                {conversationId && <AIConversation key={conversationId} id={conversationId}/>}
+                {step === "upload" && !conversationId && (
                     <div className="space-y-4">
                         {inputMode !== "direct" && (
                             <label className="block">
@@ -486,6 +506,7 @@ function HomeContent() {
                                 第二个AI独立复核（需链中至少两个可用模型，增加费用）
                             </label>
                         )}
+                        {inputMode !== "direct" && <label className="block">解题方式<select aria-label="解题方式" className="border rounded p-2 ml-2 bg-background" value={aiMode} disabled={analysisStep !== "idle"} onChange={e=>setAiMode(e.target.value as "conversation"|"direct"|"transcribe")}><option value="conversation">同题会话：识图→解题→补读/问人（推荐）</option><option value="direct">旧式直接解题</option><option value="transcribe">旧式先转录再带图解题</option></select></label>}
                         {/* Input mode tabs */}
                         <div className="flex gap-2 border-b">
                             <button
@@ -528,13 +549,7 @@ function HomeContent() {
 
                         {inputMode === "image" ? (
                             <div className="space-y-3">
-                                <label className="block">图片处理方式
-                                    <select className="border rounded p-2 ml-2 bg-background" value={aiMode} disabled={analysisStep !== "idle"} onChange={e => setAiMode(e.target.value as "direct" | "transcribe")}>
-                                        <option value="direct">直接发图＋补充文字解题</option>
-                                        <option value="transcribe">先AI转录，再带原图解题（增加一次调用）</option>
-                                    </select>
-                                </label>
-                                <textarea className="w-full border rounded p-2 bg-background" aria-label="图片补充文字" placeholder="可选：补充题目文字、看不清的标注或你的疑问。图形仍会传给AI。" value={extraText} disabled={analysisStep !== "idle"} onChange={e => setExtraText(e.target.value)} />
+                                <textarea className="w-full border rounded p-2 bg-background" aria-label="图片补充文字" placeholder="可选：补充题目文字、看不清的标注或你的疑问。解题模型支持图片时会附图。" value={extraText} disabled={analysisStep !== "idle"} onChange={e => setExtraText(e.target.value)} />
                                 <p className="text-sm text-muted-foreground">裁剪后的原图最多8MiB，将保留供核对和保存；另传压缩副本用于解题。</p>
                                 <UploadZone onImageSelect={onImageSelect} isAnalyzing={analysisStep !== 'idle'} />
                             </div>
@@ -574,6 +589,7 @@ function HomeContent() {
 
                 {step === "review" && parsedData && (
                     <CorrectionEditor
+                        key={editorVersion}
                         initialData={parsedData}
                         onSave={handleSave}
                         onCancel={() => setStep("upload")}

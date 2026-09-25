@@ -1,11 +1,31 @@
+import type { StepMetadata } from "../ai-dialogue/types";
+import { diagnosticMessage } from "./diagnostics";
+import { protect } from "../ai-config/vault";
+import type { AIModel, AIProvider } from "../ai-config/schema";
 import { createHash } from "node:crypto";
 import { loadAIConfig } from "../ai-config/store";
 import { prisma } from "../prisma";
 import { sendAI, AIError } from "./transport";
+import { sendImageEdit } from "../ai-drawing/image-edit";
 import { aiRun, ATTEMPT_MS, TOTAL_MS, type AIRun } from "../ai-jobs/context";
 
 /** Register dispatch under the durable lease, not merely a delayed heartbeat. */
-async function registerAttempt(run: AIRun, modelId: string) {
+export type ChainOptions = {
+    role?: "solve" | "recognize";
+    stage?: "recognize" | "solve" | "reread" | "review" | "geometry_check" | "construction" | "image_edit";
+    detailImages?: string[];
+    imageEdit?: boolean;
+    modelId?: string;
+    question?: string[];
+};
+function attemptMetadata(run: AIRun, model: AIModel, provider: AIProvider, image: string | undefined, options: ChainOptions): StepMetadata {
+    return {
+        round: run.round, stage: options.stage || "solve", modelName: model.name, model: model.model,
+        providerName: provider.name, withImage: !!image,
+        questions: options.question || [], detailImageCount: image ? options.detailImages?.length || 0 : 0,
+    };
+}
+async function registerAttempt(run: AIRun, model: AIModel, provider: AIProvider, image: string | undefined, options: ChainOptions) {
     if (!run.jobId) return null;
     if (!run.leaseOwner) throw new AIError("AI_ACCEPTANCE_UNKNOWN");
     return prisma.$transaction(async (tx) => {
@@ -31,11 +51,18 @@ async function registerAttempt(run: AIRun, modelId: string) {
                 leaseOwner: run.leaseOwner,
                 leaseUntil: { gt: now },
             },
-            data: { attempts: run.attempts + 1 },
+            data: { attempts: run.attempts - (run.startingAttempts || 0) + 1 },
         });
         if (claimed.count !== 1) throw new AIError("AI_ACCEPTANCE_UNKNOWN");
+        if (run.conversationId) {
+            const saved = await tx.aiConversation.updateMany({
+                where: { id: run.conversationId, activeJobId: run.jobId, state: "active", roundAttempts: run.attempts },
+                data: { roundAttempts: run.attempts + 1 },
+            });
+            if (saved.count !== 1) throw new AIError("AI_ACCEPTANCE_UNKNOWN");
+        }
         return tx.aiAttempt.create({
-            data: { jobId: run.jobId!, modelId, state: "running" },
+            data: { jobId: run.jobId!, modelId: model.id, state: "running", metadata: protect(attemptMetadata(run, model, provider, image, options)) },
         });
     });
 }
@@ -46,6 +73,7 @@ async function finishAttempt(
     id: string,
     state: string,
     errorCode?: string,
+    metadata?: StepMetadata,
 ) {
     try {
         const changed = await prisma.aiAttempt.updateMany({
@@ -58,7 +86,7 @@ async function finishAttempt(
                     leaseUntil: { gt: new Date() },
                 },
             },
-            data: { state, errorCode, finishedAt: new Date() },
+            data: { state, errorCode, finishedAt: new Date(), ...(metadata ? { metadata: protect(metadata) } : {}) },
         });
         if (changed.count !== 1) throw new Error("LOST_DISPATCH_LEASE");
     } catch {
@@ -72,6 +100,7 @@ export async function callChain<T>(
     text: string,
     image: string | undefined,
     parse: (s: string) => T,
+    options: ChainOptions = {},
 ): Promise<T> {
     const run =
         aiRun.getStore() ||
@@ -82,11 +111,13 @@ export async function callChain<T>(
             maxAttempts: 3,
         } as AIRun);
     const config = run.config || (run.config = (await loadAIConfig()).config);
-    const kind = image ? "vision" : "text";
+    const kind = options.role ? (options.role === "recognize" ? "vision" : "text") : image ? "vision" : "text";
     let last = new AIError(
         kind === "vision" ? "AI_NO_VISION_MODEL" : "AI_NO_TEXT_MODEL",
     );
-    for (const id of config.chains[kind]) {
+    if(options.imageEdit && (!options.modelId || !image))throw new AIError("AI_IMAGE_EDIT_UNSUPPORTED");
+    const ids=options.imageEdit ? [options.modelId!] : config.chains[kind].filter(id => !options.modelId || options.modelId === id);
+    for (const id of ids) {
         if (id === run.excludeModel) continue;
         if (run.signal.aborted) throw new AIError("AI_CANCELLED");
         if (run.attempts >= run.maxAttempts || Date.now() >= run.deadline)
@@ -101,6 +132,7 @@ export async function callChain<T>(
             !model.capabilities.includes(kind)
         )
             continue;
+        if(options.imageEdit && provider.protocol!=="gemini")throw new AIError("AI_IMAGE_EDIT_UNSUPPORTED");
         const group = createHash("sha256")
             .update(`${new URL(provider.baseUrl).host}:${provider.apiKey}`)
             .digest("hex");
@@ -111,7 +143,8 @@ export async function callChain<T>(
             last = new AIError("AI_RATE_LIMIT");
             continue;
         }
-        const attempt = await registerAttempt(run, id);
+        const attachedImage = model.capabilities.includes("vision") ? image : undefined;
+        const attempt = await registerAttempt(run, model, provider, attachedImage, options);
         if (run.signal.aborted) throw new AIError("AI_CANCELLED");
         run.attempts++;
         const signal = AbortSignal.any([
@@ -124,7 +157,7 @@ export async function callChain<T>(
         try {
             // Only upstream/format failures may enter fallback. Local DB work stays outside.
             value = parse(
-                await sendAI(provider, model, prompt, text, image, signal),
+                options.imageEdit ? await sendImageEdit(provider,model,`${prompt}\n${text}`,attachedImage!,signal) : await sendAI(provider, model, prompt, text, attachedImage, signal, attachedImage ? options.detailImages : undefined, options.role === "recognize" ? "transcription" : undefined),
             );
         } catch (error) {
             const e =
@@ -138,6 +171,9 @@ export async function callChain<T>(
                     attempt.id,
                     e.code === "AI_ACCEPTANCE_UNKNOWN" ? "unknown" : "failed",
                     e.code,
+                    diagnosticMessage(e.diagnostic)
+                        ? { ...attemptMetadata(run, model, provider, attachedImage, options), diagnostic: e.diagnostic }
+                        : undefined,
                 );
             if (e.retryAfterMs)
                 await prisma.aiCooldown.upsert({
@@ -148,7 +184,7 @@ export async function callChain<T>(
                     },
                     update: { until: new Date(Date.now() + e.retryAfterMs) },
                 });
-            if (!e.fallback) throw e;
+            if (options.imageEdit || !e.fallback) throw e;
             continue;
         }
         run.lastModel = id;

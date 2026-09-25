@@ -1,4 +1,5 @@
-import { act, createElement, type ComponentProps } from "react";
+import type { AIConversation } from "@/components/ai-conversation";
+import { act, createElement, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CorrectionEditor } from "@/components/correction-editor";
@@ -8,8 +9,9 @@ import type { TextInputZone } from "@/components/text-input-zone";
 import type { ParsedQuestion } from "@/lib/ai/types";
 
 const mocks = vi.hoisted(() => ({
+    conversation: null as ComponentProps<typeof AIConversation> | null,
     search: "",
-    router: { push: vi.fn() },
+    router: { push: vi.fn(), replace: vi.fn() },
     processImage: vi.fn(),
     editor: null as ComponentProps<typeof CorrectionEditor> | null,
     cropper: null as ComponentProps<typeof ImageCropper> | null,
@@ -46,7 +48,7 @@ vi.mock("@/components/ui/progress-feedback", () => ({
 vi.mock("@/components/correction-editor", () => ({
     CorrectionEditor: (props: ComponentProps<typeof CorrectionEditor>) => {
         mocks.editor = props;
-        return createElement("div", { "data-testid": "editor" });
+        const [initial] = useState(props.initialData); return createElement("div", { "data-testid": "editor" }, initial.answerText);
     },
 }));
 vi.mock("@/components/image-cropper", () => ({
@@ -68,6 +70,8 @@ vi.mock("@/components/text-input-zone", () => ({
     },
 }));
 import Home from "@/app/page";
+
+vi.mock("@/components/ai-conversation", () => ({ AIConversation: (props: ComponentProps<typeof AIConversation>) => { mocks.conversation = props; return null; } }));
 
 const original = "data:image/jpeg;base64,b3JpZ2luYWw=";
 const compressed = "data:image/jpeg;base64,Y29tcHJlc3NlZA==";
@@ -122,6 +126,7 @@ beforeEach(() => {
     jobKind = "analyze";
     restoreInput = { originalImageBase64: original, imageBase64: compressed };
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/ai/conversations" && init?.method === "POST") return response({id:"new-conversation"},201);
         if (url === "/api/notebooks") return response(notebooks);
         if (url === "/api/settings")
             return response({ timeouts: { analyze: 180000 } });
@@ -158,10 +163,11 @@ afterEach(async () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
 });
-const render = async () => {
+const render = async (legacy = true) => {
     await act(async () => {
         root.render(createElement(Home));
     });
+    if (legacy) await act(async () => { const mode=host.querySelector("select"); if(mode){mode.value="direct";mode.dispatchEvent(new Event("change",{bubbles:true}));} });
 };
 const clickTab = async (text: string) => {
     const button = [...host.querySelectorAll("button")].find((b) =>
@@ -439,4 +445,24 @@ describe("home durable AI integration (synthetic input, mocked network)", () => 
         });
         expect(mocks.editor?.initialData).toEqual(result);
     });
+});
+
+
+describe("home conversation default",()=>{
+ it("creates a persistent conversation from the image without starting a legacy job",async()=>{
+  await render(false);await crop();expect(bodyFor("/api/ai/conversations")).toMatchObject({imageBase64:compressed,originalImageBase64:original});
+  expect(fetchMock.mock.calls.some(([url])=>url==="/api/analyze")).toBe(false);expect(mocks.router.replace).toHaveBeenCalledWith("/?conversation=new-conversation");
+ });
+ it("starts text-only dialogue without a fabricated notebook",async()=>{
+  await render(false);await clickTab("AI解题");await act(async()=>{await mocks.text!.onSubmit("synthetic follow-up-ready question");});
+  expect(bodyFor("/api/ai/conversations")).toMatchObject({questionText:"synthetic follow-up-ready question",mode:"text"});
+  expect(bodyFor("/api/ai/conversations").subjectId).toBeUndefined();
+ });
+});
+
+
+describe("shared inline conversation editor",()=>{
+ it("renders the shared conversation without a second manual retrieval callback",async()=>{
+  mocks.search="conversation=synthetic-conversation";await render();expect(mocks.conversation).toBeDefined();expect(mocks.conversation).not.toHaveProperty("onUseResult");
+ });
 });
