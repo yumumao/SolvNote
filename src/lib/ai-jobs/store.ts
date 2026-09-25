@@ -65,12 +65,13 @@ export async function submitJob(
 }
 export async function readJob(userId: string, id: string, restore = false) {
     const j = await prisma.aiJob.findFirst({
-        where: { id, userId, expiresAt: { gt: new Date() } },
+        where: { id, userId, conversationId: null, expiresAt: { gt: new Date() } },
     });
     if (!j) return null;
     const attempts = await prisma.aiAttempt.findMany({
         where: { jobId: id },
         select: {
+            metadata: true,
             modelId: true,
             state: true,
             errorCode: true,
@@ -81,7 +82,7 @@ export async function readJob(userId: string, id: string, restore = false) {
     });
     return {
         ...publicJob(j),
-        attemptsLog: attempts,
+        attemptsLog: attempts.map(({metadata,...a})=>{const m=metadata?unprotect<import("../ai-dialogue/types").StepMetadata>(metadata):undefined;return {...a,...(m?{stage:m.stage,modelName:m.modelName,providerName:m.providerName,withImage:m.withImage}: {})};}),
         ...(j.state === "success" && j.result
             ? { result: unprotect(j.result) }
             : {}),
@@ -90,11 +91,11 @@ export async function readJob(userId: string, id: string, restore = false) {
 }
 export async function cancelJob(userId: string, id: string) {
     await prisma.aiJob.updateMany({
-        where: { id, userId, state: "pending" },
+        where: { id, userId, conversationId: null, state: "pending" },
         data: { state: "cancelled", cancelRequested: true },
     });
     await prisma.aiJob.updateMany({
-        where: { id, userId, state: "running" },
+        where: { id, userId, conversationId: null, state: "running" },
         data: { cancelRequested: true },
     });
     return readJob(userId, id);

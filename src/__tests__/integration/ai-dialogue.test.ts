@@ -1,0 +1,321 @@
+// @vitest-environment node
+import { beforeAll, beforeEach, afterAll, describe, it, expect, vi } from "vitest";
+import { mkdtempSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { PrismaClient } from "@prisma/client";
+const shared = vi.hoisted(() => ({ db: null as unknown as PrismaClient, send: vi.fn(), authId:"alice" as string|null }));
+vi.mock("@/lib/prisma",()=>({get prisma(){return shared.db;}}));
+vi.mock("@/lib/auth",()=>({authOptions:{}}));
+vi.mock("next-auth",()=>({getServerSession:async()=>shared.authId?{user:{id:shared.authId}}:null}));
+vi.mock("@/lib/config",()=>({getAppConfig:()=>({})}));
+vi.mock("@/lib/ai/transport",async original=>({...await original<typeof import("@/lib/ai/transport")>(),sendAI:shared.send}));
+import { createConversation, readConversation, actConversation, updateDefaults, deleteConversation } from "@/lib/ai-dialogue/store";
+import { processOne, claimJob } from "@/lib/ai-jobs/worker";
+import { saveAIConfig } from "@/lib/ai-config/store";
+import { POST as POSTCONVERSATION, GET as LIST } from "@/app/api/ai/conversations/route";
+import { POST as ACTION, GET as GETCONVERSATION, DELETE } from "@/app/api/ai/conversations/[id]/route";
+import { POST as SETTINGS } from "@/app/api/ai/dialogue-settings/route";
+import { loadAIConfig } from "@/lib/ai-config/store";
+import { readJob, cancelJob } from "@/lib/ai-jobs/store";
+import { masterKey } from "@/lib/ai-config/vault";
+import { AIError } from "@/lib/ai/transport";
+const image="data:image/png;base64,YQ==";
+const transcript={text:"synthetic triangle",facts:[],uncertainties:[],missingInformation:[]};
+const solved={status:"solved",result:{questionText:"synthetic q",answerText:"synthetic a",analysis:"synthetic explanation",subject:"数学",knowledgePoints:[]}};
+let oldDir:string|undefined;
+const oldOrigin=process.env.NEXTAUTH_URL;
+const origin="https://notebook.example.invalid";
+function req(path="/api/ai/conversations",body:unknown={questionText:"fixture"},headers:Record<string,string>={}){return new Request(origin+path,{method:"POST",headers:{"content-type":"application/json",origin,"x-request-id":key(),...headers},body:JSON.stringify(body)});}
+let seq=0;
+const key=()=>`synthetic-${++seq}`;
+async function create(user="alice", withImage=true){return createConversation(user,{questionText:"synthetic q",...(withImage?{imageBase64:image}:{})},key());}
+async function view(id:string,user="alice"){return (await readConversation(user,id))!;}
+async function act(id:string,kind:string,extra:Record<string,unknown>={},user="alice",requestKey=key()) { const c=await view(id,user);return actConversation(user,id,{kind,revision:c.revision,...extra},requestKey); }
+beforeAll(async()=>{
+ mkdirSync(".codex/tmp",{recursive:true}); const dir=mkdtempSync(path.resolve(".codex/tmp/dialogue-db-"));
+ oldDir=process.env.AI_CONFIG_DIR;process.env.AI_CONFIG_DIR=path.join(dir,"config");
+ const url=`file:${path.join(dir,"test.db").replaceAll("\\","/")}`;
+ execFileSync(process.execPath,["node_modules/prisma/build/index.js","migrate","deploy"],{env:{...process.env,DATABASE_URL:url},stdio:"pipe"});
+ shared.db=new PrismaClient({datasources:{db:{url}}});
+ for(const id of ["alice","bob","admin"]) await shared.db.user.create({data:{id,email:`${id}@example.invalid`,password:"unused",role:id==="admin"?"admin":"user"}});
+ masterKey(true);
+ await saveAIConfig({version:1,providers:[{id:"p",name:"Fixture connection",protocol:"chat",baseUrl:"https://example.com/v1",apiKey:"synthetic-only",enabled:true}],models:[
+ {id:"t",providerId:"p",name:"Text solver",model:"text",capabilities:["text"],enabled:true},
+ {id:"v",providerId:"p",name:"Image reader",model:"vision",capabilities:["text","vision"],enabled:true}],chains:{text:["t","v"],vision:["v"]}},0);
+},30000);
+beforeEach(async()=>{
+ shared.authId="alice";process.env.NEXTAUTH_URL=origin;
+ await shared.db.aiConversation.deleteMany();await shared.db.aiJob.deleteMany();await shared.db.aiWorkerLease.deleteMany();await shared.db.aiCooldown.deleteMany();await shared.db.aiDialogueSettings.deleteMany();
+ shared.send.mockReset();shared.send.mockImplementation(async (_p,_m,prompt)=>JSON.stringify(prompt.includes("只负责题图")?transcript:solved));
+});
+afterAll(async()=>{if(oldOrigin===undefined)delete process.env.NEXTAUTH_URL;else process.env.NEXTAUTH_URL=oldOrigin;await shared.db?.$disconnect();if(oldDir===undefined)delete process.env.AI_CONFIG_DIR;else process.env.AI_CONFIG_DIR=oldDir;});
+describe.sequential("persistent dialogue with synthetic SQLite and mocked providers",()=>{
+ it("counts the first completed answer, routes text solver without image, encrypts trace",async()=>{
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(c.roundsUsed).toBe(1);expect(c.roundLimit).toBe(10);
+  expect(shared.send.mock.calls.map(c=>c[1].id)).toEqual(["v","t"]);expect(shared.send.mock.calls.map(c=>c[7])).toEqual(["transcription",undefined]);expect(shared.send.mock.calls[1][4]).toBeUndefined();
+  expect(c.steps.map(s=>s.stage)).toEqual(["recognize","solve"]);expect(c.steps[0].providerName).toBe("Fixture connection");
+  const raw=await shared.db.aiConversation.findUniqueOrThrow({where:{id}});expect(raw.payload).not.toContain("synthetic q");
+  const attempt=await shared.db.aiAttempt.findFirstOrThrow();expect(attempt.metadata).not.toContain("Fixture connection");
+  expect(JSON.stringify(c)).not.toContain("synthetic-only");
+ });
+ it("releases the worker while awaiting a person, saves clarification without AI and resumes same round",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify({status:"needs_user",reason:"missing_source",questions:["missing length?"]}));
+  const id=await create();await processOne();let c=await view(id);expect(c.state).toBe("awaiting_user");expect(c.roundsUsed).toBe(0);
+  expect((await shared.db.aiWorkerLease.findUniqueOrThrow({where:{id:"site"}})).until.getTime()).toBe(0);
+  await act(id,"save",{text:"length is 5"});expect(shared.send).toHaveBeenCalledTimes(2);
+  await act(id,"continue");await processOne();c=await view(id);expect(c.roundsUsed).toBe(1);expect(c.roundAttempts).toBe(3);
+  expect(shared.send.mock.calls[2][1].id).toBe("t");expect(shared.send.mock.calls[2][3]).toContain("length is 5");
+ });
+ it("executes recognition, solve, targeted reread, original solver in four calls",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify({status:"needs_visual_check",questions:["angle label?"]})).mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify(solved));
+  const id=await create();await processOne();const c=await view(id);expect(c.state).toBe("answered");expect(c.roundAttempts).toBe(4);
+  expect(shared.send.mock.calls.map(c=>c[1].id)).toEqual(["v","t","v","t"]);expect(c.steps[2].questions).toEqual(["angle label?"]);
+ });
+ it("lets the solver confirm cropped material without an unnecessary reread",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,missingInformation:["missing right half"]})).mockResolvedValueOnce(JSON.stringify({status:"needs_user",reason:"missing_source",questions:["missing right half"]}));const id=await create();await processOne();
+  expect((await view(id)).questions).toEqual(["missing right half"]);expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+ it("does not turn a reader's missing-caption warning into an automatic human pause",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,missingInformation:["synthetic arc has no written ray pair"]}));
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(c.steps.map(s=>s.stage)).toEqual(["recognize","solve"]);expect(c.roundAttempts).toBe(2);
+ });
+ it("records the exact question when a legacy needs_user is routed through vision",async()=>{
+  const questions=["synthetic angle arc endpoints?"];
+  shared.send.mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify({status:"needs_user",questions})).mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify(solved));
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(c.roundAttempts).toBe(4);expect(c.steps.map(s=>s.stage)).toEqual(["recognize","solve","reread","solve"]);
+  expect(c.steps[2].questions).toEqual(questions);expect(shared.send.mock.calls[3][1].id).toBe("t");
+ });
+ it("enforces 10 completed rounds and only an actual administrator can extend their own conversation",async()=>{
+  const id=await create("admin",false);await processOne();
+  for(let i=1;i<10;i++){await act(id,"ask",{text:`follow up ${i}`},"admin");await processOne();}
+  expect((await view(id,"admin")).roundsUsed).toBe(10);
+  await expect(act(id,"ask",{text:"eleventh"},"admin")).rejects.toThrow("DIALOGUE_ROUND_LIMIT");
+  await act(id,"extend_rounds",{amount:2},"admin");await act(id,"ask",{text:"eleventh"},"admin");await processOne();expect((await view(id,"admin")).roundsUsed).toBe(11);
+  const user=await create();await expect(act(user,"extend_rounds",{amount:2})).rejects.toThrow("FORBIDDEN");
+ },15000); // Eleven persisted rounds can exceed 5s under parallel SQLite test load.
+ it("snapshots defaults without changing existing limits",async()=>{
+  const id=await create();await updateDefaults("admin",{defaultRounds:15,revision:0});expect((await view(id)).roundLimit).toBe(10);
+  expect((await view(await create())).roundLimit).toBe(15);await expect(updateDefaults("alice",{defaultRounds:99,revision:1})).rejects.toThrow("FORBIDDEN");
+ });
+ it("deduplicates creation and rejects different data under a reused key",async()=>{
+  const k=key(),raw={questionText:"q"};const id=await createConversation("alice",raw,k);expect(await createConversation("alice",raw,k)).toBe(id);
+  await expect(createConversation("alice",{questionText:"different"},k)).rejects.toThrow("REQUEST_CONFLICT");
+ });
+ it("deduplicates actions and rejects stale revisions before dispatch",async()=>{
+  const id=await create();await processOne();const c=await view(id),k=key(),action={kind:"ask",text:"why",revision:c.revision};
+  await actConversation("alice",id,action,k);await actConversation("alice",id,action,k);
+  expect(await shared.db.aiJob.count({where:{conversationId:id}})).toBe(2);
+  await expect(actConversation("alice",id,{...action,text:"different"},k)).rejects.toThrow("REQUEST_CONFLICT");
+  await expect(actConversation("alice",id,action,key())).rejects.toThrow("DIALOGUE_CONFLICT");
+ });
+ it("denies cross-user reads, writes and deletion",async()=>{
+  const id=await create();expect(await readConversation("bob",id)).toBeNull();
+  await expect(actConversation("bob",id,{kind:"cancel",revision:0},key())).rejects.toThrow("NOT_FOUND");
+  await expect(deleteConversation("bob",id,0)).rejects.toThrow("NOT_FOUND");
+ });
+ it("never repeats a request with unknown acceptance",async()=>{
+  shared.send.mockRejectedValue(new AIError("AI_ACCEPTANCE_UNKNOWN"));const id=await create();await processOne();expect((await view(id)).state).toBe("unknown");
+  await expect(act(id,"continue")).rejects.toThrow("DIALOGUE_UNKNOWN");expect(await processOne()).toBe(false);expect(shared.send).toHaveBeenCalledTimes(1);
+ });
+ it("keeps unknown state through lease recovery, rather than restarting recognition",async()=>{
+  const id=await create();const job=await claimJob("crashed");await shared.db.aiJob.update({where:{id:job!.id},data:{leaseUntil:new Date(0)}});await shared.db.aiWorkerLease.update({where:{id:"site"},data:{until:new Date(0)}});
+  await processOne("replacement");expect((await view(id)).state).toBe("unknown");expect(shared.send).not.toHaveBeenCalled();
+ });
+ it("does not reset call or active-time limits after human input",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,missingInformation:["missing length"]})).mockResolvedValueOnce(JSON.stringify({status:"needs_user",reason:"missing_source",questions:["missing length"]}));const id=await create();await processOne();
+  await shared.db.aiConversation.update({where:{id},data:{roundAttempts:6}});await act(id,"save",{text:"length 5"});
+  await expect(act(id,"continue")).rejects.toThrow("DIALOGUE_CALL_LIMIT");expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+ it("cancels a pending turn without an AI call or consuming a round",async()=>{
+  const id=await create();await act(id,"cancel");expect((await view(id)).state).toBe("cancelled");expect((await view(id)).roundsUsed).toBe(0);expect(await processOne()).toBe(false);
+ });
+ it("only restores image data on demand, and delete cascades encrypted history",async()=>{
+  const id=await create();await processOne();expect((await view(id)).input.imageBase64).toBeUndefined();
+  expect((await readConversation("alice",id,true))?.input.imageBase64).toBe(image);
+  await deleteConversation("alice",id,(await view(id)).revision);
+  expect(await shared.db.aiJob.count({where:{conversationId:id}})).toBe(0);expect(await shared.db.aiConversationAction.count({where:{conversationId:id}})).toBe(0);
+ });
+ it("refuses old short-job routes for dialogue tasks",async()=>{
+  const id=await create(),job=(await view(id)).activeJobId!;
+  expect(await readJob("alice",job,true)).toBeNull();expect(await cancelJob("alice",job)).toBeNull();expect((await shared.db.aiJob.findUniqueOrThrow({where:{id:job}})).cancelRequested).toBe(false);
+ });
+ it("uses original quality for targeted rereads and invalidates transcription on a replacement image",async()=>{
+  const original="data:image/png;base64,Yg==";
+  shared.send.mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify({status:"needs_visual_check",questions:["label?"]})).mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify({status:"needs_user",questions:["missing half?"]}));
+  const id=await createConversation("alice",{questionText:"q",imageBase64:image,originalImageBase64:original},key());await processOne();
+  expect(shared.send.mock.calls[2][4]).toBe(original);
+  const previous=(await view(id)).roundAttempts;await act(id,"save",{imageBase64:original});expect(shared.send).toHaveBeenCalledTimes(4);
+  await act(id,"continue");await processOne();expect(shared.send.mock.calls[4][2]).toContain("只负责题图");expect((await view(id)).roundAttempts).toBe(previous+2);
+ });
+ it("never switches a disabled original solver silently",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify({status:"needs_user",questions:["condition?"]}));const id=await create("alice",false);await processOne();
+  const {config:original}=await loadAIConfig();const revision=await shared.db.aiConfiguration.findUniqueOrThrow({where:{id:"site"}});
+  await saveAIConfig({...original,models:original.models.map(m=>m.id==="t"?{...m,enabled:false}:m),chains:{...original.chains,text:["v"]}},revision.revision);
+  try{await act(id,"continue",{text:"condition provided"});await processOne();expect((await view(id)).state).toBe("failed");expect(shared.send).toHaveBeenCalledTimes(1);}
+  finally{await saveAIConfig(original,revision.revision+1);}
+ });
+ it("bounds administrator budget extension, never dispatches on extension alone",async()=>{
+  const id=await create("admin",false);await shared.db.aiConversation.update({where:{id},data:{roundAttempts:6}});await processOne();
+  expect((await view(id,"admin")).state).toBe("failed");expect(shared.send).not.toHaveBeenCalled();
+  await act(id,"extend_budget",{},"admin");expect((await view(id,"admin")).attemptLimit).toBe(10);expect(shared.send).not.toHaveBeenCalled();
+  await act(id,"continue",{},"admin");await processOne();expect((await view(id,"admin")).roundAttempts).toBe(7);
+ });
+ it("saves once on concurrent stale actions and does not dispatch twice",async()=>{
+  const id=await create("alice",false);await processOne();const c=await view(id);
+  const results=await Promise.allSettled([1,2].map(()=>actConversation("alice",id,{kind:"ask",text:"why",revision:c.revision},key())));
+  expect(results.filter(r=>r.status==="fulfilled")).toHaveLength(1);expect(await shared.db.aiJob.count({where:{conversationId:id}})).toBe(2);
+ });
+ it("does not publish or count a result after cancellation wins",async()=>{
+  const id=await create("alice",false);shared.send.mockImplementationOnce(async()=>{await act(id,"cancel");return JSON.stringify(solved);});await processOne();
+  const c=await view(id);expect(c.state).toBe("cancelled");expect(c.roundsUsed).toBe(0);expect(c.result).toBeUndefined();expect(shared.send).toHaveBeenCalledTimes(1);
+ });
+ it("marks failed final persistence unknown without another charge",async()=>{
+  const id=await create("alice",false),original=shared.db;let failed=false;
+  shared.db=original.$extends({query:{aiJob:{$allOperations:async({args,query})=>{
+   if(!failed && "data" in args && args.data && "state" in args.data && args.data.state==="success"){failed=true;throw new Error("synthetic persistence error");}return query(args);
+  }}}}) as unknown as PrismaClient;
+  try{await processOne();const c=await view(id);expect(failed).toBe(true);expect(c.state).toBe("unknown");expect(c.roundsUsed).toBe(0);expect(c.result).toBeUndefined();expect(shared.send).toHaveBeenCalledTimes(1);}finally{shared.db=original;}
+ });
+ it("rejects unauthenticated, inactive and cross-owner route access",async()=>{
+  shared.authId=null;expect((await POSTCONVERSATION(req())).status).toBe(401);
+  shared.authId="alice";const created=await POSTCONVERSATION(req());expect(created.status).toBe(201);const {id}=await created.json();
+  shared.authId="bob";const context={params:Promise.resolve({id})};expect((await GETCONVERSATION(new Request(origin+"/api/ai/conversations/"+id),context)).status).toBe(404);
+  expect((await DELETE(req("/delete",{revision:0}),context)).status).toBe(404);expect((await LIST(new Request(origin+"/list"))).status).toBe(200);
+  await shared.db.user.update({where:{id:"bob"},data:{isActive:false}});try{expect((await LIST(new Request(origin+"/list"))).status).toBe(403);}finally{await shared.db.user.update({where:{id:"bob"},data:{isActive:true}});}
+ });
+ it("checks origin before parsing a large image body, exposes only safe errors",async()=>{
+  const denied=await POSTCONVERSATION(req("/create",{questionText:"q"},{origin:"https://scandex.example.invalid","content-length":String(26*1024*1024)}));
+  expect(denied.status).toBe(403);expect(await denied.json()).toEqual({message:"ORIGIN_REJECTED"});expect(await shared.db.aiConversation.count()).toBe(0);
+  expect((await POSTCONVERSATION(req("/create",{}, {"content-length":String(26*1024*1024)}))).status).toBe(413);
+  expect((await POSTCONVERSATION(req("/create",{questionText:""}))).status).toBe(400);
+ });
+ it("enforces admin settings and revision conflicts at HTTP boundaries",async()=>{
+  expect((await SETTINGS(req("/settings",{defaultRounds:12,revision:0}))).status).toBe(403);
+  shared.authId="admin";expect((await SETTINGS(req("/settings",{defaultRounds:12,revision:0}))).status).toBe(200);
+  expect((await SETTINGS(req("/settings",{defaultRounds:12,revision:0}))).status).toBe(409);
+  shared.authId="alice";const id=await create("alice",false);await processOne();
+  const r=await ACTION(req("/action",{kind:"ask",revision:0,text:"why"}),{params:Promise.resolve({id})});expect(r.status).toBe(409);expect(await r.json()).toEqual({message:"DIALOGUE_CONFLICT"});
+ });
+
+});
+
+describe.sequential("activity-budget hard limits and review clarification",()=>{
+ it("does not dispatch after active time is exhausted and does not reset that budget on human save",async()=>{
+  const id=await create("admin",false);
+  await shared.db.aiConversation.update({where:{id},data:{roundElapsedMs:600000}});
+  await processOne();expect(shared.send).not.toHaveBeenCalled();expect((await view(id,"admin")).state).toBe("failed");
+  await act(id,"save",{text:"synthetic condition"},"admin");expect((await view(id,"admin")).roundElapsedMs).toBe(600000);
+  await expect(act(id,"continue",{},"admin")).rejects.toThrow("DIALOGUE_CALL_LIMIT");
+  await act(id,"extend_budget",{},"admin");expect(shared.send).not.toHaveBeenCalled();
+  const c=await view(id,"admin");expect(c.timeLimitMs).toBe(1200000);expect(c.roundElapsedMs).toBe(600000);
+  await act(id,"continue",{},"admin");await processOne();expect((await view(id,"admin")).roundsUsed).toBe(1);
+ });
+ it("rejects administrator expansion beyond the per-round time/call hard limits and 100 rounds",async()=>{
+  const id=await create("admin",false);shared.send.mockResolvedValueOnce(JSON.stringify({status:"needs_user",questions:["missing condition"]}));await processOne();
+  await act(id,"extend_budget",{},"admin");await act(id,"extend_budget",{},"admin");
+  await expect(act(id,"extend_budget",{},"admin")).rejects.toThrow("DIALOGUE_LIMIT_INVALID");
+  await shared.db.aiConversation.update({where:{id},data:{roundLimit:100}});
+  await expect(act(id,"extend_rounds",{amount:1},"admin")).rejects.toThrow("DIALOGUE_LIMIT_INVALID");
+  await shared.db.aiConversation.update({where:{id},data:{attemptLimit:18,timeLimitMs:600000}});
+  await expect(act(id,"extend_budget",{},"admin")).rejects.toThrow("DIALOGUE_LIMIT_INVALID");expect(shared.send).toHaveBeenCalledTimes(1);
+ });
+ it("allows a text reviewer to use the visual reader without giving the original solver the review verdict",async()=>{
+  const previous=await loadAIConfig();
+  await saveAIConfig({...previous.config,chains:{text:["v","t"],vision:["v"]}},previous.revision);
+  try {
+   const questions=["synthetic arc endpoints?"];
+   shared.send.mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify(solved)).mockResolvedValueOnce(JSON.stringify({status:"needs_user",questions})).mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify(solved));
+   const id=await createConversation("alice",{questionText:"synthetic q",imageBase64:image,review:true},key());
+   await processOne();const c=await view(id);
+   expect(c.state).toBe("answered");expect(c.roundAttempts).toBe(5);
+   expect(shared.send.mock.calls.map(c=>c[1].id)).toEqual(["v","v","t","v","t"]);
+   expect(c.steps.map(s=>s.stage)).toEqual(["recognize","solve","review","reread","review"]);
+   expect(shared.send.mock.calls[4][2]).toContain("独立复核");expect(shared.send.mock.calls[4][4]).toBeUndefined();
+  } finally {const current=await loadAIConfig();await saveAIConfig(previous.config,current.revision);}
+ });
+ it("does not expose the candidate answer while an independent reviewer is asking the user",async()=>{
+  const id=await createConversation("alice",{questionText:"synthetic q",review:true},key());
+  shared.send.mockResolvedValueOnce(JSON.stringify(solved)).mockResolvedValueOnce(JSON.stringify({status:"needs_user",questions:["confirm condition before final answer"]}));
+  await processOne();const c=await view(id);expect(c.state).toBe("awaiting_user");expect(c.result).toBeUndefined();expect(c.roundsUsed).toBe(0);expect(c.steps.map(s=>s.stage)).toEqual(["solve","review"]);
+  expect(c.messages.some(m=>m.kind==="answer")).toBe(false);expect(shared.send.mock.calls.map(c=>c[1].id)).toEqual(["t","v"]);
+ });
+});
+
+describe.sequential("human corrected transcription",()=>{
+ it("replaces machine facts, persists authority and re-solves without overwriting the correction",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,facts:[{detail:"old synthetic ray",source:"image"}]})).mockResolvedValueOnce(JSON.stringify({status:"needs_user",reason:"missing_source",questions:["which ray?"]}));
+  const id=await create();await processOne();
+  await act(id,"save",{correctedTranscript:"complete corrected synthetic question"});
+  let c=await view(id);expect(c.transcript?.text).toBe("complete corrected synthetic question");expect(c.transcript?.facts).toEqual([]);expect(c.userCorrectedTranscript).toBe(true);expect(shared.send).toHaveBeenCalledTimes(2);
+  shared.send.mockResolvedValueOnce(JSON.stringify({status:"needs_visual_check",questions:["old synthetic ray?"]}));
+  await act(id,"continue");await processOne();c=await view(id);
+  expect(c.state).toBe("awaiting_user");expect(c.transcript?.text).toBe("complete corrected synthetic question");expect(shared.send).toHaveBeenCalledTimes(3);expect(shared.send.mock.calls[2][3]).toContain('"transcriptionAuthority":"user_corrected"');
+ });
+ it("counts correction of an answered question as an explicit new round and rejects stale revisions",async()=>{
+  const id=await create();await processOne();const revision=(await view(id)).revision;
+  await act(id,"ask",{correctedTranscript:"complete replacement"});await processOne();expect((await view(id)).roundsUsed).toBe(2);
+  await expect(actConversation("alice",id,{kind:"ask",revision,correctedTranscript:"stale replacement"},key())).rejects.toMatchObject({message:"DIALOGUE_CONFLICT"});
+ });
+ it("invalidates human authority when a new source image is submitted",async()=>{
+  const id=await create();await processOne();await act(id,"ask",{correctedTranscript:"complete replacement"});await processOne();
+  await act(id,"ask",{text:"replace source",imageBase64:image});const c=await view(id);expect(c.userCorrectedTranscript).not.toBe(true);expect(c.transcript).toBeUndefined();
+ });
+ it("does not allow non-owner corrections",async()=>{
+  const id=await create();await processOne();await expect(actConversation("bob",id,{kind:"ask",revision:(await view(id)).revision,correctedTranscript:"not mine"},key())).rejects.toMatchObject({message:"NOT_FOUND"});
+ });
+});
+
+// Same isolated database and provider mocks as dialogue, no real outgoing calls.
+import {GET as DRAWGET,POST as DRAWSET} from "@/app/api/ai/drawing-settings/route";
+import {POST as DRAW} from "@/app/api/ai/drawing/[kind]/route";
+const construction={title:"fixture",points:[{id:"P",x:0,y:0},{id:"Q",x:4,y:0},{id:"R",x:1,y:3}],segments:[["P","Q"]],steps:[{description:"join",operation:{kind:"segment",a:"Q",b:"R"}}]};
+describe.sequential("bounded drawing routes and jobs",()=>{
+ it("restricts editing activation to admin, fails closed for chat models, and checks origin",async()=>{
+  const r=await DRAWSET(req("/api/ai/drawing-settings",{modelId:"v",revision:0}));expect(r.status).toBe(403);
+  shared.authId="admin";
+  expect((await DRAWSET(req("/api/ai/drawing-settings",{modelId:"v",revision:0}))).status).toBe(400);
+  expect((await DRAWSET(req("/api/ai/drawing-settings",{modelId:null,revision:0},{origin:"https://foreign.example.invalid"}))).status).toBe(403);
+  shared.authId="alice";const v=await (await DRAWGET(req())).json();expect(v.enabled).toBe(false);expect(v).not.toHaveProperty("models");expect(JSON.stringify(v)).not.toContain("synthetic-only");
+ });
+ it("queues a construction with current edited fields, no redundant OCR, and owner-only recovery",async()=>{
+  shared.send.mockResolvedValue(JSON.stringify(construction));
+  const response=await DRAW(req("/api/ai/drawing/construction",{questionText:"current edited question",answerText:"edited answer",analysis:"edited analysis",imageBase64:image,mode:"transcribe"}),{params:Promise.resolve({kind:"construction"})});
+  expect(response.status).toBe(202);const {jobId}=await response.json();await processOne();
+  const job=await readJob("alice",jobId);expect(job?.state).toBe("success");expect(job?.result).toMatchObject({type:"construction",plan:construction});expect(shared.send).toHaveBeenCalledTimes(1);expect(shared.send.mock.calls[0][3]).toContain("current edited question");expect(await readJob("bob",jobId)).toBeNull();
+  expect((job?.attemptsLog[0] as unknown as {stage:string}).stage).toBe("construction");
+ });
+ it("never dispatches editing when not activated or without explicit consent",async()=>{
+  const response=await DRAW(req("/api/ai/drawing/image_edit",{questionText:"fixture",imageBase64:image,drawingPlan:construction}),{params:Promise.resolve({kind:"image_edit"})});expect(response.status).toBe(400);expect(shared.send).not.toHaveBeenCalled();
+ });
+});
+
+// Only synthetic config, SQLite and provider replies. This tests the durable trace,
+// not a real model or the user's currently running preview.
+describe.sequential("safe failure diagnostics survive the persistent worker",()=>{
+ it("persists a fixed parse diagnostic encrypted and retains model/round metadata",async()=>{
+  shared.send.mockResolvedValueOnce("not-json PRIVATE-RESPONSE");
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.steps[0]).toMatchObject({state:"failed",errorCode:"AI_RESPONSE_ERROR",diagnostic:"JSON_INVALID",stage:"recognize",modelName:"Image reader",providerName:"Fixture connection",round:1});
+  const attempt=await shared.db.aiAttempt.findFirstOrThrow();
+  expect(attempt.metadata).not.toContain("JSON_INVALID");
+  expect(JSON.stringify(c)).not.toContain("PRIVATE-RESPONSE");
+ });
+ it("preserves unknown status and makes no fallback dispatch on body timeout",async()=>{
+  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"TIMEOUT_READING_BODY"));
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).toBe("unknown");
+  expect(c.steps[0]).toMatchObject({state:"unknown",diagnostic:"TIMEOUT_READING_BODY"});
+  await processOne();expect(shared.send).toHaveBeenCalledTimes(1);
+ });
+ it("accepts thinking-wrapper transcription without a paid fallback attempt",async()=>{
+  shared.send.mockResolvedValueOnce(`<think>synthetic</think>\n${JSON.stringify(transcript)}`);
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");
+  expect(c.steps.map(s=>s.state)).toEqual(["success","success"]);
+  expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+});

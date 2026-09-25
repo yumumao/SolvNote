@@ -5,7 +5,7 @@ import type { ParsedQuestion } from "@/lib/ai/types";
 vi.mock("@/contexts/LanguageContext", () => ({
     useLanguage: () => ({
         language: "zh",
-        t: { editor: {}, common: {}, errors: {} },
+        t: { editor: { save: "保存", cancel: "取消" }, common: {}, errors: {} },
     }),
 }));
 vi.mock("@/lib/frontend-logger", () => ({
@@ -239,4 +239,57 @@ describe("correction editor durable jobs (synthetic input, mocked network)", () 
             ),
         ).toBe(true);
     });
+});
+
+
+describe("preview-first notebook editing",()=>{
+ it("keeps main markdown fields folded but mistake evidence immediately editable",async()=>{
+  await render();const details=[...host.querySelectorAll("details[data-markdown-source]")];
+  expect(details).toHaveLength(3);expect(details.every(d=>!d.hasAttribute("open"))).toBe(true);
+  expect(host.querySelectorAll("textarea")).toHaveLength(5);
+  expect(host.querySelector('[aria-label="错误解答原文"]')?.closest("details")).toBeNull();
+  expect(host.querySelector('[aria-label="错因分析"]')?.closest("details")).toBeNull();
+  expect(button("生成演示")).toBeDefined();
+  expect(fetchMock.mock.calls.filter(([url])=>String(url).includes("geogebra-analyze"))).toHaveLength(0);
+ });
+});
+
+
+describe("restored notebook result persistence", () => {
+    it("saves edited source, mistake evidence, original metadata and generated geometry together", async () => {
+        const onSave = vi.fn();
+        const initialData = { ...question, knowledgePoints: ["分数"], wrongAnswerText: "$x=2$", mistakeAnalysis: "合成错因", mistakeStatus: "wrong_attempt" as const };
+        await act(async () => root.render(createElement(CorrectionEditor, {
+            initialData, imagePreview: image, initialSubjectId: "owned-notebook", onSave, onCancel: vi.fn(),
+        })));
+        const values = [String.raw`合成题：$x\neq 0$`, String.raw`$x=\frac{1}{2}$`, "### 分步解答\n\n1. 合成步骤", "$x=3$", "合成改法"];
+        const fields = [...host.querySelectorAll("textarea")];
+        expect(fields).toHaveLength(values.length);
+        for (const [i, field] of fields.entries()) {
+            if(field.closest("details"))field.closest("details")!.open = true;
+            await act(async () => {
+                Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, values[i]);
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+            });
+        }
+        await act(async () => button("生成演示")!.click());
+        expect(bodyFor("/api/geogebra-analyze")).toMatchObject({ questionText: values[0], answerText: values[1], imageBase64: image });
+        await act(async () => button("保存")!.click());
+        expect(onSave).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            questionText: values[0], answerText: values[1], analysis: values[2], wrongAnswerText: values[3], mistakeAnalysis: values[4],
+            mistakeStatus: "wrong_attempt", requiresImage: true, knowledgePoints: ["分数"], subjectId: "owned-notebook",
+            geogebraCommands: JSON.stringify(geometry.commands),
+        }));
+    });
+});
+
+it("preserves automatic wrong-attempt status when the user supplies a wrong answer", async () => {
+    await render();
+    expect([...host.querySelectorAll('[role="combobox"]')].at(-1)?.textContent).toContain("未判断");
+    const field = host.querySelector('textarea[aria-label="错误解答原文"]')!;
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, "$x=3$");
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect([...host.querySelectorAll('[role="combobox"]')].at(-1)?.textContent).toContain("做错了");
 });

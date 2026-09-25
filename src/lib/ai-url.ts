@@ -6,6 +6,8 @@ import {
     type RequestInit as UndiciRequestInit,
 } from "undici";
 
+import { localAIProxy, pinnedProxyRequest, proxyPublicDNS } from "./ai-local-proxy";
+
 type Address = { address: string; family: number };
 
 /** Fixed safe errors; no hostname, credential, upstream body, or error cause is retained. */
@@ -68,7 +70,8 @@ function isPublicAddress(address: string): boolean {
 
 async function vettedTarget(
     input: string,
-): Promise<{ url: URL; addresses: Address[] }> {
+    signal?: AbortSignal,
+): Promise<{ url: URL; addresses: Address[]; proxy?: string }> {
     let url: URL;
     try {
         url = new URL(input);
@@ -96,10 +99,12 @@ async function vettedTarget(
         .replace(/^\[|\]$/g, "")
         .replace(/\.$/, "")
         .toLowerCase();
+    let proxy: string | undefined;
+    try { proxy = localAIProxy(); } catch { throw new AIUrlError(); }
     const family = isIP(hostname);
     if (family) {
         if (!isPublicAddress(hostname)) throw new AIUrlError();
-        return { url, addresses: [{ address: hostname, family }] };
+        return { url, addresses: [{ address: hostname, family }], proxy };
     }
     if (
         !hostname.includes(".") ||
@@ -111,7 +116,7 @@ async function vettedTarget(
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
         const records = await Promise.race([
-            lookup(hostname, { all: true, verbatim: true }),
+            proxy ? proxyPublicDNS(hostname, proxy, signal) : lookup(hostname, { all: true, verbatim: true }),
             new Promise<never>((_, reject) => {
                 timer = setTimeout(() => reject(new AIUrlError()), 5000);
                 timer.unref?.();
@@ -128,6 +133,7 @@ async function vettedTarget(
             throw new AIUrlError();
         return {
             url,
+            proxy,
             addresses: records.map(({ address, family }) => ({
                 address,
                 family,
@@ -163,17 +169,23 @@ export async function validateAIUrl(url: string): Promise<URL> {
 }
 
 /**
- * Shared transport contract for routes and job workers. HTTPS/public IPs only.
- * Every request uses its own DNS-pinned dispatcher, rejects redirects, and buffers
- * at most 2 MiB. The 180s deadline covers connection + body; callers can shorten
- * it with init.signal. Streaming responses and environment proxies are not used.
+ * Consume a bounded response while its DNS-pinned dispatcher is alive. The
+ * consumer may finish at a protocol terminal event; unread bytes are cancelled,
+ * not drained to EOF. HTTPS/public IP, redirect, header and 180s limits apply to
+ * both streaming and buffered callers (at most 2 MiB). Generic proxy env is ignored;
+ * AI_LOCAL_HTTPS_PROXY explicitly opts into a loopback proxy with pinned public DNS.
+ * Consumer errors are preserved; raw network/dispatcher errors never escape.
  */
-export async function safeAIFetch(
+export async function withSafeAIResponse<T>(
     input: string,
     init: RequestInit,
-): Promise<Response> {
-    const { url, addresses } = await vettedTarget(input);
-    const agent = new Agent({
+    consume: (response: Response) => Promise<T>,
+    responseKind: "text" | "image" = "text",
+): Promise<T> {
+    init.signal?.throwIfAborted();
+    const { url, addresses, proxy } = await vettedTarget(input, init.signal ?? undefined);
+    const proxied = proxy ? pinnedProxyRequest(proxy, url, addresses[0].address) : undefined;
+    const agent = proxied?.agent ?? new Agent({
         connect: {
             timeout: 10000,
             lookup(_hostname, options, callback) {
@@ -185,88 +197,129 @@ export async function safeAIFetch(
                     callback(new AITransportError(), "", 4);
                     return;
                 }
-                // No DNS is performed here: rebinding cannot replace the checked addresses.
+                // No DNS is performed here: rebinding cannot replace checked addresses.
                 if (options.all) callback(null, matches);
                 else callback(null, matches[0].address, matches[0].family);
             },
         },
     });
-    let succeeded = false;
+    let consumed = false;
+    let bodyEnded = false;
+    let cleanup: (() => void) | undefined;
     try {
-        const headers = new Headers(init.headers);
-        if (headers.has("host") || headers.has("connection"))
-            throw new AITransportError();
-        const deadline = AbortSignal.timeout(180000);
-        const signal = init.signal
-            ? AbortSignal.any([init.signal, deadline])
-            : deadline;
-        const response = await undiciFetch(url, {
-            method: init.method,
-            headers: Array.from(headers.entries()),
-            body: init.body as UndiciRequestInit["body"],
-            signal,
-            redirect: "error",
-            dispatcher: agent,
-        });
-        if (response.status >= 300 && response.status < 400)
-            throw new AITransportError();
-        const limit = 2 * 1024 * 1024;
-        if (Number(response.headers.get("content-length")) > limit)
-            throw new AITransportError();
-        const reader = response.body?.getReader();
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        if (reader) {
-            try {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    size += value.byteLength;
-                    if (size > limit) {
-                        void reader.cancel().catch(() => {});
-                        throw new AITransportError();
-                    }
-                    chunks.push(value);
+        let result: Response;
+        try {
+            const headers = new Headers(init.headers);
+            if (headers.has("host") || headers.has("connection") || headers.has("proxy-authorization"))
+                throw new AITransportError();
+            const deadline = AbortSignal.timeout(180000);
+            const signal = init.signal
+                ? AbortSignal.any([init.signal, deadline])
+                : deadline;
+            signal.throwIfAborted();
+            const response = await undiciFetch(proxied?.target ?? url, {
+                method: init.method,
+                headers: Array.from(headers.entries()),
+                body: init.body as UndiciRequestInit["body"],
+                signal,
+                redirect: "error",
+                dispatcher: agent,
+            });
+            if (response.status >= 300 && response.status < 400)
+                throw new AITransportError();
+            const limit = (responseKind === "image" ? 16 : 2) * 1024 * 1024;
+            if (Number(response.headers.get("content-length")) > limit)
+                throw new AITransportError();
+            const reader = response.body?.getReader();
+            let size = 0;
+            let stopped = false;
+            let onAbort: (() => void) | undefined;
+            cleanup = () => {
+                if (stopped) return;
+                stopped = true;
+                if (onAbort) signal.removeEventListener("abort", onAbort);
+                // Do not await a provider's cancellation/EOF before returning.
+                if (reader) {
+                    if (!bodyEnded) void reader.cancel().catch(() => {});
+                    reader.releaseLock();
                 }
-            } finally {
-                reader.releaseLock();
-            }
+            };
+            const cancelBody = cleanup;
+            const body = reader ? new ReadableStream<Uint8Array>({
+                start(controller) {
+                    onAbort = () => {
+                        cancelBody();
+                        controller.error(new AITransportError());
+                    };
+                    if (signal.aborted) onAbort();
+                    else signal.addEventListener("abort", onAbort, { once: true });
+                },
+                async pull(controller) {
+                    try {
+                        signal.throwIfAborted();
+                        const { done, value } = await reader.read();
+                        if (stopped) return;
+                        signal.throwIfAborted();
+                        if (done) {
+                            bodyEnded = true;
+                            cancelBody();
+                            controller.close();
+                        } else {
+                            size += value.byteLength;
+                            if (size > limit) throw new AITransportError();
+                            controller.enqueue(value);
+                        }
+                    } catch {
+                        if (!stopped) {
+                            cancelBody();
+                            controller.error(new AITransportError());
+                        }
+                    }
+                },
+                cancel() {
+                    cancelBody();
+                },
+            }, { highWaterMark: 0 }) : null;
+            if (!reader) bodyEnded = true;
+            // Only these provider headers are allowed across the boundary.
+            const responseHeaders = new Headers({
+                "Content-Type": response.headers.get("content-type") || "application/json",
+            });
+            const retryAfter = boundedRetryAfter(response.headers.get("retry-after"));
+            if (retryAfter !== undefined) responseHeaders.set("Retry-After", retryAfter);
+            result = new Response(
+                [204, 205, 304].includes(response.status) || init.method?.toUpperCase() === "HEAD" ? null : body,
+                { status: response.status, headers: responseHeaders },
+            );
+        } catch {
+            throw new AITransportError();
         }
-        const bytes = new Uint8Array(size);
-        let offset = 0;
-        for (const chunk of chunks) {
-            bytes.set(chunk, offset);
-            offset += chunk.byteLength;
-        }
-        const body =
-            [204, 205, 304].includes(response.status) ||
-            init.method?.toUpperCase() === "HEAD"
-                ? null
-                : bytes;
-        // Do not forward cookies or raw statusText from a provider.
-        const responseHeaders = new Headers({
-            "Content-Type":
-                response.headers.get("content-type") || "application/json",
-        });
-        const retryAfter = boundedRetryAfter(
-            response.headers.get("retry-after"),
-        );
-        if (retryAfter !== undefined)
-            responseHeaders.set("Retry-After", retryAfter);
-        const result = new Response(body, {
-            status: response.status,
-            headers: responseHeaders,
-        });
-        succeeded = true;
-        return result;
-    } catch {
-        throw new AITransportError();
+        // Outside the transport catch: preserve safe protocol error classification.
+        const value = await consume(result);
+        consumed = true;
+        return value;
     } finally {
         try {
-            if (succeeded) await agent.close();
+            cleanup?.();
+        } catch {
+            /* Never expose cleanup errors. */
+        }
+        try {
+            if (consumed && bodyEnded) await agent.close();
             else await agent.destroy();
         } catch {
             /* Never expose dispatcher errors. */
         }
     }
+}
+
+/** Buffered compatibility API for model discovery and existing routes. */
+export async function safeAIFetch(input: string, init: RequestInit): Promise<Response> {
+    return withSafeAIResponse(input, init, async (response) => {
+        const bytes = await response.arrayBuffer();
+        return new Response(response.body === null ? null : bytes, {
+            status: response.status,
+            headers: response.headers,
+        });
+    });
 }

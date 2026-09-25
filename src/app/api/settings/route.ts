@@ -68,7 +68,7 @@ function preservedKey(incoming: string | undefined, current: string | undefined)
     return current;
 }
 
-export async function GET(req?: Request) {
+export async function GET(req: Request) {
     try {
         const user = await requireUser(req);
         const config = getAppConfig();

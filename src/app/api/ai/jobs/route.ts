@@ -7,7 +7,7 @@ export async function GET(req: Request) {
     try {
         const u = await requireUser(req);
         const jobs = await prisma.aiJob.findMany({
-            where: { userId: u.id, expiresAt: { gt: new Date() } },
+            where: { userId: u.id, conversationId: null, expiresAt: { gt: new Date() } },
             orderBy: { createdAt: "desc" },
             take: 50,
         });

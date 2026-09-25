@@ -32,23 +32,23 @@ beforeEach(() => {
 describe('/api/settings security', () => {
     it('requires authentication before reading settings', async () => {
         mocks.session.mockResolvedValue(null);
-        expect((await GET()).status).toBe(401);
+        expect((await GET(new Request('https://app.example.com/api/settings', { method: 'GET' }))).status).toBe(401);
         expect(mocks.get).not.toHaveBeenCalled();
     });
     it.each([null, { id: 'u1', role: 'admin', isActive: false }])('rejects deleted/inactive users: %j', async (user) => {
         mocks.user.mockResolvedValue(user);
-        expect((await GET()).status).toBe(403);
+        expect((await GET(new Request('https://app.example.com/api/settings', { method: 'GET' }))).status).toBe(403);
         expect(mocks.get).not.toHaveBeenCalled();
     });
     it('uses current DB role and only exposes the minimal nonadmin subset', async () => {
         mocks.user.mockResolvedValue({ id: 'u1', role: 'user', isActive: true });
-        const response = await GET();
+        const response = await GET(new Request('https://app.example.com/api/settings', { method: 'GET' }));
         expect(await response.json()).toEqual({ allowRegistration: true, timeouts: { analyze: 180000 } });
         expect(response.headers.get('cache-control')).toContain('no-store');
     });
     it('masks every provider key and excludes unknown settings for admins without mutating the config', async () => {
         const source = fixture(); mocks.get.mockReturnValue(source);
-        const response = await GET(); const data = await response.json();
+        const response = await GET(new Request('https://app.example.com/api/settings', { method: 'GET' })); const data = await response.json();
         expect(data.openai.instances[0].apiKey).toBe('********');
         expect(data.gemini.apiKey).toBe('********');
         expect(data.azure.apiKey).toBe('********');
@@ -125,7 +125,7 @@ describe('/api/settings hostile configuration regression', () => {
         const source = fixture();
         source.openai.instances[0].baseUrl = 'https://user:fixture-url-password@api.example.com/v1?apiKey=fixture-url-key#fixture-fragment';
         mocks.get.mockReturnValue(source);
-        const response = await GET();
+        const response = await GET(new Request('https://app.example.com/api/settings', { method: 'GET' }));
         const data = await response.json();
         expect(data.openai.instances[0].baseUrl).toBe('https://api.example.com/v1');
         expect(JSON.stringify(data)).not.toContain('fixture-');

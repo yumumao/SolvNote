@@ -1,3 +1,4 @@
+import { validateDrawingInput } from "../ai-drawing/service";
 import { NextResponse } from "next/server";
 import { requireUser, assertSameOrigin } from "../ai-access";
 import { readJSON, safeError } from "../ai-http";
@@ -71,6 +72,7 @@ export async function enqueue(
                 );
         }
         const input = JobInputSchema.parse(body);
+        if(kind === "construction" || kind === "image_edit")await validateDrawingInput(kind,input);
         const key = req.headers.get("x-request-id") || crypto.randomUUID();
         if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) throw Error("INVALID_REQUEST");
         const job = await submitJob(user.id, kind, input, key);

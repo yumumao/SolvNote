@@ -1,7 +1,10 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import {DrawingResultPreview} from "@/components/auxiliary-drawing";
 import { apiClient } from "@/lib/api-client";
+import { dialogueLabels } from "@/components/ai-conversation";
+type ConversationSummary={id:string;state:string;roundsUsed:number;roundLimit:number;updatedAt:string};
 type JobDetail = {
     id: string;
     kind: string;
@@ -28,11 +31,13 @@ const labels: Record<string, string> = {
     cancelled: "已取消",
 };
 export default function AITasks() {
+    const [conversations,setConversations]=useState<ConversationSummary[]>([]);
     const [jobs, setJobs] = useState<Job[]>([]),
         [message, setMessage] = useState(""),
         [detail, setDetail] = useState<JobDetail | null>(null);
     const reload = useCallback(async () => {
         try {
+            setConversations((await apiClient.get<{conversations:ConversationSummary[]}>("/api/ai/conversations")).conversations);
             setJobs(
                 (await apiClient.get<{ jobs: Job[] }>("/api/ai/jobs")).jobs,
             );
@@ -62,9 +67,11 @@ export default function AITasks() {
             <Link href="/">返回首页</Link>
             <h1 className="text-2xl font-bold">我的AI任务</h1>
             <p>
-                刷新或关闭页面不影响服务端任务。仅保留24小时，请及时取回结果。取消不能保证撤回上游已受理请求。
+                刷新或关闭页面不影响服务端任务。旧式短任务仅保留24小时；同题会话持久保存，等待补充信息时不会占用队列。取消不能保证撤回上游已受理请求。
             </p>
             <p role="status">{message}</p>
+            <section className="space-y-3"><h2 className="text-lg font-semibold">解题会话</h2>{conversations.map(c=><article key={c.id} className="border rounded p-4"><Link className="underline" href={`/ai-dialogue/${c.id}`}>{dialogueLabels[c.state] || c.state} · 已完成{c.roundsUsed}/{c.roundLimit}轮</Link><p className="text-sm text-muted-foreground">更新于{new Date(c.updatedAt).toLocaleString()}</p></article>)}{!conversations.length && <p>还没有解题会话，从错题本添加题目即可开始。</p>}</section>
+            <h2 className="text-lg font-semibold">短任务（含辅助线作图）</h2>
             {jobs.map((j) => (
                 <article key={j.id} className="border p-4 rounded space-y-2">
                     <div>
@@ -107,13 +114,14 @@ export default function AITasks() {
                             {
                                 state: detail.state,
                                 attempts: detail.attemptsLog,
-                                result: detail.result,
+                                result: ["construction","image_edit"].includes(detail.kind)?"见下方作图预览":detail.result,
                                 error: detail.errorCode,
                             },
                             null,
                             2,
                         )}
                     </pre>
+                    {detail.state === "success" && ["construction","image_edit"].includes(detail.kind) && <DrawingResultPreview result={detail.result}/>}
                     {detail.state === "success" &&
                         detail.kind === "analyze" && (
                             <Link

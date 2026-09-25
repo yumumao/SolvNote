@@ -25,6 +25,7 @@ model User {
   role      String   @default("user") // "admin" or "user"
   isActive  Boolean  @default(true)   // 用户是否启用
 
+  conversations AiConversation[]
   errorItems ErrorItem[]
   subjects   Subject[]
   practiceRecords PracticeRecord[]
@@ -151,6 +152,9 @@ model AiConfiguration {
 }
 
 model AiJob {
+ conversationId String?
+ conversation AiConversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+ startedAt DateTime?
  id String @id @default(cuid())
  userId String
  kind String
@@ -168,11 +172,13 @@ model AiJob {
  expiresAt DateTime
  attemptsLog AiAttempt[]
  @@unique([userId, requestKey])
+ @@index([conversationId, createdAt])
  @@index([state, createdAt])
  @@index([userId, createdAt])
 }
 
 model AiAttempt {
+ metadata String?
  id String @id @default(cuid())
  jobId String
  job AiJob @relation(fields:[jobId], references:[id], onDelete:Cascade)
@@ -192,4 +198,40 @@ model AiWorkerLease {
 model AiCooldown {
  id String @id
  until DateTime
+}
+
+// Content and human questions are encrypted in payload, never plain logs.
+model AiConversation {
+ id String @id @default(cuid())
+ userId String
+ user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+ state String @default("active")
+ revision Int @default(0)
+ roundsUsed Int @default(0)
+ roundLimit Int @default(10)
+ roundOpen Boolean @default(true)
+ roundAttempts Int @default(0)
+ attemptLimit Int @default(6)
+ roundElapsedMs Int @default(0)
+ timeLimitMs Int @default(600000)
+ activeJobId String?
+ payload String
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ jobs AiJob[]
+ actions AiConversationAction[]
+ @@index([userId, updatedAt])
+}
+model AiConversationAction {
+ id String @id @default(cuid())
+ conversationId String
+ conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+ requestKey String
+ payload String
+ @@unique([conversationId, requestKey])
+}
+model AiDialogueSettings {
+ id String @id
+ defaultRounds Int @default(10)
+ revision Int @default(0)
 }
