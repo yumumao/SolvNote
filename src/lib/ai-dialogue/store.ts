@@ -60,7 +60,7 @@ export async function createConversation(userId: string, raw: unknown, key: stri
             return prior.conversationId;
         }
         await queueRoom(tx,userId);
-        if(await tx.aiConversation.count({where:{userId}})>=100) dialogueError("DIALOGUE_STORAGE_LIMIT",429);
+        if(await tx.aiConversation.count({where:{userId,state:{in:["active","awaiting_user","cancelling"]}}})>=100) dialogueError("DIALOGUE_STORAGE_LIMIT",429);
         if(input.subjectId){
             const subject=await tx.subject.findFirst({where:{id:input.subjectId,userId}});
             if(!subject) dialogueError("NOT_FOUND",404);

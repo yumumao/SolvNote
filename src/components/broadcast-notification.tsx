@@ -1,84 +1,31 @@
 "use client";
-
-import { useState } from "react";
-import { Bell } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useLanguage } from "@/contexts/LanguageContext";
-
+import Link from "next/link";
+import {useSession} from "next-auth/react";
+import {Bell} from "lucide-react";
+import {Button} from "@/components/ui/button";
+import {Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger} from "@/components/ui/dialog";
+import {useLanguage} from "@/contexts/LanguageContext";
+import {useNotices} from "@/components/announcements/use-notices";
+import {NoticePanel} from "@/components/announcements/notice-panel";
+function AccountNotices() {
+    const {language} = useLanguage(), en = language === "en", feed = useNotices();
+    const count = feed.data?.unreadCount ?? 0;
+    return <Dialog onOpenChange={open => {if (open) feed.refresh();}}>
+        <DialogTrigger asChild><Button variant="ghost" size="icon" className="relative rounded-full" aria-label={en ? "Announcements" : "公告通知"}>
+            <Bell className="h-5 w-5" aria-hidden="true"/>
+            {count > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-primary px-1 text-[10px] text-primary-foreground" aria-label={en ? `${count} unread` : `${count}条未读`}>{count > 99 ? "99+" : count}</span>}
+            {feed.error && <span className="absolute right-0 top-0 text-destructive" aria-label={en ? "Notices unavailable" : "公告暂不可用"}>!</span>}
+        </Button></DialogTrigger>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto max-w-xl">
+            <DialogHeader><DialogTitle>{en ? "Announcements" : "公告通知"}</DialogTitle>
+                <DialogDescription>{en ? "Site notices and account-specific read status" : "站内公告与当前账号的已阅状态"}</DialogDescription></DialogHeader>
+            <NoticePanel feed={feed}/>
+            <Link className="text-sm underline" href="/announcements">{en ? "Open notice center" : "打开公告中心"}</Link>
+        </DialogContent>
+    </Dialog>;
+}
 export function BroadcastNotification() {
-    const { t } = useLanguage();
-    const [hasUnread, setHasUnread] = useState(true);
-
-    const handleOpen = () => {
-        // 打开后标记为已读
-        setHasUnread(false);
-    };
-
-    return (
-        <DropdownMenu onOpenChange={(open) => open && handleOpen()}>
-            <DropdownMenuTrigger asChild>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full text-muted-foreground hover:text-primary relative"
-                    title={t.broadcast?.title || "Announcements"}
-                >
-                    <Bell className="h-5 w-5" />
-                    {/* 未读角标 */}
-                    {hasUnread && (
-                        <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
-                    )}
-                    <span className="sr-only">{t.broadcast?.title || "Announcements"}</span>
-                </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-                align="end"
-                className="w-72 sm:w-80 p-0"
-            >
-                <DropdownMenuLabel className="flex items-center gap-2 px-4 py-3 bg-primary/5 border-b">
-                    <Bell className="h-4 w-4 text-primary" />
-                    <span className="font-semibold">{t.broadcast?.title || "Announcements"}</span>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator className="m-0" />
-                <div className="p-4 space-y-3">
-                    {/* 广播消息 1：教育阶段提醒 */}
-                    <div className="flex gap-3 items-start p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
-                        <div className="shrink-0 mt-0.5">
-                            <span className="text-amber-500 text-lg">📢</span>
-                        </div>
-                        <div className="space-y-1 text-sm">
-                            <p className="text-foreground leading-relaxed">
-                                {t.broadcast?.profileReminder || "Please make sure to correctly fill in your education stage and enrollment year in Settings -> Account to ensure tags are associated correctly."}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                                {t.broadcast?.settingsPath || "Settings -> Account"}
-                            </p>
-                        </div>
-                    </div>
-
-                    {/* 广播消息 2：标签库迁移提醒 */}
-                    <div className="flex gap-3 items-start p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
-                        <div className="shrink-0 mt-0.5">
-                            <span className="text-blue-500 text-lg">🔧</span>
-                        </div>
-                        <div className="space-y-1 text-sm">
-                            <p className="text-foreground leading-relaxed">
-                                {t.broadcast?.tagMigrationReminder || "If the standard tag library fails to load, please use an admin account to reset it."}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                                {t.broadcast?.settingsPath2 || "Settings -> Danger -> Tag System Migration"}
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </DropdownMenuContent>
-        </DropdownMenu>
-    );
+    const {data: session} = useSession();
+    // Remount on account changes: never display another account's cached receipts.
+    return session?.user?.id ? <AccountNotices key={session.user.id}/> : null;
 }

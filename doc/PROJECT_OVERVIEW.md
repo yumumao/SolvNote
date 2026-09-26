@@ -1,4 +1,4 @@
-# 智能错题本 (Smart Wrong Notebook) — 项目概览
+# 解迹 · SolvNote — 项目概览
 
 > 基于 AI 的智能错题管理系统，帮助学生高效整理、分析和复习错题。
 > 版本: 1.5.5 | 框架: Next.js 16 (App Router) | 语言: TypeScript (strict)
@@ -24,7 +24,7 @@
 ## 目录结构
 
 ```
-wrongNotebook/
+solvnote/
 ├── src/                          # 源码
 │   ├── app/                      # Next.js App Router
 │   │   ├── page.tsx              # 首页：上传→分析→编辑流
@@ -254,3 +254,4 @@ User (id, email, password, name, role, isActive, educationStage, enrollmentYear)
 - [ ] API 路由间错误处理模式不统一
 - [ ] AI 每次分析注入全量标签列表，token 消耗较大
 - [ ] 前端日志粒度过细，生产环境可降级
+

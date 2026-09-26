@@ -12,7 +12,7 @@ import { GeometryEvidence } from "./geometry-evidence";
 import { AIProcess } from "./ai-process";
 import { Button } from "./ui/button";
 export const dialogueLabels:Record<string,string>={active:"排队/AI处理中",awaiting_user:"等待你补充信息",answered:"本轮已完成",failed:"本轮停止，可检查后继续",unknown:"上游状态不确定，禁止自动重发",cancelling:"正在取消",cancelled:"已取消"};
-const errors:Record<string,string>={DIALOGUE_CONFLICT:"状态已更新，请刷新后重新操作。",DIALOGUE_ROUND_LIMIT:"问答轮数已用完。管理员可确认后扩额。",DIALOGUE_CALL_LIMIT:"本轮AI调用或活动时间已用完。可先保存补充条件，管理员确认扩额后再继续。",DIALOGUE_UNKNOWN:"上游可能已受理，请先核查供应商计费记录；不会自动重发。",DIALOGUE_BUSY:"任务仍在执行，请等它完成或先取消。",ORIGIN_REJECTED:"页面地址与服务端正式地址不一致，请检查NEXTAUTH_URL并重新登录。",FORBIDDEN:"当前账户无权限。",DIALOGUE_CONTEXT_LIMIT:"上下文已达上限，请保存已有结果。"};
+const errors:Record<string,string>={DIALOGUE_CONFLICT:"状态已更新，请刷新后重新操作。",DIALOGUE_ROUND_LIMIT:"问答轮数已用完。管理员可确认后扩额。",DIALOGUE_CALL_LIMIT:"本轮AI调用或活动时间已用完。可先保存补充条件，管理员确认扩额后再继续。",DIALOGUE_UNKNOWN:"上游可能已受理，请先核查供应商计费记录；不会自动重发。",DIALOGUE_BUSY:"任务仍在执行，请等它完成或先取消。",ORIGIN_REJECTED:"页面地址与服务端正式地址不一致，请检查NEXTAUTH_URL并重新登录。",FORBIDDEN:"当前账户无权限。",DIALOGUE_CONTEXT_LIMIT:"上下文已达上限，请保存已有结果。",DIALOGUE_STORAGE_LIMIT:"未结束会话已达100条，请先完成或取消部分会话；无需删除已完成历史。"};
 function errorText(e:unknown){const code=e instanceof ApiError?(e.data as {message?:string})?.message:undefined;return errors[code || ""] || "操作未确认成功，请先刷新核对，避免重复提交。";}
 export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubjectId?:string}){
     const router=useRouter();

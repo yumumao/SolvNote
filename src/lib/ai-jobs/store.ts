@@ -1,3 +1,4 @@
+import { jobExpiry, readableJobWhere } from "../solving-records/retention";
 import { diagnosticMessage } from "../ai/diagnostics";
 import type { AiJob } from "@prisma/client";
 import { prisma } from "../prisma";
@@ -59,14 +60,14 @@ export async function submitJob(
                 kind,
                 requestKey,
                 input: payload,
-                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                expiresAt: jobExpiry(kind),
             },
         });
     });
 }
 export async function readJob(userId: string, id: string, restore = false) {
     const j = await prisma.aiJob.findFirst({
-        where: { id, userId, conversationId: null, expiresAt: { gt: new Date() } },
+        where: { id, userId, conversationId: null, ...readableJobWhere() },
     });
     if (!j) return null;
     const attempts = await prisma.aiAttempt.findMany({

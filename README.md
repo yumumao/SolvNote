@@ -1,6 +1,8 @@
-# 智能错题本 · YUS继续开发版
+# 解迹 · SolvNote
 
 **简体中文** | [English](README.en.md)
+
+**在线演示**：[solvnote.n29.net](https://solvnote.n29.net/)（公开演示实例，数据与服务稳定性不作保证。） 建议仅使用不含隐私的题目测试，不要在演示站配置自己的AI密钥或保存敏感资料。
 
 **不止拍照出答案，更要讲清怎么想到、为什么成立、下次怎样自己做。**
 
@@ -55,14 +57,22 @@
 
 **默认图文流程**：视觉模型转录 → 按解题顺序选模型（支持读图就附原图）→ 有疑点先补读 → 真缺条件请你补充 → 完成解析。文字模型会把具体疑问交给视觉模型，多模态解题者可自行核图，不是把所有AI同时调用一遍。
 
-> **保存边界**：同题会话持久保存；短任务结果保留24小时。编辑器里的人工草稿不会因离开页面自动保存，长期保留辅助线也需保存到错题或下载。AI处理会把提交的题图、文字和必要上下文发给你配置的供应商，请勿夹带无关个人信息。
+**解题记录与统计**：首页的解题记录入口按受理时间展示会话和旧式直接解题，支持状态筛选、分页与及时刷新；同题追问仍计一条，是否存入错题本另行决定。统计中心分别展示解题、错题收录和复习练习。已完成不等于答对；AI调用只统计当前保留的调用日志，不代表费用或历史总量。现存旧记录保留，已清理的历史任务不能恢复。
+
+**公告管理**：管理员通过`/admin/announcements`管理草稿、发布、暂时隐藏、归档、独立置顶排序和可选有效期，面向所有已登录且启用的账号。用户显式确认已阅后，普通公告进入历史，读后隐藏仅对该用户消失，常驻公告仍保留但不再计入未读。打开列表不自动标已阅，编辑或重新发布不清空已阅状态；需要再次通知所有人时新建公告。列表提供置顶/取消置顶、隐藏/恢复发布快捷操作；永久删除需确认并清除该公告的已阅记录，不能撤销，需保留时用隐藏或归档。正文为纯文本，支持可选英文和站内链接，不发送邮件、浏览器系统或第三方推送。
+
+**公告升级边界**：`2.0.0-yus.2`需要增量迁移`Announcement`和`AnnouncementRead`两张表，并一次性转入原三条内置公告。程序、schema和生成的Prisma客户端必须配套升级，不要原地重新生成运行实例共用的依赖。升级前停止写入并配对备份数据库、配置及原秘密变量。错题本JSON不包含公告和已阅状态，详见[公告管理说明](docs/announcements.md)。
+
+**备份注意**：设置里的错题本JSON导出不含解题会话、AI任务和AI凭据。完整备份需停止写入，配对保存数据库、配置和原秘密变量（含主钥），见下方升级说明。本轮版本说明见[CHANGELOG](CHANGELOG.md)，运行站内也可从关于打开版本说明；源码版本不等于镜像已发布。
+
+> **保存边界**：同题会话、直接解题和重新解答长期保留；绘图、举一反三等临时任务结果保留24小时。编辑器里的人工草稿不会因离开页面自动保存，长期保留辅助线也需保存到错题或下载。AI处理会把提交的题图、文字和必要上下文发给你配置的供应商，请勿夹带无关个人信息。
 
 ## 部署
 
 **本分支镜像**（支持AMD64/ARM64）：
 
 ```text
-ghcr.io/yumumao/wrong-notebook-yus:latest
+ghcr.io/yumumao/solvnote:latest
 ```
 
 ### Zeabur：新安装
@@ -72,13 +82,13 @@ ghcr.io/yumumao/wrong-notebook-yus:latest
 
    |建议卷名|挂载目录|保存内容|
    |---|---|---|
-   |`wrong-notebook-config`|`/app/config`|配置文件、AI加密主钥|
-   |`wrong-notebook-data`|`/app/data`|数据库、账户、错题、AI配置与任务|
+   |`solvnote-config`|`/app/config`|配置文件、AI加密主钥|
+   |`solvnote-data`|`/app/data`|数据库、账户、错题、AI配置与任务|
 
 3. 在服务的环境变量中逐项添加以下设置。**先替换示例域名、邮箱和尖括号占位符，不要原样部署。**
 
    ```dotenv
-   NEXTAUTH_URL=https://notes.example.com
+   NEXTAUTH_URL=https://solvnote.n29.net
    NEXTAUTH_SECRET=<替换为新生成的随机值>
    INITIAL_ADMIN_EMAIL=you@example.com
    INITIAL_ADMIN_PASSWORD=<替换为至少12字符的独立口令>
@@ -91,26 +101,26 @@ ghcr.io/yumumao/wrong-notebook-yus:latest
    node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
    ```
 
-4. 部署后打开`https://你的实际域名/login`，使用上面设置的邮箱与初始口令登录；进入`/admin/ai`配置模型，再用一道不含隐私的题目测试。
+4. 部署后打开`https://solvnote.n29.net/login`（或你的实际域名），使用上面设置的邮箱与初始口令登录；进入`/admin/ai`配置模型，再用一道不含隐私的题目测试。
 
 `NEXTAUTH_URL`必须与浏览器使用的**协议、主机、端口**一致，不填ScanDex地址、容器地址或`/login`路径。默认无需设置`AI_CONFIG_MASTER_KEY`，主钥会自动保存到`/app/config/ai-master.key`；**不要设置`AI_WORKER_DISABLED=1`或照搬本机代理到Zeabur**。
 
 <details>
 <summary>自托管：用Docker Compose启动本分支</summary>
 
-新安装请准备Docker与Compose，在一个新目录中建立`.env.yus`，填入上面的环境变量。仅本机试用时把`NEXTAUTH_URL`改为`http://localhost:3000`，浏览器也固定用这个地址；公网使用需另外配置HTTPS反向代理。
+新安装请准备Docker与Compose，在一个新目录中建立`.env.solvnote`，填入上面的环境变量。本地试用时把`NEXTAUTH_URL`改为`http://localhost:3000`，浏览器也固定用这个地址；公网使用需另外配置HTTPS反向代理。
 
-在同目录新建`compose.yus.yml`，内容如下。仓库原有`docker-compose.yml`仍指向上游镜像，**不要混用**。
+在同目录新建`compose.solvnote.yml`，内容如下。仓库提供的`docker-compose.yml`已使用SolvNote镜像；也可以按下方示例另建配置。
 
 ```yaml
 services:
-  wrong-notebook:
-    image: ghcr.io/yumumao/wrong-notebook-yus:latest
+  solvnote:
+    image: ghcr.io/yumumao/solvnote:latest
     restart: unless-stopped
     ports:
       - "3000:3000"
     env_file:
-      - .env.yus
+      - .env.solvnote
     environment:
       DATABASE_URL: file:/app/data/dev.db
     volumes:
@@ -121,19 +131,19 @@ services:
 在该目录执行：
 
 ```sh
-docker compose -f compose.yus.yml pull
-docker compose -f compose.yus.yml up -d
-docker compose -f compose.yus.yml logs --tail=100
+docker compose -f compose.solvnote.yml pull
+docker compose -f compose.solvnote.yml up -d
+docker compose -f compose.solvnote.yml logs --tail=100
 ```
 
-打开`http://localhost:3000/login`登录。`.env.yus`、`config`、`data`都是私有部署文件，请自行安全备份，不要上传公共仓库。
+打开`http://localhost:3000/login`登录。`.env.solvnote`、`config`、`data`都是私有部署文件，请自行安全备份，不要上传公共仓库。
 
 </details>
 
 ### 已有部署：安全升级
 
 1. **先停止应用写入，配对备份`/app/config`和`/app/data`**，记录旧镜像摘要与环境变量；只备份数据库不足以恢复加密内容。
-2. 在[镜像发布记录](https://github.com/yumumao/wrong-notebook-yus/actions/workflows/build-docker.yml)确认目标版本已发布，再让平台拉取新镜像重新部署。**沿用原卷、原数据库路径、原秘密变量，不重建数据库或更换主钥。**只更新README不需要换镜像。
+2. 在[镜像发布记录](https://github.com/yumumao/solvnote/actions/workflows/build-docker.yml)确认目标版本已发布，再让平台拉取新镜像重新部署。**沿用原卷、原数据库路径、原秘密变量，不重建数据库或更换主钥。**只更新README不需要换镜像。
 3. 启动时会自动迁移；已有管理员不会被初始化变量重置。升级后从正式地址登录，检查AI设置、图文解题和任务取回。
 
 回滚时先停应用，再恢复**旧镜像＋两个卷的配对备份＋原环境变量**，不要让旧代码继续写入已升级的数据。详细排障见[部署与构建说明](docs/deployment-build.md)。
@@ -155,6 +165,6 @@ docker compose -f compose.yus.yml logs --tail=100
 - [错题编辑与讲解规则](docs/notebook-editing.md) · [辅助线、图片编辑与任务弹窗](docs/ai-drawing.md)
 - [加密AI配置交换格式](docs/portable-ai-config.md) · [部署、构建与排障](docs/deployment-build.md)
 
-技术栈为Next.js、React、TypeScript、Prisma和SQLite；后台任务依赖持续运行的Node进程，不适用于纯无服务器函数或跨主机共享SQLite多副本。部署主线为[`main-yus`](https://github.com/yumumao/wrong-notebook-yus/tree/main-yus)，本仓库暂不提供桌面安装器。
+技术栈为Next.js、React、TypeScript、Prisma和SQLite；后台任务依赖持续运行的Node进程，不适用于纯无服务器函数或跨主机共享SQLite多副本。部署主线为[`main`](https://github.com/yumumao/solvnote/tree/main)，本仓库暂不提供桌面安装器。
 
 **感谢上游**：[wttwins/wrong-notebook](https://github.com/wttwins/wrong-notebook)及原作者、贡献者。本仓库是继续开发版本，本文新增特性不代表上游也有。上游README曾声明MIT，但本次核对的上游与当前快照未发现独立LICENSE文件；本分支不擅自新增许可证或作再授权承诺，再分发或商用前请核实上游许可。

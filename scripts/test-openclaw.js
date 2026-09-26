@@ -225,6 +225,7 @@ async function runTests() {
     process.exit(failed > 0 ? 1 : 0);
 }
 
-console.log('注意: 请确保 wrong-notebook 服务正在运行\n');
+console.log('注意: 请确保 SolvNote 服务正在运行\n');
 
 runTests().catch(console.error);
+

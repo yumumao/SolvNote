@@ -10,7 +10,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 FROM base AS deps
 ARG TARGETARCH
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,id=wrong-notebook-npm-${TARGETARCH},target=/root/.npm \
+RUN --mount=type=cache,id=solvnote-npm-${TARGETARCH},target=/root/.npm \
     npm ci --no-audit --no-fund
 
 FROM base AS builder
@@ -27,7 +27,7 @@ COPY . .
 # Static page generation needs the client types, not a populated database.
 RUN ./node_modules/.bin/tsc scripts/rebuild-system-tags.ts --outDir dist-scripts --esModuleInterop --resolveJsonModule --skipLibCheck --module commonjs --target ES2020
 # Build-only setting: it must never become an ENV in the runtime image.
-RUN --mount=type=cache,id=wrong-notebook-next-${TARGETARCH},target=/app/.next/cache \
+RUN --mount=type=cache,id=solvnote-next-${TARGETARCH},target=/app/.next/cache \
     AI_WORKER_DISABLED=1 npm run build
 
 FROM base AS runner

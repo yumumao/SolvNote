@@ -153,8 +153,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: ${{ needs.prepare.outputs.labels }}
           outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=wrong-notebook-native-${{ matrix.arch }},version=2
-          cache-to: type=gha,scope=wrong-notebook-native-${{ matrix.arch }},version=2,mode=max
+          cache-from: type=gha,scope=solvnote-native-${{ matrix.arch }},version=2
+          cache-to: type=gha,scope=solvnote-native-${{ matrix.arch }},version=2,mode=max
 
       # No alias can move until BOTH native images actually start with fresh and
       # retained synthetic volumes. A successful build alone is insufficient.

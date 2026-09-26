@@ -2,6 +2,7 @@
 
 import { useLanguage } from "@/contexts/LanguageContext";
 import { WrongAnswerStats } from "@/components/wrong-answer-stats";
+import { SolvingStats } from "@/components/solving-stats";
 import { PracticeStats } from "@/components/practice-stats";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -34,8 +35,9 @@ export default function StatsPage() {
                 </div>
             </div>
 
-            <Tabs defaultValue="wrong" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-6">
+            <Tabs defaultValue="solving" className="w-full">
+                <TabsList className="grid w-full grid-cols-3 mb-6">
+                    <TabsTrigger value="solving">{language === "en" ? "Solving" : "解题统计"}</TabsTrigger>
                     <TabsTrigger value="wrong" className="flex items-center gap-2">
                         <Activity className="h-4 w-4" />
                         {t.wrongAnswerStats?.title || "Wrong Answer Stats"}
@@ -46,6 +48,7 @@ export default function StatsPage() {
                     </TabsTrigger>
                 </TabsList>
 
+                <TabsContent value="solving"><SolvingStats /></TabsContent>
                 <TabsContent value="wrong" className="space-y-4">
                     <WrongAnswerStats />
                 </TabsContent>

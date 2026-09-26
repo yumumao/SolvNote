@@ -132,9 +132,10 @@ fs.writeFileSync(testFilePath, testScript);
 console.log(`Test script created: ${testFilePath}`);
 
 console.log('\nNow please:');
-console.log('1. 确保 wrong-notebook 服务运行在端口 3000');
+console.log('1. 确保 SolvNote 服务运行在端口 3000');
 console.log('2. 在 .env 文件中添加以下配置:');
 console.log(`   OPENCLAW_API_URL=http://localhost:${MOCK_OPENCLAW_PORT}`);
 console.log(`   OPENCLAW_INTEGRATION_API_KEY=${API_KEY}`);
 console.log('3. 初始化数据库: npx prisma db seed');
 console.log('4. 运行测试: bash test-openclaw.sh');
+

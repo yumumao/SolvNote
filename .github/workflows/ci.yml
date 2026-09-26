@@ -2,15 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main, main-yus]
+    branches: [main]
     tags:
       - 'v*'
   pull_request:
-    branches: [main, main-yus]
+    branches: [main]
 
 jobs:
   # ============================================
-  # 测试阶段（main/main-yus分支push或PR）
+  # 测试阶段（main分支push或PR）
   # ============================================
   unit-test:
     runs-on: ubuntu-latest

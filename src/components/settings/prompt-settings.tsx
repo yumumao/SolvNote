@@ -78,6 +78,11 @@ export function PromptSettings({ config, onUpdate }: PromptSettingsProps) {
 
     return (
         <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
+            <div className="rounded-lg border bg-background p-3 text-sm space-y-2">
+                <p className="font-semibold">{language === "en" ? "Which workflows these templates affect" : "这些提示词影响哪些功能"}</p>
+                <p>{language === "en" ? "Analysis applies to direct solves; similar-question templates apply to practice generation. These settings do not override the multi-turn conversation, reanswer, recognition, geometry verification or drawing prompts." : "分析模板用于直接解题；同类题模板用于举一反三。不覆盖多轮会话、重新解答、识图转录、几何核验或辅助线绘图提示词。"}</p>
+                <p className="text-muted-foreground">{language === "en" ? "Conversation prompts are versioned with the application. Use the conversation editor to correct recognized text, AI settings to select models, and the round / drawing settings for their own limits. Changes affect future calls only." : "会话提示词随程序版本维护。题目识别有误请在会话中修订，模型在AI设置选择，问答轮数和绘图参数用各自设置。此处保存只影响后续调用。"}</p>
+            </div>
             <Tabs defaultValue="analyze" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="analyze">

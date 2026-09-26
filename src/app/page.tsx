@@ -411,7 +411,7 @@ function HomeContent() {
             <div className="container mx-auto p-4 space-y-8 pb-20">
                 {/* Header Section */}
                 <div className="flex justify-between items-start gap-4">
-                    <UserWelcome />
+                    <div className="min-w-0 space-y-3"><p className="text-lg sm:text-xl font-bold text-primary">{t.app.title}</p><UserWelcome /></div>
 
                     <div className="flex items-center gap-2 bg-card p-2 rounded-lg border shadow-sm shrink-0">
                         <BroadcastNotification />
@@ -429,7 +429,7 @@ function HomeContent() {
                 </div>
 
                 {/* Action Center */}
-                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 md:grid-cols-4 gap-4"}>
+                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4"}>
                     <Button
                         size="lg"
                         className={`h-auto py-4 text-base shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : ""}`}
@@ -445,6 +445,9 @@ function HomeContent() {
 
                     {!initialNotebookId && (
                         <>
+                            <Button variant="outline" size="lg" className="w-full h-auto py-4 text-base" asChild>
+                                <Link href="/solving-records"><PenLine className="h-5 w-5" />{language === "en" ? "Solving records" : "解题记录"}</Link>
+                            </Button>
                             <Link href="/notebooks" className="w-full">
                                 <Button
                                     variant="outline"
@@ -493,7 +496,7 @@ function HomeContent() {
                         {taskId && <Link className="underline" href={`/?job=${encodeURIComponent(taskId)}`}>恢复本次任务</Link>}
                     </div>
                     <p role="status">{taskStatus}</p>
-                    <p className="text-sm">受理后的任务在后台继续运行，刷新或离开页面不等于取消。旧式短任务保留24小时；同题会话持久保存，可从我的AI任务继续。</p>
+                    <p className="text-sm">受理后的任务在后台继续运行，刷新或离开页面不等于取消。会话、直接解题和重新解答长期保留，可从解题记录继续；绘图和举一反三等临时任务保留24小时。</p>
                     <p className="text-sm">年级是讲解偏好，不是解题限制，正确性优先。请核对图形标注与AI结果。</p>
                 </section>
 

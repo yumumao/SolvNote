@@ -9,8 +9,8 @@ fi
 command -v docker >/dev/null
 command -v node >/dev/null
 umask 077
-tmp=$(mktemp -d -t wrong-notebook-smoke.XXXXXXXX)
-run_id="wn-smoke-$(node -e "process.stdout.write(require('node:crypto').randomBytes(12).toString('hex'))")"
+tmp=$(mktemp -d -t solvnote-smoke.XXXXXXXX)
+run_id="solvnote-smoke-$(node -e "process.stdout.write(require('node:crypto').randomBytes(12).toString('hex'))")"
 containers=()
 volumes=()
 phase=setup
@@ -32,15 +32,15 @@ cleanup() {
     done
   fi
   for resource in "${containers[@]}"; do
-    owner=$(docker inspect --format '{{index .Config.Labels "wrong-notebook.smoke"}}' "$resource" 2>/dev/null) || continue
+    owner=$(docker inspect --format '{{index .Config.Labels "solvnote.smoke"}}' "$resource" 2>/dev/null) || continue
     if [[ "$owner" == "$run_id" ]]; then docker rm -f "$resource" >/dev/null 2>&1 || true; fi
   done
   for resource in "${volumes[@]}"; do
-    owner=$(docker volume inspect --format '{{index .Labels "wrong-notebook.smoke"}}' "$resource" 2>/dev/null) || continue
+    owner=$(docker volume inspect --format '{{index .Labels "solvnote.smoke"}}' "$resource" 2>/dev/null) || continue
     if [[ "$owner" == "$run_id" ]]; then docker volume rm "$resource" >/dev/null 2>&1 || true; fi
   done
   # mktemp returned an absolute, unique directory; no caller-supplied path here.
-  if [[ "$tmp" == /*/wrong-notebook-smoke.* && -d "$tmp" ]]; then rm -rf -- "$tmp"; fi
+  if [[ "$tmp" == /*/solvnote-smoke.* && -d "$tmp" ]]; then rm -rf -- "$tmp"; fi
   exit "$result"
 }
 trap cleanup EXIT
@@ -73,13 +73,13 @@ make_volume() {
   local name="$run_id-$1"
   # Names are random, but still refuse an existing resource rather than adopt it.
   if docker volume inspect "$name" >/dev/null 2>&1; then return 1; fi
-  docker volume create --label "wrong-notebook.smoke=$run_id" "$name" >/dev/null
+  docker volume create --label "solvnote.smoke=$run_id" "$name" >/dev/null
   volumes+=("$name")
 }
 make_container() {
   local name="$run_id-$1" env_file="$2" data="$3" config="$4"
   if docker inspect "$name" >/dev/null 2>&1; then return 1; fi
-  docker create --name "$name" --label "wrong-notebook.smoke=$run_id" \
+  docker create --name "$name" --label "solvnote.smoke=$run_id" \
     --network none --env-file "$env_file" \
     --mount "type=volume,source=$data,target=/app/data" \
     --mount "type=volume,source=$config,target=/app/config" \
@@ -182,3 +182,4 @@ for marker in .seed_completed .app_version; do
 done
 echo 'PASS: fresh database without initial password refuses startup without success markers.'
 echo 'Container startup smoke passed (synthetic volumes only; no external network).'
+
