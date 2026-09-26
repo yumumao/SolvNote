@@ -66,7 +66,7 @@ Expected: FAIL because the policy module and exported contracts do not exist.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Define the policy object with explicit values only after the user accepts them. The recommended review values are: new-user expiry `365` days, expiry blocks the entire site rather than only AI, invitation required when the administrator enables it, invitation default one use with a `30`-day lifetime, and reset mode `temporary-password-and-force-change`. Existing administrators remain permanent. Use UTC `Date` comparisons and fixed public error codes such as `REGISTRATION_DISABLED`, `INVITE_REQUIRED`, `INVITE_INVALID`, `ACCOUNT_EXPIRED`, and `SESSION_REVOKED`.
+Define the policy object with explicit values only after the user accepts them. The confirmed policy values are: new registrations default to a `7`-day trial; an administrator may choose only `7` days, `30` days, or permanent (`null`) for the registration default; users created manually by an administrator are permanent by default; expiry blocks the entire site rather than only AI; an expired account is retained for `30` days and then permanently purged by an idempotent cleanup task; invitation required when the administrator enables it, invitation default one use with a `30`-day lifetime, and reset mode `temporary-password-and-force-change`. Existing administrators and existing ordinary users are not silently changed until a separate migration policy is approved. Use UTC `Date` comparisons and fixed public error codes such as `REGISTRATION_DISABLED`, `INVITE_REQUIRED`, `INVITE_INVALID`, `ACCOUNT_EXPIRED`, and `SESSION_REVOKED`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -89,7 +89,7 @@ git commit -m "docs: define user management policy boundary"
 - Test: `src/__tests__/integration/user-management-migration.test.ts`
 
 **Interfaces:**
-- `User` adds `expiresAt DateTime?`, `sessionVersion Int @default(0)`, and `mustChangePassword Boolean @default(false)`.
+- `User` adds `expiresAt DateTime?`, `sessionVersion Int @default(0)`, and `mustChangePassword Boolean @default(false)`. Add a cleanup service/command contract that permanently deletes users whose non-null `expiresAt` is at least `30` days in the past; `expiresAt = null` is permanent and is never selected.
 - Create `RegistrationSettings` singleton with `id`, `allowRegistration`, `inviteRequired`, `defaultExpirationDays`, `revision`, timestamps.
 - Create `InviteCode` with hashed code, `maxUses`, `usedCount`, `expiresAt`, `disabledAt`, creator, timestamps, and a unique hash index. Never store plaintext codes.
 - `dto.ts` exports `publicUserDTO`, `adminUserDTO`, `publicRegistrationStatusDTO`; each uses explicit fields and Date-to-ISO conversion.
@@ -117,7 +117,7 @@ Expected: FAIL because the new Prisma models and migration do not exist.
 
 - [ ] **Step 3: Write the migration and DTOs**
 
-Use an additive migration. Initialize `RegistrationSettings` with registration disabled and no invitation requirement so deployment does not silently become public. Add indexes for `User(expiresAt,isActive)`, `InviteCode(codeHash)`, and `InviteCode(expiresAt,disabledAt)`. The migration must not change existing passwords, roles, data, or expiry values. `publicUserDTO` must omit password/hash and lifecycle internals unless the caller is the administrator viewing the allowlisted status fields.
+Use an additive migration. Initialize `RegistrationSettings` with registration disabled, no invitation requirement, and `defaultExpirationDays = 7` so deployment does not silently become public while the confirmed trial default is recorded. Enforce the allowlist `7 | 30 | null` at the database/service boundary; reject all other values. Add indexes for `User(expiresAt,isActive)`, `InviteCode(codeHash)`, and `InviteCode(expiresAt,disabledAt)`. The migration must not change existing passwords, roles, data, or expiry values. `publicUserDTO` must omit password/hash and lifecycle internals unless the caller is the administrator viewing the allowlisted status fields.
 
 - [ ] **Step 4: Run migration tests**
 
@@ -220,7 +220,7 @@ Expected: FAIL because registration currently ignores Turnstile/invitations and 
 
 - [ ] **Step 3: Implement verification and registration**
 
-Read `TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, optional expected action/hostname from environment. When the administrator enables Turnstile, missing secret or verification failure rejects registration; the server never accepts a client-supplied “verified” boolean. Normalize email before lookup, apply strict name/password limits, return one generic conflict message, and rate-limit repeated failures by IP/email hash. Consume `InviteCode` with an atomic conditional update (`usedCount < maxUses`, not disabled, not expired), then create the user with `expiresAt = now + defaultExpirationDays` when configured. The initial AI-grant insertion is called through the interface supplied by the AI-access plan and remains in the same transaction.
+Read `TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, optional expected action/hostname from environment. When the administrator enables Turnstile, missing secret or verification failure rejects registration; the server never accepts a client-supplied “verified” boolean. Normalize email before lookup, apply strict name/password limits, return one generic conflict message, and rate-limit repeated failures by IP/email hash. Consume `InviteCode` with an atomic conditional update (`usedCount < maxUses`, not disabled, not expired), then create the user with `expiresAt = null` when the selected default is permanent, otherwise `expiresAt = now + defaultExpirationDays` for the selected `7` or `30` days. The initial AI-grant insertion is called through the interface supplied by the AI-access plan and remains in the same transaction.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -274,7 +274,7 @@ Expected: FAIL because only the legacy `allowRegistration` JSON setting exists.
 
 - [ ] **Step 3: Implement admin APIs and UI**
 
-Add fields for registration toggle, Turnstile enabled indicator (the secret itself is never editable in the site), invitation requirement, default expiry days, and revision. Validate expiry bounds and prevent enabling registration when Turnstile is enabled but the server secret/site key are unavailable. Provide invite create/revoke/copy-once controls and a warning that the code cannot be recovered. Use live-admin checks and same-origin protection on every mutation.
+Add fields for registration toggle, Turnstile enabled indicator (the secret itself is never editable in the site), invitation requirement, default expiry days, and revision. Expose only the choices `7` days, `30` days, and permanent; reject arbitrary values and prevent enabling registration when Turnstile is enabled but the server secret/site key are unavailable. An administrator-created user action must default to permanent unless an explicit expiry is selected. Provide invite create/revoke/copy-once controls and a warning that the code cannot be recovered. Use live-admin checks and same-origin protection on every mutation.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -296,7 +296,9 @@ git commit -m "feat: add registration and invitation administration"
 - Create: `src/app/api/admin/users/[id]/reset-password/route.ts`
 - Modify: `src/components/admin/user-management.tsx`
 - Modify: `src/types/api.ts`
+- Create: `src/lib/user-management/purge-expired-users.ts`
 - Test: `src/__tests__/integration/admin-user-lifecycle.test.ts`
+- Test: `src/__tests__/integration/purge-expired-users.test.ts`
 - Test: `src/__tests__/unit/admin-user-lifecycle-ui.test.tsx`
 
 **Interfaces:**
@@ -328,12 +330,12 @@ Expected: FAIL because current routes return complete Prisma users, do not reset
 
 - [ ] **Step 3: Implement lifecycle actions**
 
-Replace complete-object responses with DTOs, use a transaction to count usable administrators before disable/delete/demotion, and increment `sessionVersion` on disable, reset, role change, or expiry change. Keep old learning data cascades only for explicit deletion; never treat expiry as deletion. Require the administrator to copy the one-time temporary password and show a warning that it cannot be retrieved later. On next login, a `mustChangePassword` account is allowed only to reach the password-change flow; all other protected routes reject it.
+Replace complete-object responses with DTOs, use a transaction to count usable administrators before disable/delete/demotion, and increment `sessionVersion` on disable, reset, role change, or expiry change. Keep old learning data cascades only for explicit deletion; never treat expiry as deletion. Add a scheduled/manual idempotent purge operation that selects only users with non-null `expiresAt <= now - 30 days`, deletes the user and all explicitly owned private records in one transaction, and records a count without logging credentials or content. It must be safe to rerun and must never select `expiresAt = null` or accounts expired for fewer than 30 days. Require the administrator to copy the one-time temporary password and show a warning that it cannot be retrieved later. On next login, a `mustChangePassword` account is allowed only to reach the password-change flow; all other protected routes reject it.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run src/__tests__/integration/admin-user-lifecycle.test.ts src/__tests__/unit/admin-user-lifecycle-ui.test.tsx`
-Expected: PASS for reset, expiry extension, live disable, live delete, last-admin protection, self-protection, and DTO redaction.
+Expected: PASS for reset, expiry extension, permanent/7-day/30-day values, administrator-created permanent users, live disable, live delete, last-admin protection, self-protection, DTO redaction, and the 30-day purge boundary (29 days retained, exactly 30 days purged).
 
 - [ ] **Step 5: Commit**
 
@@ -427,4 +429,4 @@ git commit -m "test: verify secure public registration lifecycle"
 
 ## Handoff
 
-Do not implement this plan until the user confirms the recommended values for default expiry, expiry scope, invitation reuse/lifetime, reset-password mode, and treatment of existing ordinary users. After confirmation, execute Tasks 1–4 first as the security/data foundation, then Tasks 5–7, and finish with Task 8. The AI-access plan must supply the initial-grant transaction interface before registration is opened.
+The user has confirmed the expiry policy: new registration defaults to a 7-day trial; the administrator may select 7 days, 30 days, or permanent; administrator-created users default to permanent; expiry blocks the entire site; expired users are purged permanently after 30 days. Implement Tasks 1–4 first as the security/data foundation, then Tasks 5–7, and finish with Task 8. Before opening registration, separately record/confirm invitation reuse/lifetime, reset-password mode, existing ordinary-user migration treatment, and the exact cascade/anonymization scope for permanent purge. The AI-access plan must supply the initial-grant transaction interface before registration is opened.
