@@ -19,9 +19,9 @@ version: '3'
 #     3. docker-compose -f docker-compose.https.yml up -d
 
 services:
-  wrong-notebook:
-    image: ghcr.io/wttwins/wrong-notebook:latest
-    container_name: wrong-notebook
+  solvnote:
+    image: ghcr.io/yumumao/solvnote:latest
+    container_name: solvnote
     restart: always
     ports:
       - "80:3000"    # HTTP（可选）

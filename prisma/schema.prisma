@@ -25,6 +25,7 @@ model User {
   role      String   @default("user") // "admin" or "user"
   isActive  Boolean  @default(true)   // 用户是否启用
 
+  announcementReads AnnouncementRead[]
   conversations AiConversation[]
   errorItems ErrorItem[]
   subjects   Subject[]
@@ -234,4 +235,34 @@ model AiDialogueSettings {
  id String @id
  defaultRounds Int @default(10)
  revision Int @default(0)
+}
+
+// Site-wide notices. No AI payloads or credentials belong here.
+model Announcement {
+ id String @id @default(cuid())
+ titleZh String
+ bodyZh String
+ titleEn String @default("")
+ bodyEn String @default("")
+ href String @default("")
+ status String @default("draft") // draft, published, hidden, archived
+ pinned Boolean @default(false)
+ pinOrder Int @default(0)
+ readPolicy String @default("keep") // keep -> history; hide -> personal only; persistent -> inbox
+ startsAt DateTime?
+ endsAt DateTime?
+ revision Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ reads AnnouncementRead[]
+ @@index([status, pinned, pinOrder, createdAt])
+}
+model AnnouncementRead {
+ announcementId String
+ userId String
+ readAt DateTime @default(now())
+ announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+ user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+ @@id([announcementId, userId])
+ @@index([userId, readAt])
 }

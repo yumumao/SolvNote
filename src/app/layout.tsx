@@ -1,3 +1,4 @@
+import { APP_NAME, APP_DESCRIPTION } from "@/lib/app-info";
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -17,23 +18,21 @@ export const viewport: Viewport = {
   themeColor: '#f97316',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 };
 
 export const metadata: Metadata = {
-  title: "AI智能错题本",
-  description: "基于AI的智能错题管理系统，帮助学生高效整理、分析和复习错题",
+  title: APP_NAME,
+  description: APP_DESCRIPTION,
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: '智能错题本',
+    title: APP_NAME,
   },
   formatDetection: {
     telephone: false,
   },
   icons: {
-    icon: '/icons/icon.png',
+    icon: [{url: '/icons/icon.svg', type: 'image/svg+xml'}, {url: '/icons/icon.png', type: 'image/png'}],
     apple: '/icons/icon.png',
   },
 };
@@ -44,7 +43,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="zh-CN" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning={true}

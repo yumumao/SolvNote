@@ -92,8 +92,8 @@ export async function GET(req: Request) {
 
         const jsonString = JSON.stringify(exportData, null, 2);
         const filename = exportAll
-            ? `wrong-notebook-export-all-${new Date().toISOString().slice(0, 10)}.json`
-            : `wrong-notebook-export-${new Date().toISOString().slice(0, 10)}.json`;
+            ? `solvnote-export-all-${new Date().toISOString().slice(0, 10)}.json`
+            : `solvnote-export-${new Date().toISOString().slice(0, 10)}.json`;
 
         return new NextResponse(jsonString, {
             headers: {
@@ -106,3 +106,4 @@ export async function GET(req: Request) {
         return internalError("Failed to export data");
     }
 }
+

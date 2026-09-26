@@ -1,6 +1,8 @@
-# AI Study Notebook · YUS Edition
+# SolvNote · AI Problem Solving & Learning Notes
 
 [简体中文](README.md) | **English**
+
+**Live demo**: [solvnote.n29.net](https://solvnote.n29.net/) (a public demo instance; availability and data persistence are not guaranteed.) Use only non-sensitive sample problems; do not configure your own AI keys or save sensitive material there.
 
 **More than an answer from a photo: understand the method, why it works, and how to solve it yourself next time.**
 
@@ -55,14 +57,22 @@ The goal is not another answer in a chat window. It is to bring together **check
 
 **Default image workflow**: a vision model transcribes → a model is selected in solving order, with the original image attached if supported → uncertain image details are re-read first → genuinely missing information is requested from you → the explanation is completed. A text-only solver sends specific questions to a vision model; a multimodal solver can recheck the image itself. This does not call every configured model at once.
 
-> **What is saved**: same-problem conversations persist; short-task results are retained for 24 hours. Leaving a page does not automatically save your manual editor draft. Save constructions to a notebook or download them for long-term retention. AI processing sends your submitted images, text, and necessary context to the providers you configure; avoid unrelated personal information.
+**Solving records and statistics**: a dedicated home entry lists accepted conversations and direct solves with status filters, pagination and live refresh. Follow-ups stay in one conversation; saving to a notebook remains a separate choice. Statistics distinguish solving, notebook entries and review practice. Completion is not correctness. AI attempt counts cover stored logs, not billing or lifetime totals. Surviving legacy records remain available; purged historical tasks cannot be recovered.
+
+**Announcements**: administrators use `/admin/announcements` to manage drafts, publication, hiding, archiving, independent pin order and optional time windows. All active signed-in accounts receive these site notices. Explicit acknowledgement is per account: ordinary notices move to history, read-and-hide notices disappear only for that reader, and persistent notices stay without an unread badge. Opening the list is not acknowledgement. Editing or republishing does not reset reads; create a new notice to notify everyone again. List actions allow pin/unpin and hide/republish. Permanent deletion requires confirmation and removes the notice and its read receipts; use hide or archive to retain them. Content is plain text with optional English fields and same-site links; no email, browser or third-party push is sent.
+
+**Announcement upgrade**: version `2.0.0-yus.2` adds `Announcement` and `AnnouncementRead` via an additive migration and transfers the three former built-in notices once. Deploy the matching schema, generated Prisma client and application together. Do not regenerate a dependency directory shared with a running instance. Stop writes and back up the database/configuration/original secrets before upgrading. Notebook JSON excludes notices and read receipts. See [announcement operations](docs/announcements.md).
+
+**Backup boundary**: notebook JSON export excludes solving conversations, AI tasks and AI credentials. For a full backup, stop writes and preserve the database, configuration and original secret variables (including the master key) together; see the upgrade section below. See [CHANGELOG](CHANGELOG.md) or About → Version notes in the app. A source version does not imply a published container image.
+
+> **What is saved**: same-problem conversations, direct solves and reanswers are retained long-term; temporary drawing and practice-generation results are retained for 24 hours. Leaving a page does not automatically save your manual editor draft. Save constructions to a notebook or download them for long-term retention. AI processing sends your submitted images, text, and necessary context to the providers you configure; avoid unrelated personal information.
 
 ## Deployment
 
 **Image for this fork** (AMD64 and ARM64):
 
 ```text
-ghcr.io/yumumao/wrong-notebook-yus:latest
+ghcr.io/yumumao/solvnote:latest
 ```
 
 ### Zeabur: fresh installation
@@ -72,13 +82,13 @@ ghcr.io/yumumao/wrong-notebook-yus:latest
 
    |Suggested volume name|Mount path|Contents|
    |---|---|---|
-   |`wrong-notebook-config`|`/app/config`|Configuration files and the AI encryption master key|
-   |`wrong-notebook-data`|`/app/data`|Database, accounts, saved problems, AI configuration, and tasks|
+   |`solvnote-config`|`/app/config`|Configuration files and the AI encryption master key|
+   |`solvnote-data`|`/app/data`|Database, accounts, saved problems, AI configuration, and tasks|
 
 3. Set the following environment variables on the service. **Replace the example domain, email address, and angle-bracket placeholders before deploying.**
 
    ```dotenv
-   NEXTAUTH_URL=https://notes.example.com
+   NEXTAUTH_URL=https://solvnote.n29.net
    NEXTAUTH_SECRET=<replace-with-a-new-random-value>
    INITIAL_ADMIN_EMAIL=you@example.com
    INITIAL_ADMIN_PASSWORD=<replace-with-a-unique-password-of-at-least-12-characters>
@@ -98,19 +108,21 @@ ghcr.io/yumumao/wrong-notebook-yus:latest
 <details>
 <summary>Self-hosting: start this fork with Docker Compose</summary>
 
-For a new installation, install Docker with Compose and create `.env.yus` in a new directory using the variables above. For local testing only, set `NEXTAUTH_URL=http://localhost:3000` and always use that exact address in your browser. Public access requires a separately configured HTTPS reverse proxy.
+After deployment, open `https://solvnote.n29.net/login` (or your actual domain) and sign in with the email and initial password above. Then open `/admin/ai` to configure models and test with a non-sensitive problem.
 
-In the same directory, create `compose.yus.yml` with the contents below. The repository's original `docker-compose.yml` still references the upstream image; **do not mix the two**.
+For a new installation, install Docker with Compose and create `.env.solvnote` in a new directory using the variables above. For local testing only, set `NEXTAUTH_URL=http://localhost:3000` and always use that exact address in your browser. Public access requires a separately configured HTTPS reverse proxy.
+
+In the same directory, create `compose.solvnote.yml` with the contents below. The repository's `docker-compose.yml` already uses the SolvNote image; you may also create the example file below.
 
 ```yaml
 services:
-  wrong-notebook:
-    image: ghcr.io/yumumao/wrong-notebook-yus:latest
+  solvnote:
+    image: ghcr.io/yumumao/solvnote:latest
     restart: unless-stopped
     ports:
       - "3000:3000"
     env_file:
-      - .env.yus
+      - .env.solvnote
     environment:
       DATABASE_URL: file:/app/data/dev.db
     volumes:
@@ -121,19 +133,19 @@ services:
 Run these commands from that directory:
 
 ```sh
-docker compose -f compose.yus.yml pull
-docker compose -f compose.yus.yml up -d
-docker compose -f compose.yus.yml logs --tail=100
+docker compose -f compose.solvnote.yml pull
+docker compose -f compose.solvnote.yml up -d
+docker compose -f compose.solvnote.yml logs --tail=100
 ```
 
-Open `http://localhost:3000/login` to sign in. `.env.yus`, `config`, and `data` are private deployment files. Back them up securely and never upload them to a public repository.
+Open `http://localhost:3000/login` to sign in. `.env.solvnote`, `config`, and `data` are private deployment files. Back them up securely and never upload them to a public repository.
 
 </details>
 
 ### Existing deployment: upgrade safely
 
 1. **Stop application writes and back up `/app/config` and `/app/data` together.** Record the old image digest and environment variables. A database backup alone cannot restore encrypted content.
-2. Confirm the target version was published in the [image workflow](https://github.com/yumumao/wrong-notebook-yus/actions/workflows/build-docker.yml), then have the platform pull the new image and redeploy. **Keep the existing volumes, database path, and secrets. Do not recreate the database or replace the master key.** A README-only change does not require an image update.
+2. Confirm the target version was published in the [image workflow](https://github.com/yumumao/solvnote/actions/workflows/build-docker.yml), then have the platform pull the new image and redeploy. **Keep the existing volumes, database path, and secrets. Do not recreate the database or replace the master key.** A README-only change does not require an image update.
 3. Migrations run at startup. Bootstrap variables do not reset existing administrators. Sign in through the canonical site address, then check AI settings, image-based solving, and task recovery.
 
 To roll back, stop the application and restore **the old image, the paired volume backups, and the original environment variables** together. Do not let old code write to an upgraded database. See the [deployment and build guide](docs/deployment-build.md) for detailed troubleshooting (in Chinese).
@@ -157,6 +169,6 @@ The following detailed guides are currently in Chinese:
 - [Notebook editing and explanation rules](docs/notebook-editing.md) · [Auxiliary lines, image editing, and task dialogs](docs/ai-drawing.md)
 - [Encrypted AI configuration exchange](docs/portable-ai-config.md) · [Deployment, builds, and troubleshooting](docs/deployment-build.md)
 
-Built with Next.js, React, TypeScript, Prisma, and SQLite. Background tasks require a continuously running Node.js process; pure serverless functions and multiple hosts sharing SQLite are not supported deployment targets. The deployment branch is [`main-yus`](https://github.com/yumumao/wrong-notebook-yus/tree/main-yus). This repository does not currently provide a desktop installer.
+Built with Next.js, React, TypeScript, Prisma, and SQLite. Background tasks require a continuously running Node.js process; pure serverless functions and multiple hosts sharing SQLite are not supported deployment targets. The deployment branch is [`main`](https://github.com/yumumao/solvnote/tree/main). This repository does not currently provide a desktop installer.
 
 **Upstream credit**: [wttwins/wrong-notebook](https://github.com/wttwins/wrong-notebook), its original author, and contributors. This is a continued-development fork; features described here are not necessarily present upstream. The upstream README stated MIT, but no standalone LICENSE file was found in the upstream and current snapshots reviewed. This fork does not add a license or grant additional rights; verify the upstream license terms before redistribution or commercial use.

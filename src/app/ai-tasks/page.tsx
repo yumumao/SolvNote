@@ -120,9 +120,10 @@ export default function AITasks() {
     return (
         <main className="max-w-4xl mx-auto p-5 space-y-5">
             <Link href="/">返回首页</Link>
+            <Link href="/solving-records" className="underline">查看长期解题记录</Link>
             <h1 ref={heading} tabIndex={-1} className="text-2xl font-bold">我的AI任务</h1>
             <p>
-                服务端确认受理后，刷新或关闭页面不影响后台任务。短任务（含两种辅助线作图）仅保留24小时，可复制当前任务链接取回结果，无需重新生成；不自动恢复编辑页、未保存草稿或当前显示步骤。同题会话持久保存，等待补充信息时不会占用队列。取消不能保证撤回上游已受理请求。
+                服务端确认受理后，刷新或关闭页面不影响后台任务。解题会话、直接解题和重新解答长期保留；绘图、举一反三等临时任务仅保留24小时，可复制当前任务链接取回结果，无需重新生成；不自动恢复编辑页、未保存草稿或当前显示步骤。同题会话持久保存，等待补充信息时不会占用队列。取消不能保证撤回上游已受理请求。
             </p>
             <p role="status">{listMessage}</p>
             <section className="space-y-3"><h2 className="text-lg font-semibold">解题会话</h2>{conversations.map(c=><article key={c.id} className="border rounded p-4"><Link className="underline" href={`/ai-dialogue/${c.id}`}>{dialogueLabels[c.state] || c.state} · 已完成{c.roundsUsed}/{c.roundLimit}轮</Link><p className="text-sm text-muted-foreground">更新于{new Date(c.updatedAt).toLocaleString()}</p></article>)}{!conversations.length && <p>还没有解题会话，从错题本添加题目即可开始。</p>}</section>
@@ -166,7 +167,7 @@ export default function AITasks() {
                     onCloseAutoFocus={event => { event.preventDefault(); const target = returnFocus.current; (target?.isConnected ? target : heading.current)?.focus({preventScroll:true}); }}>
                     <DialogHeader className="shrink-0 border-b p-4 pr-12 text-left">
                         <DialogTitle>任务详情</DialogTitle>
-                        <DialogDescription>查看已受理的短任务与已有结果。关闭弹窗只返回列表，不取消后台任务，也不重新提交AI；结果保留24小时。</DialogDescription>
+                        <DialogDescription>查看已受理任务与已有结果。关闭弹窗只返回列表，不取消后台任务，也不重新提交AI；解题记录长期保留，绘图和举一反三等临时结果保留24小时。</DialogDescription>
                     </DialogHeader>
                     <div data-task-detail-scroll className="min-h-0 min-w-0 overflow-y-auto overscroll-contain p-4 space-y-3">
                         {message && <p role="status">{message}</p>}

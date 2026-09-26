@@ -1,3 +1,4 @@
+import { SOLVING_JOB_KINDS } from "../solving-records/retention";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../prisma";
 import { getAppConfig } from "../config";
@@ -46,8 +47,13 @@ export async function claimJob(owner: string) {
                 finishedAt: now,
             },
         });
+        // Preserve surviving pre-upgrade solves without silently resubmitting expired work.
+        await tx.aiJob.updateMany({
+            where: { conversationId: null, kind: { in: SOLVING_JOB_KINDS }, expiresAt: { lte: now }, state: "pending" },
+            data: { state: "failed", errorCode: "AI_TASK_EXPIRED" },
+        });
         await tx.aiJob.deleteMany({
-            where: { expiresAt: { lt: now }, state: { not: "running" } },
+            where: { conversationId: null, kind: { notIn: SOLVING_JOB_KINDS }, expiresAt: { lt: now }, state: { not: "running" } },
         });
         const job = await tx.aiJob.findFirst({
             where: {

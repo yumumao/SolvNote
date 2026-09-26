@@ -62,7 +62,7 @@
 ```yaml
 # docker-compose.https.yml
 services:
-  wrong-notebook:
+  solvnote:
     ports:
       - "443:443"           # HTTPS 端口
     environment:
@@ -85,7 +85,7 @@ docker-compose -f docker-compose.https.yml up -d
 
 ```bash
 # 查看证书是否生成
-docker logs wrong-notebook | grep -i cert
+docker logs solvnote | grep -i cert
 # 输出: [Entrypoint] 自签名证书生成成功: CN=YOUR_IP_OR_DOMAIN
 ```
 
@@ -174,7 +174,7 @@ docker-compose -f docker-compose.https.yml restart
 ## 文件结构
 
 ```
-wrong-notebook/
+solvnote/
 ├── docker-compose.yml           # 标准配置（无 HTTPS）
 ├── docker-compose.https.yml     # 内置 HTTPS 配置
 ├── https-server.js              # HTTPS 代理脚本
@@ -184,3 +184,4 @@ wrong-notebook/
 ```
 
 ---
+

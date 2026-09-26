@@ -1,10 +1,11 @@
 import type { MetadataRoute } from 'next'
+import { APP_NAME, APP_DESCRIPTION } from '@/lib/app-info'
 
 export default function manifest(): MetadataRoute.Manifest {
     return {
-        name: '智能错题本',
-        short_name: '错题本',
-        description: 'AI 驱动的智能错题管理系统，帮助学生高效整理、分析和复习错题',
+        name: APP_NAME,
+        short_name: '解迹',
+        description: APP_DESCRIPTION,
         start_url: '/',
         display: 'standalone',
         background_color: '#ffffff',
@@ -12,9 +13,9 @@ export default function manifest(): MetadataRoute.Manifest {
         orientation: 'portrait',
         icons: [
             {
-                src: '/icons/icon.png',
+                src: '/icons/icon.svg',
                 sizes: 'any',
-                type: 'image/png',
+                type: 'image/svg+xml',
             },
         ],
     }

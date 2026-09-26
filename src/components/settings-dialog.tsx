@@ -1,4 +1,5 @@
 "use client";
+import { APP_REPOSITORY, APP_UPSTREAM, APP_ISSUES, APP_CHANGELOG } from "@/lib/app-info";
 
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
@@ -251,7 +252,7 @@ export function SettingsDialog() {
             // Get filename from Content-Disposition header or use default
             const disposition = res.headers.get('Content-Disposition');
             const filenameMatch = disposition?.match(/filename="(.+)"/);
-            a.download = filenameMatch ? filenameMatch[1] : 'wrong-notebook-export.json';
+            a.download = filenameMatch ? filenameMatch[1] : 'solvnote-export.json';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -282,7 +283,7 @@ export function SettingsDialog() {
             a.href = url;
             const disposition = res.headers.get('Content-Disposition');
             const filenameMatch = disposition?.match(/filename="(.+)"/);
-            a.download = filenameMatch ? filenameMatch[1] : 'wrong-notebook-export-all.json';
+            a.download = filenameMatch ? filenameMatch[1] : 'solvnote-export-all.json';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -679,6 +680,7 @@ export function SettingsDialog() {
                                     {t.admin?.dashboard?.title || "Admin Dashboard"}
                                 </Button>
                                 <div className="border-t pt-4">
+                                    <a className="block mb-4 underline" href="/admin/announcements">{language === "en" ? "Announcement management" : "公告管理"}</a>
                                     <UserManagement />
                                 </div>
                             </TabsContent>
@@ -687,6 +689,11 @@ export function SettingsDialog() {
 
                     {/* Danger Zone Tab */}
                     <TabsContent value="danger" className="space-y-4 py-4">
+                        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm space-y-2">
+                            <h3 className="font-semibold">{language === "en" ? "Record retention and backup boundaries" : "记录保留与备份范围"}</h3>
+                            <p>{language === "en" ? "Solving conversations and direct solves are retained long-term, separately from notebook entries. The controls below do not provide a complete AI-record cleanup." : "解题会话与直接解题长期保留，独立于错题收录。以下按钮不提供完整的AI记录清理。"}</p>
+                            <p>{language === "en" ? "For a full backup, stop writes and back up the database, configuration directory and original secret environment variables together. Keep the encryption master key. Notebook JSON exports cannot restore solving records." : "完整备份需先停止写入，将数据库、配置目录与原秘密环境变量配对保存，并保留加密主钥。错题本JSON导出无法恢复解题记录、公告或已阅状态。"}</p>
+                        </div>
                         <div className="space-y-3">
                             {/* Data Management Section - Available to all users */}
                             <div className="p-4 border border-blue-200 rounded-lg bg-blue-50">
@@ -937,7 +944,7 @@ export function SettingsDialog() {
 
                             <div className="flex flex-col sm:flex-row flex-wrap justify-center gap-4 w-full sm:w-auto px-4 sm:px-0">
                                 <Button variant="outline" asChild className="gap-2 w-full sm:w-auto">
-                                    <a href="https://github.com/wttwins/wrong-notebook" target="_blank" rel="noopener noreferrer">
+                                    <a href={APP_REPOSITORY} target="_blank" rel="noopener noreferrer">
                                         <Github className="h-4 w-4" />
                                         {t.settings?.about?.github || "GitHub Repository"}
                                         <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
@@ -945,7 +952,7 @@ export function SettingsDialog() {
                                 </Button>
 
                                 <Button variant="outline" asChild className="gap-2 w-full sm:w-auto">
-                                    <a href="https://github.com/wttwins/wrong-notebook/releases" target="_blank" rel="noopener noreferrer">
+                                    <a href={APP_CHANGELOG} target="_blank" rel="noopener noreferrer">
                                         <ScrollText className="h-4 w-4" />
                                         {t.settings?.about?.releaseNotes || "Release Notes"}
                                         <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
@@ -953,7 +960,7 @@ export function SettingsDialog() {
                                 </Button>
 
                                 <Button variant="outline" asChild className="gap-2 w-full sm:w-auto">
-                                    <a href="https://github.com/wttwins/wrong-notebook/issues" target="_blank" rel="noopener noreferrer">
+                                    <a href={APP_ISSUES} target="_blank" rel="noopener noreferrer">
                                         <MessageSquareText className="h-4 w-4" />
                                         {t.settings?.about?.feedback || "Feedback"}
                                         <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
@@ -961,6 +968,8 @@ export function SettingsDialog() {
                                 </Button>
                             </div>
 
+                            <p className="text-xs text-muted-foreground px-4">{language === "en" ? "This is the version running on this instance, not a guarantee that a GitHub release or container image is published. When reporting issues, include steps and redacted diagnostics; never include keys or private questions." : "版本号表示当前实例运行的程序，不代表GitHub发行包或镜像已经发布。反馈时请附复现步骤及脱敏诊断，不上传密钥或私人题目。"}</p>
+                            <a className="text-sm underline" href={APP_UPSTREAM} target="_blank" rel="noopener noreferrer">{language === "en" ? "Upstream project · wttwins/wrong-notebook" : "上游项目 · wttwins/wrong-notebook"}</a>
                             <p className="text-xs text-muted-foreground mt-8">
                                 {t.settings?.about?.copyright || "© 2025 Wttwins. All rights reserved."}
                             </p>
@@ -971,3 +980,4 @@ export function SettingsDialog() {
         </Dialog>
     );
 }
+

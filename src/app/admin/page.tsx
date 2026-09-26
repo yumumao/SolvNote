@@ -384,6 +384,8 @@ export default function AdminPage() {
                 </div>
             </div>
 
+            <a href="/admin/announcements" className="inline-block rounded-md border px-4 py-2 text-sm underline">{t.broadcast?.manage || "Announcement management"}</a>
+
             {/* Overview Cards */}
             <OverviewCards data={data} t={t} />
 

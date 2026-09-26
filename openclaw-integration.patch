@@ -262,7 +262,7 @@ index 0000000..f6e2408
 +    process.exit(failed > 0 ? 1 : 0);
 +}
 +
-+console.log('注意: 请确保 wrong-notebook 服务正在运行\n');
++console.log('注意: 请确保 SolvNote服务正在运行\n');
 +
 +runTests().catch(console.error);
 diff --git a/src/app/api/openclaw/batch-upload/route.ts b/src/app/api/openclaw/batch-upload/route.ts

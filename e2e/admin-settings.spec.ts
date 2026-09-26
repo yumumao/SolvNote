@@ -116,7 +116,7 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     const downloading = page.waitForEvent('download');
     await page.getByRole('button',{name:'加密并下载',exact:true}).click();
     const download=await downloading;
-    expect(download.suggestedFilename()).toBe('wrong-notebook.aiconfig.enc.json');
+    expect(download.suggestedFilename()).toBe('solvnote.aiconfig.enc.json');
     const bytes=await readFile((await download.path())!);expect(bytes.length).toBeLessThanOrEqual(1024*1024);
     const envelope=JSON.parse(bytes.toString('utf8'));
     expect(Object.keys(envelope).sort()).toEqual(['format','v','alg','kdf','iter','salt','iv','data'].sort());
@@ -142,3 +142,4 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     expect((await page.request.get('/api/ai/config').then(r=>r.json())).revision).toBe(savedRevision);
     expect(externalRequests).toEqual([]);
 });
+

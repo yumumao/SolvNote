@@ -1,6 +1,6 @@
 {
-  "name": "wrong-notebook",
-  "version": "1.9.1",
+  "name": "solvnote",
+  "version": "2.0.0-yus.2",
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0",

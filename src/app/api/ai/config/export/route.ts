@@ -21,7 +21,7 @@ export async function POST(req: Request) {
         if (body.revision !== current.revision) throw Error("CONFIG_CONFLICT");
         const envelope = await sealExport(current.config, body.password);
         response = NextResponse.json(envelope, {headers: {
-            "Content-Disposition": 'attachment; filename="wrong-notebook.aiconfig.enc.json"',
+            "Content-Disposition": 'attachment; filename="solvnote.aiconfig.enc.json"',
             "X-Content-Type-Options": "nosniff",
         }});
     } catch (error) {

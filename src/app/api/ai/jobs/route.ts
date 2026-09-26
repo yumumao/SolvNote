@@ -1,3 +1,4 @@
+import { readableJobWhere } from "@/lib/solving-records/retention";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/ai-access";
 import { prisma } from "@/lib/prisma";
@@ -7,7 +8,7 @@ export async function GET(req: Request) {
     try {
         const u = await requireUser(req);
         const jobs = await prisma.aiJob.findMany({
-            where: { userId: u.id, conversationId: null, expiresAt: { gt: new Date() } },
+            where: { userId: u.id, conversationId: null, ...readableJobWhere() },
             orderBy: { createdAt: "desc" },
             take: 50,
         });

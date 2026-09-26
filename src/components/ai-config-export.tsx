@@ -40,7 +40,7 @@ export function AIConfigExport({disabled, revision}: {disabled: boolean; revisio
         try {
             const result = await apiClient.post<unknown>("/api/ai/config/export",{password,revision});
             const blob=encryptedFile(result); release(); downloadUrl.current=URL.createObjectURL(blob);
-            const a=document.createElement("a");a.href=downloadUrl.current;a.download="wrong-notebook.aiconfig.enc.json";
+            const a=document.createElement("a");a.href=downloadUrl.current;a.download="solvnote.aiconfig.enc.json";
             document.body.appendChild(a);try {a.click();} finally {a.remove();}
             timer.current=setTimeout(release,30000);
             setMessage("已生成加密文件并发起下载，请检查浏览器下载记录。口令请单独保管。");
