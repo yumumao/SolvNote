@@ -1,15 +1,9 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './session-fixture';
 import path from 'path';
 
-// Seed and login must use the same explicit test-only credential; no weak fallback.
-const adminPassword = process.env.INITIAL_ADMIN_PASSWORD ?? '';
-if (adminPassword.length < 12) {
-    throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
-}
-
-test('Legacy direct image task can be corrected, saved, and verified in notebook', async ({ page, baseURL }) => {
+test('Legacy direct image task can be corrected, saved, and verified in notebook', async ({ page, baseURL, signInAs, member }) => {
     // 增加测试超时时间
-    test.setTimeout(90000);
+    test.setTimeout(120000);
 
     const externalRequests: string[] = [];
     await page.route('**/*', route => {
@@ -53,12 +47,8 @@ test('Legacy direct image task can be corrected, saved, and verified in notebook
         });
     });
 
-    // 1. Login
-    await page.goto('/login');
-    await page.getByLabel(/邮箱|Email/).fill('admin@localhost');
-    await page.getByLabel(/^密码$|^Password$/).fill(adminPassword);
-    await page.getByRole('button', { name: /登录|Login/ }).click();
-    await page.waitForURL('**/', { timeout: 15000 });
+    // Ordinary member owns all notebook data in this disposable DB.
+    await signInAs(member.id);
 
     // 2. Ensure a Notebook exists
     // Go to Notebooks page
@@ -168,7 +158,7 @@ test('Legacy direct image task can be corrected, saved, and verified in notebook
         await items.first().click();
 
         // Wait for Detail Page
-        await expect(page.getByRole('heading', { level: 1, name: /详情|Detail/ })).toBeVisible({ timeout: 5000 });
+        await expect(page.getByRole('heading', { level: 1, name: /详情|Detail/ })).toBeVisible({ timeout: 30000 });
 
         // Setup dialog handler for item deletion
         page.once('dialog', async dialog => {

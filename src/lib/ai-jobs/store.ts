@@ -2,7 +2,8 @@ import { jobExpiry, readableJobWhere } from "../solving-records/retention";
 import { diagnosticMessage } from "../ai/diagnostics";
 import type { AiJob } from "@prisma/client";
 import { prisma } from "../prisma";
-import { loadAIConfig } from "../ai-config/store";
+import { assertAiInputAllowed, assertModelsAllowedForUser } from "../ai-access/effective-config";
+import { requireTxAiUser, requireLiveAiUser } from "../ai-access/account";
 import { protect, unprotect } from "../ai-config/vault";
 import { JobInputSchema, type JobKind, type JobInput } from "./schema";
 export function failureState(code: string, cancelled: boolean) {
@@ -30,9 +31,10 @@ export async function submitJob(
     requestKey: string,
 ) {
     const input = JobInputSchema.parse(raw);
-    await loadAIConfig();
+    await assertAiInputAllowed(userId,input);
     const payload = protect(input);
     return prisma.$transaction(async (tx) => {
+        await requireTxAiUser(tx,userId);
         const prior = await tx.aiJob.findUnique({
             where: { userId_requestKey: { userId, requestKey } },
         });
@@ -66,6 +68,7 @@ export async function submitJob(
     });
 }
 export async function readJob(userId: string, id: string, restore = false) {
+    await requireLiveAiUser(userId);
     const j = await prisma.aiJob.findFirst({
         where: { id, userId, conversationId: null, ...readableJobWhere() },
     });
@@ -82,6 +85,7 @@ export async function readJob(userId: string, id: string, restore = false) {
         },
         orderBy: { startedAt: "asc" },
     });
+    await assertModelsAllowedForUser(userId,attempts.map(a=>a.modelId));
     return {
         ...publicJob(j),
         attemptsLog: attempts.map(({metadata,...a})=>{const m=metadata?unprotect<import("../ai-dialogue/types").StepMetadata>(metadata):undefined;return {...a,...(m?{stage:m.stage,modelName:m.modelName,providerName:m.providerName,withImage:m.withImage,...(diagnosticMessage(m.diagnostic)?{diagnostic:m.diagnostic}:{})}: {})};}),
@@ -92,6 +96,7 @@ export async function readJob(userId: string, id: string, restore = false) {
     };
 }
 export async function cancelJob(userId: string, id: string) {
+    await requireLiveAiUser(userId);
     await prisma.aiJob.updateMany({
         where: { id, userId, conversationId: null, state: "pending" },
         data: { state: "cancelled", cancelRequested: true },

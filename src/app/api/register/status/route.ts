@@ -1,9 +1,4 @@
-import { NextResponse } from "next/server";
-import { getAppConfig } from "@/lib/config";
-
-export async function GET() {
-    const config = getAppConfig();
-    return NextResponse.json({
-        allowRegistration: config.allowRegistration !== false
-    });
-}
+import {userResponse} from "@/lib/user-management/http";
+import {publicRegistrationStatus} from "@/lib/user-management/registration-settings";
+export const dynamic="force-dynamic";
+export async function GET(){return userResponse(async()=>{const status=await publicRegistrationStatus();return {...status,allowRegistration:status.enabled};});}

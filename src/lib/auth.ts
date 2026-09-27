@@ -2,7 +2,8 @@ import { NextAuthOptions } from "next-auth"
 import { PrismaAdapter } from "@next-auth/prisma-adapter"
 import CredentialsProvider from "next-auth/providers/credentials"
 import { prisma } from "@/lib/prisma"
-import { compare } from "bcryptjs"
+import { authenticateCredentials } from "@/lib/user-management/authenticate"
+import { getLiveUser, isSessionCurrent } from "@/lib/user-management/live-session"
 import { createLogger } from "@/lib/logger"
 
 const logger = createLogger('auth');
@@ -18,7 +19,7 @@ export const authOptions: NextAuthOptions = {
         signIn: "/login",
     },
     // Force using a single cookie name to avoid HTTP/HTTPS mismatches in proxy environments
-    // This allows running without NEXTAUTH_URL behind Cloudflare Tunnel
+    // Turnstile and same-origin validation still require the canonical NEXTAUTH_URL.
     cookies: {
         sessionToken: {
             name: "next-auth.session-token",
@@ -27,7 +28,7 @@ export const authOptions: NextAuthOptions = {
                 sameSite: "lax",
                 path: "/",
                 // Only use secure cookies if explicitly running on HTTPS (via NEXTAUTH_URL)
-                // This enables HTTP local IP access in Docker/Production if NEXTAUTH_URL is unset
+                // HTTP is only for explicit local testing; public deployments must use HTTPS.
                 secure: process.env.NODE_ENV === "production" && process.env.NEXTAUTH_URL?.startsWith("https"),
             },
         },
@@ -37,47 +38,15 @@ export const authOptions: NextAuthOptions = {
             name: "Credentials",
             credentials: {
                 email: { label: "Email", type: "email" },
-                password: { label: "Password", type: "password" }
+                password: { label: "Password", type: "password" },
+                turnstileToken: { label: "Verification", type: "text" }
             },
-            async authorize(credentials) {
-                logger.debug('Authorize called');
-                if (!credentials?.email || !credentials?.password) {
-                    logger.debug('Missing credentials');
-                    return null
+            async authorize(credentials, req) {
+                const headers = new Headers();
+                for (const [key, value] of Object.entries(req?.headers ?? {})) {
+                    if (typeof value === "string") headers.set(key, value);
                 }
-
-                const user = await prisma.user.findUnique({
-                    where: {
-                        email: credentials.email
-                    }
-                })
-
-                if (!user) {
-                    logger.debug('User not found');
-                    return null
-                }
-
-                // Check if user is active
-                if (!user.isActive) {
-                    logger.warn('User is disabled');
-                    throw new Error("Account is disabled")
-                }
-
-                const isPasswordValid = await compare(credentials.password, user.password)
-
-                if (!isPasswordValid) {
-                    logger.debug('Invalid password');
-                    return null
-                }
-
-                logger.info('Login successful');
-
-                return {
-                    id: user.id,
-                    email: user.email,
-                    name: user.name,
-                    role: user.role,
-                }
+                return authenticateCredentials(credentials, headers);
             }
         })
     ],
@@ -96,27 +65,24 @@ export const authOptions: NextAuthOptions = {
     },
     callbacks: {
         async session({ session, token }) {
-            logger.debug({ userId: token.id }, 'Session callback');
-            return {
-                ...session,
-                user: {
-                    ...session.user,
-                    id: token.id,
-                    role: token.role,
-                }
+            // An invalid token must produce a genuinely absent user, never a truthy empty object.
+            if (token.invalidSession || !token.id) {
+                return { ...session, user: undefined as unknown as typeof session.user };
             }
+            return { ...session, user: { ...session.user, id: token.id, role: token.role,
+                sessionVersion: token.sessionVersion ?? 0, mustChangePassword: token.mustChangePassword === true } };
         },
-        async jwt({ token, user, account, profile }) {
+        async jwt({ token, user }) {
             if (user) {
-                logger.debug({ userId: user.id }, 'JWT callback - Initial signin');
-                return {
-                    ...token,
-                    id: user.id,
-                    role: (user as any).role,
-                }
+                return { ...token, id: user.id, role: user.role, sessionVersion: user.sessionVersion ?? 0,
+                    mustChangePassword: user.mustChangePassword === true, invalidSession: false };
             }
-            logger.debug('JWT callback - Subsequent call');
-            return token
+            try {
+                const current = typeof token.id === "string" ? await getLiveUser(token.id) : null;
+                if (!current || !isSessionCurrent(current, token)) return { ...token, invalidSession: true };
+                return { ...token, role: current.role, mustChangePassword: current.mustChangePassword,
+                    sessionVersion: current.sessionVersion, invalidSession: false };
+            } catch { return { ...token, invalidSession: true }; }
         }
     }
 }

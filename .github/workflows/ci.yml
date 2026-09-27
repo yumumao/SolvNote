@@ -87,11 +87,19 @@ jobs:
     needs: build-check
     timeout-minutes: 60
     env:
-      DATABASE_URL: "file:./e2e.db"
-      # Synthetic fixture for this disposable CI database, never a deployment default.
-      INITIAL_ADMIN_PASSWORD: "E2E-only-Admin-Password-2026!"
-      NEXTAUTH_SECRET: "ci-secret-value-123456"
-      NEXTAUTH_URL: "http://127.0.0.1:3000"
+      SOLVNOTE_E2E_ISOLATED: '1'
+      SOLVNOTE_E2E_TEMP_DIR: ${{ runner.temp }}
+      DATABASE_URL: 'file:${{ runner.temp }}/solvnote-e2e-${{ github.run_id }}-${{ github.run_attempt }}.db'
+      # Public, synthetic fixtures for this disposable DB; never deployment defaults.
+      INITIAL_ADMIN_PASSWORD: 'e2e-only-admin-password-2026-fixture'
+      INITIAL_ADMIN_EMAIL: 'admin@localhost'
+      NEXTAUTH_SECRET: 'e2e-only-session-secret-2026-disposable-fixture'
+      NEXTAUTH_URL: 'http://127.0.0.1:4330'
+      AI_WORKER_DISABLED: '1'
+      AI_CONFIG_MASTER_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+      SOLVNOTE_ENABLE_AI_CONFIG_EXPORT: 'false'
+      SOLVNOTE_TURNSTILE_SITE_KEY: ''
+      SOLVNOTE_TURNSTILE_SECRET_KEY: ''
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

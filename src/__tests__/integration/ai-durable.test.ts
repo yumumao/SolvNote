@@ -57,10 +57,12 @@ beforeAll(async () => {
     await shared.db.user.create({
         data: {
             id: "alice",
+            role: "admin",
             email: "alice@example.invalid",
             password: "unused",
         },
     });
+    for(const id of ["bob","limit"])await shared.db.user.create({data:{id,email:`${id}@example.invalid`,password:"unused"}});
 }, 30000);
 afterAll(async () => {
     await shared.db.$disconnect();
@@ -188,7 +190,7 @@ describe.sequential("worker safety and image stages", () => {
                 id: "disabled",
                 email: "disabled@example.invalid",
                 password: "unused",
-                isActive: false,
+                isActive: true,
             },
         });
         shared.send.mockReset().mockResolvedValue(answer);
@@ -198,8 +200,10 @@ describe.sequential("worker safety and image stages", () => {
             { questionText: "q" },
             "disabled-01",
         );
+        await shared.db.user.update({where:{id:user.id},data:{isActive:false}});
         await processOne("worker");
-        expect((await readJob(user.id, j.id))?.state).toBe("cancelled");
+        await expect(readJob(user.id,j.id)).rejects.toThrow("AI_ACCESS_REVOKED");
+        expect((await shared.db.aiJob.findUnique({where:{id:j.id}}))?.state).toBe("cancelled");
         expect(shared.send).not.toHaveBeenCalled();
     });
     it("retains images through transcription, solving, and second-model review", async () => {

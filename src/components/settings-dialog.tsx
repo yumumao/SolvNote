@@ -21,7 +21,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Trash2, Loader2, AlertTriangle, Save, Eye, EyeOff, Languages, User, Bot, Shield, RefreshCw, CheckCircle2, Download, Upload, BarChart3 } from "lucide-react";
+import { Settings, Trash2, Loader2, AlertTriangle, Languages, User, Bot, Shield, RefreshCw, CheckCircle2, Download, Upload, BarChart3 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -37,7 +37,6 @@ interface ProfileFormState {
     email: string;
     educationStage: string;
     enrollmentYear: string | number;
-    password: string;
 }
 
 export function SettingsDialog() {
@@ -50,7 +49,7 @@ export function SettingsDialog() {
     const [systemResetting, setSystemResetting] = useState(false);
     const [migratingTags, setMigratingTags] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [loading, setLoading] = useState(false);
+    const [, setLoading] = useState(false);
     const [version, setVersion] = useState<string>("");
     const [config, setConfig] = useState<AppConfig>({ aiProvider: 'gemini' });
     // Profile State
@@ -58,14 +57,10 @@ export function SettingsDialog() {
         name: "",
         email: "",
         educationStage: "",
-        enrollmentYear: "",
-        password: ""
+        enrollmentYear: ""
     });
-    const [confirmPassword, setConfirmPassword] = useState("");
     const [profileLoading, setProfileLoading] = useState(false);
     const [profileSaving, setProfileSaving] = useState(false);
-    const [showPassword, setShowPassword] = useState(false);
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     // Import/Export state
     const [exporting, setExporting] = useState(false);
@@ -108,7 +103,6 @@ export function SettingsDialog() {
                 email: data.email || "",
                 educationStage: data.educationStage || "",
                 enrollmentYear: data.enrollmentYear || "",
-                password: ""
             });
         } catch (error) {
             frontendLogger.error('[SettingsDialog]', 'Failed to fetch profile', { error: error instanceof Error ? error.message : String(error) });
@@ -135,34 +129,19 @@ export function SettingsDialog() {
     const handleSaveProfile = async () => {
         setProfileSaving(true);
         try {
-            // 验证密码一致性（如果用户输入了密码）
-            if (profile.password && profile.password !== confirmPassword) {
-                alert(t.settings?.messages?.passwordMismatch || 'Passwords do not match');
-                setProfileSaving(false);
-                return;
-            }
-
             const payload: UpdateUserProfileRequest = {
                 name: profile.name,
                 email: profile.email,
-                educationStage: profile.educationStage,
+                ...(profile.educationStage ? { educationStage: profile.educationStage } : {}),
             };
 
             if (profile.enrollmentYear) {
                 payload.enrollmentYear = parseInt(profile.enrollmentYear.toString());
             }
 
-            if (profile.password) {
-                payload.password = profile.password;
-            }
-
             await apiClient.patch("/api/user", payload);
 
             alert(t.settings?.messages?.profileUpdated || "Profile updated");
-            setProfile(prev => ({ ...prev, password: "" })); // Clear password field
-            setConfirmPassword(""); // Clear confirm password field
-            setShowPassword(false);
-            setShowConfirmPassword(false);
             window.location.reload(); // Reload to update user name in UI
         } catch (error: any) {
             frontendLogger.error('[SettingsDialog]', 'Failed to update profile', { error: error?.data?.message || error?.message || String(error) });
@@ -550,6 +529,7 @@ export function SettingsDialog() {
                                             onChange={(e) => setProfile({ ...profile, email: e.target.value })}
                                             type="email"
                                         />
+                                        <p className="text-xs text-muted-foreground">{language === 'zh' ? '修改邮箱后，所有已登录会话失效，请用新邮箱重新登录。' : 'Changing your email signs out all sessions. Sign in again with the new email.'}</p>
                                     </div>
                                 </div>
 
@@ -583,62 +563,7 @@ export function SettingsDialog() {
                                 </div>
 
                                 <div className="space-y-3 pt-2 border-t">
-                                    <div className="space-y-2">
-                                        <Label>{t.settings?.account?.changePassword || "Change Password (Leave empty to keep)"}</Label>
-                                        <div className="relative">
-                                            <Input
-                                                type={showPassword ? "text" : "password"}
-                                                value={profile.password}
-                                                onChange={(e) => setProfile({ ...profile, password: e.target.value })}
-                                                placeholder="******"
-                                                minLength={6}
-                                                className="pr-10"
-                                            />
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon"
-                                                className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                                                onClick={() => setShowPassword(!showPassword)}
-                                                tabIndex={-1}
-                                            >
-                                                {showPassword ? (
-                                                    <EyeOff className="h-4 w-4 text-muted-foreground" />
-                                                ) : (
-                                                    <Eye className="h-4 w-4 text-muted-foreground" />
-                                                )}
-                                            </Button>
-                                        </div>
-                                    </div>
-                                    {profile.password && (
-                                        <div className="space-y-2">
-                                            <Label>{t.auth?.confirmPassword || "Confirm Password"}</Label>
-                                            <div className="relative">
-                                                <Input
-                                                    type={showConfirmPassword ? "text" : "password"}
-                                                    value={confirmPassword}
-                                                    onChange={(e) => setConfirmPassword(e.target.value)}
-                                                    placeholder="******"
-                                                    minLength={6}
-                                                    className="pr-10"
-                                                />
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                                                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                                    tabIndex={-1}
-                                                >
-                                                    {showConfirmPassword ? (
-                                                        <EyeOff className="h-4 w-4 text-muted-foreground" />
-                                                    ) : (
-                                                        <Eye className="h-4 w-4 text-muted-foreground" />
-                                                    )}
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    )}
+                                    <a className="underline" href="/change-password">{language === "zh" ? "修改密码（需验证当前密码）" : "Change password (current password required)"}</a>
                                 </div>
 
                                 <Button onClick={handleSaveProfile} disabled={profileSaving} className="w-full">
@@ -652,7 +577,8 @@ export function SettingsDialog() {
                     {/* AI Tab */}
                     <TabsContent value="ai" className="space-y-4 py-4">
                         <p>AI配置已升级为持久化多供应商配置。旧设置首次使用时自动迁移，后续请在新页面管理。</p>
-                        <a className="underline" href="/admin/ai">打开AI配置、模型顺序与加密导入</a>
+                        {session?.user?.role === "admin" && <a className="underline" href="/admin/ai">管理站点AI配置、模型顺序与导入</a>}
+                        <p><a className="underline" href="/ai-settings">管理我的AI与私有配置</a></p>
                         <p><a className="underline" href="/ai-tasks">查看我的AI任务</a></p>
                     </TabsContent>
 

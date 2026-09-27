@@ -46,7 +46,11 @@ test_output*.txt
 
 # 文档
 README.md
-docs
+# The public template is imported by the download API at build time.
+docs/*
+!docs/templates/
+docs/templates/*
+!docs/templates/solvnote-ai-config.template.json
 doc
 
 # Private runtime and AI credentials

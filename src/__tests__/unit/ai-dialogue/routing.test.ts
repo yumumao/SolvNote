@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const send = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/ai/transport", async (original) => ({ ...(await original<typeof import("@/lib/ai/transport")>()), sendAI: send }));
 vi.mock("@/lib/prisma", () => ({ prisma: { aiCooldown: { findUnique: vi.fn(async () => null) } } }));
-vi.mock("@/lib/ai-config/store", () => ({ loadAIConfig: vi.fn() }));
+vi.mock("@/lib/ai-access/effective-config", () => ({ loadEffectiveAIConfig: vi.fn(), assertModelsAllowedForUser:vi.fn(async()=>({})) }));
+import {loadEffectiveAIConfig} from "@/lib/ai-access/effective-config";
 import { callChain } from "@/lib/ai/chain";
 import { aiRun } from "@/lib/ai-jobs/context";
 import type { PortableConfig } from "@/lib/ai-config/schema";
@@ -14,7 +15,7 @@ const config: PortableConfig = {
   {id:"vision",name:"Vision",model:"vision",providerId:"p",capabilities:["text","vision"],enabled:true}
  ], chains:{text:["text","vision"],vision:["vision"]}
 };
-const run = (fn: () => Promise<unknown>, c = config) => aiRun.run({config:c,signal:new AbortController().signal,deadline:Date.now()+10000,attempts:0,maxAttempts:6},fn);
+const run = (fn: () => Promise<unknown>, c = config) => { vi.mocked(loadEffectiveAIConfig).mockResolvedValue({config:c} as Awaited<ReturnType<typeof loadEffectiveAIConfig>>);return aiRun.run({userId:"fixture",config:c,signal:new AbortController().signal,deadline:Date.now()+10000,attempts:0,maxAttempts:6},fn); };
 beforeEach(() => { send.mockResolvedValue("ok"); });
 describe("role routing", () => {
  it("uses solver order even with an image, never sends image to text model", async () => {

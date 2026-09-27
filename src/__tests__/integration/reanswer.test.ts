@@ -28,7 +28,7 @@ describe('POST /api/reanswer (202持久任务契约)', () => {
         vi.resetAllMocks();
         mocks.session.mockResolvedValue({ user: { id: 'user-123', role: 'admin' } });
         mocks.user.findUnique.mockResolvedValue({
-            id: 'user-123', role: 'user', isActive: true,
+            id: 'user-123', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false,
             educationStage: null, enrollmentYear: null,
         });
         mocks.submitJob.mockResolvedValue({ id: 'job-reanswer-1', state: 'pending' });
@@ -44,7 +44,7 @@ describe('POST /api/reanswer (202持久任务契约)', () => {
         expect(mocks.submitJob).toHaveBeenCalledExactlyOnceWith('user-123', 'reanswer',
             expect.objectContaining({ questionText: '求解 x + 2 = 5', language: 'zh' }), 'reanswer-request-1');
         expect(mocks.user.findUnique).toHaveBeenCalledWith({
-            where: { id: 'user-123' }, select: { id: true, role: true, isActive: true },
+            where: { id: 'user-123' }, select: { id: true, role: true, isActive: true, expiresAt: true, sessionVersion: true, mustChangePassword: true, revision: true, aiAccessInitialized: true },
         });
     });
 

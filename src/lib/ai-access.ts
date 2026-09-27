@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { getLiveUser, isSessionCurrent } from "@/lib/user-management/live-session";
 import { canonicalSiteOrigin } from "@/lib/site-origin";
 
 /** Only pass fixed, public-facing messages to this error. Never pass provider/DB errors. */
@@ -18,21 +18,18 @@ export class AIRequestError extends Error {
 /** The optional request is reserved for callers; authentication always uses the server session. */
 export async function requireUser(
     _req?: Request,
-): Promise<{ id: string; role: string }> {
+): Promise<{ id: string; role: string; sessionVersion: number }> {
     void _req;
     try {
         const session = await getServerSession(authOptions);
         if (!session?.user?.id || typeof session.user.id !== "string") {
             throw new AIRequestError(401, "Authentication required");
         }
-        // JWT role/active claims can be stale after demotion, suspension or deletion.
-        const user = await prisma.user.findUnique({
-            where: { id: session.user.id },
-            select: { id: true, role: true, isActive: true },
-        });
-        if (!user || user.isActive !== true)
+        const user = await getLiveUser(session.user.id);
+        if (!user || !isSessionCurrent(user, session.user))
             throw new AIRequestError(403, "Access denied");
-        return { id: user.id, role: user.role };
+        if (user.mustChangePassword) throw new AIRequestError(403, "Password change required");
+        return { id: user.id, role: user.role, sessionVersion: user.sessionVersion };
     } catch (error) {
         if (error instanceof AIRequestError) throw error;
         throw new AIRequestError(503, "Authentication temporarily unavailable");
@@ -41,7 +38,7 @@ export async function requireUser(
 
 export async function requireAdmin(
     req?: Request,
-): Promise<{ id: string; role: string }> {
+): Promise<{ id: string; role: string; sessionVersion: number }> {
     const user = await requireUser(req);
     if (user.role !== "admin")
         throw new AIRequestError(403, "Administrator access required");

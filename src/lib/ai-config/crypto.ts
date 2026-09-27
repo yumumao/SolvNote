@@ -80,11 +80,19 @@ export async function openExport(raw: unknown, password: string) {
     if (
         !raw ||
         typeof raw !== "object" ||
-        JSON.stringify(raw).length > MAX_EXPORT_BYTES ||
-        password.length < 12 ||
+        Array.isArray(raw) ||
+        Buffer.byteLength(JSON.stringify(raw), "utf8") > MAX_EXPORT_BYTES ||
+        typeof password !== "string" ||
         password.length > 1024
     )
         throw Error("INVALID_EXPORT");
+    // Locally filled, plaintext portable-v1 templates use the SAME validation and
+    // preview/CAS path as decrypted exports. Never downgrade an encrypted envelope.
+    if ("version" in raw && raw.version === 1 &&
+        !["format", "v", "alg", "kdf", "iter", "salt", "iv", "data"].some(key => key in raw)) {
+        return parseImportedConfig(raw);
+    }
+    if (password.length < 12) throw Error("INVALID_EXPORT");
     const e = raw as ExportEnvelope;
     if (
         e.format !== "portable-ai-config" ||
@@ -107,6 +115,10 @@ export async function openExport(raw: unknown, password: string) {
     let payload: unknown;
     try { payload = JSON.parse(text); }
     catch { throw Error("INVALID_EXPORT_PAYLOAD"); }
+    return parseImportedConfig(payload);
+}
+
+function parseImportedConfig(payload: unknown) {
     const result = ConfigSchema.safeParse(payload);
     if (!result.success) {
         throw new ImportConfigError(result.error.issues.map((issue) => ({

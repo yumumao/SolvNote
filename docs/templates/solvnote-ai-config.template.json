@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "provider-example",
+      "name": "Example connection",
+      "protocol": "chat",
+      "baseUrl": "https://api.example.invalid/v1",
+      "apiKey": "",
+      "enabled": false
+    }
+  ],
+  "models": [
+    {
+      "id": "model-example",
+      "providerId": "provider-example",
+      "name": "Example model",
+      "model": "model-example",
+      "capabilities": [
+        "text"
+      ],
+      "enabled": false
+    }
+  ],
+  "chains": {
+    "text": [],
+    "vision": []
+  }
+}

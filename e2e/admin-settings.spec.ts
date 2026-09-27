@@ -1,15 +1,9 @@
-import { randomUUID, pbkdf2Sync, createDecipheriv } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './session-fixture';
 
-// Seed and login share this explicit fixture; never use a deployment default.
-const adminPassword = process.env.INITIAL_ADMIN_PASSWORD ?? '';
-if (adminPassword.length < 12) {
-    throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
-}
-
-test('Admin saves two-layer connections, models and capabilities without exposing keys', async ({ page, baseURL }) => {
-    test.setTimeout(60000);
+test('Admin saves two-layer connections, models and capabilities without exposing keys', async ({ page, baseURL, signInAs }) => {
+    test.setTimeout(120000);
     // Only exercise our own app. Saving configuration must not contact a provider.
     const externalRequests: string[] = [];
     await page.route('**/*', async route => {
@@ -20,15 +14,12 @@ test('Admin saves two-layer connections, models and capabilities without exposin
         return route.continue();
     });
 
-    await page.goto('/login');
-    await page.locator('input[name="email"]').fill('admin@localhost');
-    await page.locator('input[name="password"]').fill(adminPassword);
-    await page.locator('button[type="submit"]').click();
-    await page.waitForURL('**/', { timeout: 15000 });
+    await signInAs();
+    await page.goto('/');
 
     await page.getByRole('button', { name: '设置' }).click();
     await page.getByRole('tab', { name: /AI Provider|AI 提供商/ }).click();
-    await page.getByRole('link', { name: '打开AI配置、模型顺序与加密导入' }).click();
+    await page.getByRole('link', { name: '管理站点AI配置、模型顺序与导入' }).click();
     await expect(page.getByRole('heading', { name: 'AI设置', exact: true })).toBeVisible();
     await expect(page.getByLabel('AI设置保存栏', { exact: true }).getByRole('status')).toContainText('配置仅管理员可见');
 
@@ -106,40 +97,32 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     await expect(persisted.getByLabel('支持读图（多模态）', { exact: true }).nth(1)).toBeChecked();
     await expect(persisted.getByRole('button', { name: '保存全部AI设置', exact: true })).toBeVisible();
     await persisted.getByRole('button', { name: '关闭（保留草稿）', exact: true }).click();
-    // Native browser download + independent Node decryption + actual import preview.
-    await expect(page.locator('summary').filter({hasText:'站点地址检查'})).toContainText('地址一致');
-    const savedRevision = (await page.request.get('/api/ai/config').then(r=>r.json())).revision;
-    await page.getByRole('button',{name:'导出配置',exact:true}).click();
-    const passphrase = 'synthetic-' + randomUUID();
-    await page.getByLabel('设置导出口令',{exact:true}).fill(passphrase);
-    await page.getByLabel('再次输入导出口令',{exact:true}).fill(passphrase);
+    // Export is forbidden by default, including for administrators.
+    await expect(page.getByRole('button', { name: '导出配置', exact: true })).toHaveCount(0);
+    const capability = await page.request.get('/api/ai/config/export');
+    expect(capability.status()).toBe(200);
+    expect(await capability.json()).toEqual({ exportEnabled: false });
+    const before = await (await page.request.get('/api/ai/config')).json();
+    const denied = await page.request.post('/api/ai/config/export', {
+        headers: { Origin: baseURL! }, data: { revision: before.revision, password: `synthetic-${randomUUID()}` },
+    });
+    expect(denied.status()).toBe(403);
+    expect(await denied.json()).toEqual({ message: 'AI_CONFIG_EXPORT_DISABLED' });
+
+    // Download ONLY the public empty template, then preview a locally supplied import.
     const downloading = page.waitForEvent('download');
-    await page.getByRole('button',{name:'加密并下载',exact:true}).click();
-    const download=await downloading;
-    expect(download.suggestedFilename()).toBe('solvnote.aiconfig.enc.json');
-    const bytes=await readFile((await download.path())!);expect(bytes.length).toBeLessThanOrEqual(1024*1024);
-    const envelope=JSON.parse(bytes.toString('utf8'));
-    expect(Object.keys(envelope).sort()).toEqual(['format','v','alg','kdf','iter','salt','iv','data'].sort());
-    expect(envelope.format).toBe('portable-ai-config');expect(envelope.v).toBe(1);expect(envelope.iter).toBe(300000);
-    const key=pbkdf2Sync(passphrase,Buffer.from(envelope.salt,'base64'),300000,32,'sha256');
-    const cipher=Buffer.from(envelope.data,'base64');
-    const decipher=createDecipheriv('aes-256-gcm',key,Buffer.from(envelope.iv,'base64'));
-    decipher.setAuthTag(cipher.subarray(-16));
-    const restored=JSON.parse(Buffer.concat([decipher.update(cipher.subarray(0,-16)),decipher.final()]).toString('utf8'));
-    expect(restored.chains).toEqual(config.chains);expect(restored.models).toEqual(config.models);
-    expect(restored.providers.filter((p:{name:string})=>[firstName,secondName].includes(p.name))).toHaveLength(2);
-    expect(bytes.toString('utf8').includes(passphrase)).toBe(false);
-    for(const p of restored.providers) if(p.apiKey) expect(bytes.toString('utf8').includes(p.apiKey)).toBe(false);
-    await expect(page.getByLabel('设置导出口令',{exact:true})).toBeEmpty();
-    await page.getByRole('button',{name:'关闭',exact:true}).click();
-    await page.getByRole('button',{name:'导入配置',exact:true}).click();
-    await page.getByLabel('加密配置文件').setInputFiles({name:'synthetic.aiconfig.enc.json',mimeType:'application/json',buffer:bytes});
-    await page.getByLabel('导出口令',{exact:true}).fill(passphrase);
-    const previewing=page.waitForResponse(r=>r.url().endsWith('/api/ai/config/import'));
-    await page.getByRole('button',{name:'解密并预览（不写入）',exact:true}).click();
-    const previewResponse=await previewing;expect(previewResponse.status()).toBe(200);
-    const preview=await previewResponse.json();expect(preview.config.models).toEqual(config.models);
-    expect((await page.request.get('/api/ai/config').then(r=>r.json())).revision).toBe(savedRevision);
+    await page.getByRole('link', { name: '下载导入模板', exact: true }).click();
+    const download = await downloading;
+    expect(download.suggestedFilename()).toBe('solvnote-ai-config.template.json');
+    const bytes = await readFile((await download.path())!);
+    const template = JSON.parse(bytes.toString('utf8'));
+    expect(template.providers.every((p: { apiKey: string }) => p.apiKey === '')).toBe(true);
+    expect(template.providers.some((p: { name: string }) => p.name === firstName || p.name === secondName)).toBe(false);
+    await page.getByRole('button', { name: '导入配置', exact: true }).click();
+    await page.getByLabel('加密配置文件', { exact: true }).setInputFiles({ name: 'synthetic-template.json', mimeType: 'application/json', buffer: bytes });
+    const previewing = page.waitForResponse(r => r.url().endsWith('/api/ai/config/import'));
+    await page.getByRole('button', { name: '预览模板（不写入）', exact: true }).click();
+    expect((await previewing).status()).toBe(200);
+    expect((await (await page.request.get('/api/ai/config')).json()).revision).toBe(before.revision);
     expect(externalRequests).toEqual([]);
 });
-

@@ -15,7 +15,7 @@ const payload = { provider: 'openai', apiKey: 'fixture-request-key', baseUrl: 'h
 beforeEach(() => {
     vi.resetAllMocks(); vi.stubGlobal('fetch', mocks.fetch);
     mocks.session.mockResolvedValue({ user: { id: 'u1', role: 'admin' } });
-    mocks.user.mockResolvedValue({ id: 'u1', role: 'admin', isActive: true });
+    mocks.user.mockResolvedValue({ id: 'u1', role: 'admin', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false });
     mocks.fetch.mockResolvedValue(Response.json({ data: [{ id: 'demo', owned_by: 'Example' }] }));
     mocks.get.mockReturnValue({ openai: { instances: [{ id: 'one', name: 'One', apiKey: 'fixture-stored-key', baseUrl: payload.baseUrl, model: 'demo' }] }, gemini: { apiKey: 'fixture-gemini-key', baseUrl: '' } });
 });
@@ -31,7 +31,7 @@ describe('/api/ai/models POST', () => {
         expect((await route.POST(request(payload))).status).toBe(401);
         expect(mocks.fetch).not.toHaveBeenCalled();
     });
-    it.each([{ id: 'u1', role: 'user', isActive: true }, { id: 'u1', role: 'admin', isActive: false }, null])('checks live DB authorization: %j', async (user) => {
+    it.each([{ id: 'u1', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false }, { id: 'u1', role: 'admin', isActive: false }, null])('checks live DB authorization: %j', async (user) => {
         mocks.user.mockResolvedValue(user);
         expect((await route.POST(request(payload))).status).toBe(403);
         expect(mocks.fetch).not.toHaveBeenCalled();

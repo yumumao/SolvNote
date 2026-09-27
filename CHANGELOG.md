@@ -1,10 +1,20 @@
 # Version notes / 版本说明
 ## Unreleased · 2026-09-27
 
-- 文档同步用户系统设计口径：新注册默认为7天试用，管理员可选择7天、30天或永久；管理员手动建用户默认永久；到期全站禁止访问，满30天后才清理。注册码默认有效30天，管理员可续期或调整有效期，并可选择是否在注册页面自动显示当前可用注册码；公开注册、Turnstile、邀请码及账户管理功能尚未进入运行代码，当前不应视为已启用。
-- README中英区分AI配置导出的目标安全策略与当前运行状态：目标是默认关闭、仅部署环境变量明确开启时放行，但当前源码尚未实现该运行时开关，管理员导出接口仍可能可用；导入和无密钥格式模板保留。
-- Documentation records the user-system design policy: new registrations default to a seven-day trial; administrators may choose seven days, 30 days, or permanent; administrator-created accounts are permanent by default; expired accounts are blocked site-wide and purged only after 30 days. Invitation codes are designed to default to 30 days and may later be renewed or displayed in the registration box by administrators. Registration, Turnstile, invitations, and account expiry remain unimplemented; the legacy source still defaults to allowing registration, so public deployments must disable it explicitly until the new flow is accepted locally.
-- README files now distinguish the target AI-export policy from the running source: the target is disabled by default and requires an explicit deployment environment variable, but the current export endpoint is not guarded by that switch yet; import and an empty format template remain available or planned as documented.
+> 以下为用户系统源码变更。2026-09-27用户确认本地真实验证成功并授权推送GitHub；镜像发布、Zeabur升级与线上验收仍是独立步骤。User-system source changes; local real verification was confirmed and GitHub publication authorized on 2026-09-27. Image publication, Zeabur upgrades, and production acceptance remain separate steps.
+
+- 登录与注册均强制服务端Turnstile校验；缺配置、错误action/hostname或验证失败时拒绝。升级前必须先准备站点与服务端环境变量，无生产绕过开关。
+- 注册默认关闭；邀请码默认30天、1次，可续期/停用并选择是否在注册框公开显示。自注册默认7天试用，管理员可设7天/30天/永久；手建默认永久，已有账号期限不追溯修改。
+- 新增用户管理、一次性临时密码、强制改密、会话即时撤销与并发保护；到期禁止受保护页面/API，到期满30天分批清理，保留最后一个管理员恢复账号但不恢复访问权。
+- 站点AI采用新账号默认3项授权快照（可用项不足3项时全选），管理员可追加/撤销授权；用户可添加、编辑、导入本人私有AI。站点密钥不返回普通用户。
+- 所有角色默认禁用AI配置导出；仅部署环境变量`SOLVNOTE_ENABLE_AI_CONFIG_EXPORT=true`恢复管理员加密导出。保留导入与无密钥格式模板；站点导入预览确认、个人导入CAS隔离。
+- Docker构建上下文只放行公开AI格式模板，避免模板接口在镜像编译时缺文件；继续排除其余文档、私密配置和本地数据库。
+- Docker builds include only the public AI import-format template from the documentation tree, keeping private configuration and local databases excluded.
+- Both login and registration require server-validated Turnstile. Missing configuration or an invalid token/action/hostname fails closed; configure the site and server variables before upgrading. There is no production bypass.
+- Registration is closed by default. Invitations default to 30 days and one use, support renewal/deactivation and optional public autofill. Self-registration defaults to a seven-day trial; administrators can choose seven days, 30 days, or permanent. Administrator-created accounts default to permanent; existing accounts are unchanged.
+- Account management adds one-time temporary passwords, mandatory password changes, live session revocation and concurrent-write protection. Expired accounts lose protected site/API access and are purged in batches after 30 days, except the final administrator recovery record, which remains blocked.
+- New accounts receive a snapshot of three default site models (all eligible models when fewer than three exist). Administrators can grant/revoke additional access; users can edit/import their own private AI configuration without receiving site credentials.
+- AI export is disabled for every role by default. Only explicit `SOLVNOTE_ENABLE_AI_CONFIG_EXPORT=true` restores administrator-only encrypted export. Imports and a key-free template remain available, with preview/confirmation for site imports and isolated CAS writes for private imports.
 
 ## 2.0.0-yus.2 · 2026-09-26
 

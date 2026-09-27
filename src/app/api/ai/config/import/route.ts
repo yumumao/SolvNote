@@ -87,7 +87,7 @@ export async function POST(req: Request) {
         );
         if (!timingSafeEqual(expected, Buffer.from(body.previewToken, "hex")))
             throw Error("IMPORT_PREVIEW_INVALID");
-        const revision = await saveAIConfig(config, current.revision);
+        const revision = await saveAIConfig(config, current.revision, user);
         return NextResponse.json({ revision, config: redactConfig(config) }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
         // Expose only fixed diagnostics. Never serialize validators, DB/crypto
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
             response = NextResponse.json({ message: "IMPORT_ORIGIN_REJECTED" }, { status: 403 });
         } else if (publicCodes.has(code)) {
             response = NextResponse.json({ message: code }, { status: 400 });
-        } else if (code === "CONFIG_CONFLICT" || stage === "request") {
+        } else if (code === "CONFIG_CONFLICT" || code === "ADMIN_AUTHORIZATION_REVOKED" || code === "AI_ACCESS_REVOKED" || stage === "request") {
             response = safeError(error);
         } else {
             response = NextResponse.json({ message: stage === "storage" ? "IMPORT_STORAGE_UNAVAILABLE"

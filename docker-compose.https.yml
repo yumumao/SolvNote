@@ -1,6 +1,7 @@
 version: '3'
 
-# 内置 HTTPS 版本 - 无需额外容器
+# 内置HTTPS版本，先按README配置私有.env（含Turnstile）。
+# 自签证书只用于本地测试；真实验证仍需Cloudflare允许实际hostname。
 # 
 # 使用方法:
 #   局域网（自动生成证书）:
@@ -27,19 +28,22 @@ services:
       - "80:3000"    # HTTP（可选）
       - "443:443"    # HTTPS
     environment:
-      # === 必须配置（请修改） ===
-      # 替换为你的实际访问地址
-      - NEXTAUTH_URL=https://YOUR_IP_OR_DOMAIN
-      - NEXTAUTH_SECRET=your_secret_key_here
-      - AUTH_TRUST_HOST=true
-      
-      # === HTTPS 配置 ===
-      # 启用内置 HTTPS
+      # 从私有.env读取；也可使用docker compose --env-file .env.solvnote。
+      # 本分支登录/注册强制Turnstile，必须先在Cloudflare允许实际hostname。
+      - NEXTAUTH_URL=${NEXTAUTH_URL:?Set the canonical site URL}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?Set a strong persistent session secret}
+      - DATABASE_URL=file:/app/data/dev.db
+      - INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL:-admin@localhost}
+      # 仅新库必需，旧管理员不会被此变量重置。
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
+      - SOLVNOTE_TURNSTILE_SITE_KEY=${SOLVNOTE_TURNSTILE_SITE_KEY:?Set the Turnstile site key}
+      - SOLVNOTE_TURNSTILE_SECRET_KEY=${SOLVNOTE_TURNSTILE_SECRET_KEY:?Set the server-only Turnstile secret}
+      - SOLVNOTE_TURNSTILE_HOSTNAMES=${SOLVNOTE_TURNSTILE_HOSTNAMES:-}
+      - SOLVNOTE_ENABLE_AI_CONFIG_EXPORT=${SOLVNOTE_ENABLE_AI_CONFIG_EXPORT:-false}
+      - SOLVNOTE_TRUST_PROXY_HEADERS=${SOLVNOTE_TRUST_PROXY_HEADERS:-false}
       - HTTPS_ENABLED=true
-      # 证书域名/IP（自动生成证书时使用）
-      # 设置为你的 IP 或域名，如：192.168.1.100 或 notebook.example.com
-      - CERT_DOMAIN=YOUR_IP_OR_DOMAIN
-      
+      - CERT_DOMAIN=${CERT_DOMAIN:?Set the certificate hostname}
+
     volumes:
       - ./data:/app/data
       - ./config:/app/config

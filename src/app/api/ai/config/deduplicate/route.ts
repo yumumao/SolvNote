@@ -51,7 +51,7 @@ export async function POST(req: Request) {
         const expected = token(user.id, current.config, body.choices, current.revision, body.expires, body.nonce);
         if (!timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(body.previewToken, "hex"))) throw Error("INVALID_REQUEST");
         // Save is a CAS; concurrent changes and replay fail without overwriting.
-        const revision = await saveAIConfig(result.config, current.revision);
+        const revision = await saveAIConfig(result.config, current.revision, user);
         return NextResponse.json({ config: redactConfig(result.config), revision }, { headers });
     } catch (error) {
         const response = safeError(error);

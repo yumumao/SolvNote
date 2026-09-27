@@ -1,5 +1,8 @@
 # AI access, default models, and private user models Implementation Plan
 
+> 2026-09-27 publication update: implemented in an isolated worktree; the user confirmed real local verification and authorized GitHub publication. Source publication does not authorize a production migration, image release, or Zeabur restart. Both login and registration require Turnstile; registration and AI export remain opt-in policies. See `docs/user-management.md` for current deployment variables and single-canonical-domain requirements. Historical checkboxes below are not deployment acceptance evidence.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans (recommended). Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Let an administrator publish a controlled site AI catalog, select up to three defaults for new users, grant additional site models, and let each user add/edit only their own private AI connections.
