@@ -51,7 +51,7 @@ describe("login requires Turnstile even for ordinary existing credentials", () =
         expect(submitDisabled()).toBe(true); await submit(); expect(auth.signIn).not.toHaveBeenCalled();
         await solve(); expect(submitDisabled()).toBe(false);
         expect(renderWidget.mock.calls.at(-1)![1].action).toBe("login");
-        expect(host.querySelector<HTMLInputElement>('[name="password"]')!.minLength).toBeLessThan(15);
+        expect(host.querySelector<HTMLInputElement>('[name="password"]')!.minLength).toBeLessThan(8);
     });
     it.each([{ turnstileConfigured: false }, { turnstileSiteKey: "" }])("visibly blocks missing configuration (%#)", async config => {
         configure(config); await mount(<LoginPage />); expect(submitDisabled()).toBe(true);
@@ -120,13 +120,20 @@ describe("registration status, invitation, password and Turnstile contracts", ()
         await input("confirmPassword", "test-passphrase-long"); await solve("second-token"); api.post.mockRejectedValue({ data: { message: "Rejected" } }); await submit();
         expect(submitDisabled()).toBe(true); await submit(); expect(api.post).toHaveBeenCalledTimes(1);
     });
-    it.each(["x".repeat(14), "x".repeat(73), "中".repeat(25)])("enforces 15 characters and 72 UTF-8 bytes without submitting invalid passwords (%#)", async password => {
+    it.each(["x".repeat(7), "x".repeat(73), "中".repeat(25)])("enforces 8 characters and 72 UTF-8 bytes without submitting invalid passwords (%#)", async password => {
         await mount(<RegisterPage />); await registerFields(password); await solve(); await submit();
         expect(api.post).not.toHaveBeenCalled(); expect(submitDisabled()).toBe(true);
-        expect(host.textContent).toContain("72"); expect(host.querySelector<HTMLInputElement>('[name="password"]')?.minLength).toBe(15);
+        expect(host.textContent).toContain("72"); expect(host.querySelector<HTMLInputElement>('[name="password"]')?.minLength).toBe(8);
+    });
+    it.each(["abcdefgh", "12345678", "x".repeat(14)])("accepts passwords of 8 to 14 characters after verification (%#)", async password => {
+        await mount(<RegisterPage />); await registerFields(password); await solve(); await submit();
+        expect(api.post).toHaveBeenCalledWith("/api/register", expect.objectContaining({ password }));
+        expect(host.querySelector<HTMLInputElement>('[name="password"]')?.minLength).toBe(8);
+        expect(host.querySelector<HTMLInputElement>('[name="confirmPassword"]')?.minLength).toBe(8);
+        expect(host.textContent).toContain("at least 8 characters");
     });
     it("uses the same string length as the core schema and HTML minLength for supplementary Unicode", async () => {
-        await mount(<RegisterPage />); await registerFields("😀".repeat(7) + "x"); await solve(); await submit();
+        await mount(<RegisterPage />); await registerFields("😀".repeat(4)); await solve(); await submit();
         expect(api.post).toHaveBeenCalledTimes(1);
     });
     it("accepts a 72-byte multibyte passphrase without composition requirements", async () => {

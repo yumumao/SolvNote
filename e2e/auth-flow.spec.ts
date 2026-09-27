@@ -42,7 +42,7 @@ test('Registration defaults closed and reports no secret or displayed invite', a
     await page.goto('/register');
     await expect(page.getByRole('alert').filter({ hasText: /关闭|禁用|disabled/i })).toHaveCount(2);
     await expect(page.locator('button[type="submit"]')).toBeDisabled();
-    await expect(page.locator('input[name="password"]')).toHaveAttribute('minlength', '15');
+    await expect(page.locator('input[name="password"]')).toHaveAttribute('minlength', '8');
     const request = { email: 'e2e-register@example.invalid', name: 'E2E registration', password: process.env.INITIAL_ADMIN_PASSWORD! };
     const missing = await page.request.post('/api/register', { headers: { Origin: baseURL! }, data: request });
     expect(missing.status()).toBe(400);
@@ -80,5 +80,5 @@ test('A forced password-change session cannot bypass the live account flag', asy
     await page.goto('/');
     await expect(page).toHaveURL(/\/change-password$/);
     expect((await page.request.get('/api/user/ai-config')).status()).toBe(403);
-    await expect(page.locator('input[name="newPassword"]')).toHaveAttribute('minlength', '15');
+    await expect(page.locator('input[name="newPassword"]')).toHaveAttribute('minlength', '8');
 });

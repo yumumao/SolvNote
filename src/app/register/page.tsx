@@ -38,8 +38,8 @@ export default function RegisterPage() {
         ? "安全验证未配置或暂不可用，注册已禁用。请刷新重试或联系管理员。"
         : "Security verification is not configured or unavailable. Registration is disabled. Reload or contact the administrator.";
     const passwordHelp = language === "zh"
-        ? "密码至少15个字符，最多72个UTF-8字节（中文等字符会占多个字节），不要求特定字符组合。"
-        : "Use at least 15 characters and at most 72 UTF-8 bytes (some characters use multiple bytes). No character composition rules.";
+        ? "密码至少8个字符，最多72个UTF-8字节（中文等字符会占多个字节），不要求特定字符组合。"
+        : "Use at least 8 characters and at most 72 UTF-8 bytes (some characters use multiple bytes). No character composition rules.";
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -56,7 +56,7 @@ export default function RegisterPage() {
             if (!configured) { setError(unavailable); return; }
             if (!token) { setError(language === "zh" ? "请先完成安全验证。" : "Complete security verification first."); return; }
             if (password !== confirmPassword) { setError(t.auth?.register?.passwordMismatch || "Passwords do not match"); return; }
-            if (password.length < 15 || new TextEncoder().encode(password).length > 72) { setError(passwordHelp); return; }
+            if (password.length < 8 || new TextEncoder().encode(password).length > 72) { setError(passwordHelp); return; }
             if (status.inviteRequired && !inviteCode.trim()) { setError(language === "zh" ? "请输入邀请码。" : "Enter an invitation code."); return; }
             setLoading(true);
             await apiClient.post<unknown, RegistrationRequest>("/api/register", {
@@ -132,7 +132,7 @@ export default function RegisterPage() {
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
-                                    minLength={15}
+                                    minLength={8}
                                     className="pr-10"
                                 />
                                 <Button
@@ -164,7 +164,7 @@ export default function RegisterPage() {
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     required
-                                    minLength={15}
+                                    minLength={8}
                                     className="pr-10"
                                 />
                                 <Button

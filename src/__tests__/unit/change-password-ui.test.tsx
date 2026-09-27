@@ -36,16 +36,24 @@ describe("password change and revoked-session UI", () => {
         expect(host.querySelector<HTMLInputElement>('[name="currentPassword"]')?.value ?? "").toBe("");
     });
     it("never applies the new minimum to an old current password", async () => {
-        await mount(); expect(host.querySelector<HTMLInputElement>('[name="currentPassword"]')!.minLength).toBeLessThan(15);
-        expect(host.querySelector<HTMLInputElement>('[name="newPassword"]')!.minLength).toBe(15);
+        await mount(); expect(host.querySelector<HTMLInputElement>('[name="currentPassword"]')!.minLength).toBeLessThan(8);
+        expect(host.querySelector<HTMLInputElement>('[name="newPassword"]')!.minLength).toBe(8);
         expect(host.textContent).toContain("72"); await submit(); expect(post).toHaveBeenCalledTimes(1);
     });
-    it.each(["x".repeat(14), "x".repeat(73), "中".repeat(25)])("rejects invalid new-password lengths locally (%#)", async password => {
+    it.each(["x".repeat(7), "x".repeat(73), "中".repeat(25)])("rejects invalid new-password lengths locally (%#)", async password => {
         await mount(password); await submit(); expect(post).not.toHaveBeenCalled(); expect(signOut).not.toHaveBeenCalled();
         expect(host.querySelector('[role="alert"]')?.textContent).toBeTruthy();
     });
+    it.each(["abcdefgh", "12345678", "x".repeat(14)])("accepts an 8-to-14-character replacement and revokes the old session (%#)", async password => {
+        await mount(password);
+        expect(host.querySelector<HTMLInputElement>('[name="confirmPassword"]')?.minLength).toBe(8);
+        expect(host.textContent).toContain("at least 8 characters");
+        await submit();
+        expect(post).toHaveBeenCalledWith("/api/user/password", { currentPassword: "old", newPassword: password });
+        expect(signOut).toHaveBeenCalledTimes(1);
+    });
     it("matches the core schema and HTML string-length contract for supplementary Unicode", async () => {
-        await mount("😀".repeat(7) + "x"); await submit(); expect(post).toHaveBeenCalledTimes(1);
+        await mount("😀".repeat(4)); await submit(); expect(post).toHaveBeenCalledTimes(1);
     });
     it("accepts the 72-byte multibyte boundary without composition requirements", async () => {
         await mount("中".repeat(24)); await submit(); expect(post).toHaveBeenCalledTimes(1);

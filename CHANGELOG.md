@@ -1,5 +1,17 @@
 # Version notes / 版本说明
-## Unreleased · 2026-09-27
+## Unreleased · 2026-09-28
+
+- 核对区域的补充文字与原识图题设一起解题，不再被旧角标核对状态反复拦截；支持先保存再继续，仍对实际缺失条件、归属、版本冲突和调用预算作校验。
+- Human supplements are retained alongside the original transcription and passed to the solver as reviewed evidence. Saving does not invoke AI; replacing the image or the complete transcription clears superseded supplements.
+- 原图对照与完整识图转录默认展开，仍可收起；分步解答和步骤标题的Markdown粗体显示补齐。
+- Evidence panels open by default and remain collapsible. Step headings render in bold, including Markdown heading levels four through six.
+- 初次解题、独立复核和重新解答共用适龄解法策略；小学奥数优先有效的算术、辅助线及综合几何证明，不仅为计算方便改用三角函数数值或解析几何，正确性仍优先。
+- Solving and review share grade-appropriate method guidance, prioritizing accessible arithmetic and synthetic geometry for primary-school/Olympiad questions. Higher-level methods remain available when genuinely needed or explicitly requested; numerical agreement is not a proof.
+- 用户注册和改密最少8位，保留72个UTF-8字节上限；不改变首次部署管理员密码要求、旧密码登录兼容、Turnstile或AI配置导出限制。
+- Registration and password changes accept eight or more characters, retaining the 72-byte UTF-8 limit. Initial deployment credentials, legacy login compatibility, Turnstile and AI-export restrictions are unchanged.
+- 本批修复无需新增数据库迁移；源码、镜像发布与实际部署分别核验，不因源码更新宣称线上已升级。
+
+## 用户系统 / User management · 2026-09-27
 
 > 以下为用户系统源码变更。2026-09-27用户确认本地真实验证成功并授权推送GitHub；镜像发布、Zeabur升级与线上验收仍是独立步骤。User-system source changes; local real verification was confirmed and GitHub publication authorized on 2026-09-27. Image publication, Zeabur upgrades, and production acceptance remain separate steps.
 

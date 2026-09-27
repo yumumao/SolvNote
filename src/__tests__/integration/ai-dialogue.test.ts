@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
+import sharp from "sharp";
 const shared = vi.hoisted(() => ({ db: null as unknown as PrismaClient, send: vi.fn(), authId:"alice" as string|null }));
 vi.mock("@/lib/prisma",()=>({get prisma(){return shared.db;}}));
 vi.mock("@/lib/auth",()=>({authOptions:{}}));
@@ -324,5 +325,61 @@ describe.sequential("safe failure diagnostics survive the persistent worker",()=
   expect(c.state).toBe("answered");
   expect(c.steps.map(s=>s.state)).toEqual(["success","success"]);
   expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+});
+
+
+// Synthetic image metadata, SQLite and provider replies only.
+describe.sequential("supplemental text completes human evidence review",()=>{
+ async function awaitingGeometry(){
+  const geometry={regions:[],angles:[{label:"1",vertex:"Q",arms:["P","R"]}]};
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,geometry}))
+   .mockResolvedValueOnce(JSON.stringify({...transcript,geometry,uncertainties:["confirm the ray"]}));
+  const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
+  const id=await createConversation("alice",{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());
+  await processOne();expect((await view(id)).state).toBe("awaiting_user");return id;
+ }
+ it("continues with the supplement and original transcription instead of replacing the whole question",async()=>{
+  const id=await awaitingGeometry();await act(id,"continue",{text:"Angle 1 uses ray QS; retain other conditions."});await processOne();
+  const c=await view(id);expect(c.state).toBe("answered");expect(c.roundsUsed).toBe(1);expect(c.transcript?.text).toBe(transcript.text);
+  expect(c.userCorrectedTranscript).not.toBe(true);expect(c.transcriptClarifications).toEqual(["Angle 1 uses ray QS; retain other conditions."]);
+  expect(shared.send).toHaveBeenCalledTimes(3);expect(c.steps.map(s=>s.stage)).toEqual(["recognize","geometry_check","solve"]);
+  const sent=JSON.parse(shared.send.mock.calls[2][3]);expect(sent.transcription.text).toBe(transcript.text);
+  expect(sent.transcriptionClarifications).toEqual(c.transcriptClarifications);expect(sent.transcriptionAuthority).toBe("user_clarified");
+ });
+ it("saves without calling AI, survives restore, and deduplicates a retried action",async()=>{
+  const id=await awaitingGeometry(),revision=(await view(id)).revision,requestKey=key();
+  const action={kind:"save",revision,text:"first synthetic clarification"};
+  await actConversation("alice",id,action,requestKey);await actConversation("alice",id,action,requestKey);
+  await act(id,"save",{text:"second synthetic clarification"});
+  expect((await view(id)).transcriptClarifications).toEqual([action.text,"second synthetic clarification"]);
+  expect(shared.send).toHaveBeenCalledTimes(2);await act(id,"continue");await processOne();
+  expect((await view(id)).state).toBe("answered");expect(shared.send).toHaveBeenCalledTimes(3);
+ });
+ it("does not treat empty continuation as confirmation",async()=>{
+  const id=await awaitingGeometry();await act(id,"continue",{text:"   "});await processOne();
+  expect((await view(id)).state).toBe("awaiting_user");expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+ it("clears supplemental authority when replacing the source image",async()=>{
+  const id=await awaitingGeometry();await act(id,"save",{text:"old source clarification"});await act(id,"save",{imageBase64:image,text:"new source description"});
+  const c=await view(id);expect(c.transcript).toBeUndefined();expect(c.transcriptClarifications||[]).toEqual([]);
+ });
+ it("clears supplements when a complete revised statement replaces the transcript",async()=>{
+  const id=await awaitingGeometry();await act(id,"save",{text:"superseded clarification"});await act(id,"save",{correctedTranscript:"complete revised synthetic statement"});
+  const c=await view(id);expect(c.transcript?.text).toBe("complete revised synthetic statement");expect(c.userCorrectedTranscript).toBe(true);expect(c.transcriptClarifications||[]).toEqual([]);
+ });
+ it("preserves owner and revision checks",async()=>{
+  const id=await awaitingGeometry(),revision=(await view(id)).revision;
+  await expect(actConversation("bob",id,{kind:"save",revision,text:"foreign"},key())).rejects.toMatchObject({message:"NOT_FOUND"});
+  await act(id,"save",{text:"current"});
+  await expect(actConversation("alice",id,{kind:"continue",revision,text:"stale"},key())).rejects.toMatchObject({message:"DIALOGUE_CONFLICT"});
+ });
+ it("carries the account's elementary grade through solving and review",async()=>{
+  await shared.db.user.update({where:{id:"alice"},data:{educationStage:"primary",enrollmentYear:new Date().getFullYear()-4}});
+  try{
+   const id=await createConversation("alice",{questionText:"synthetic geometry",review:true},key());await processOne();
+   const c=await view(id);expect(c.input.gradeSemester).toMatch(/[四五]年级/);expect(c.state).toBe("answered");
+   for(const call of shared.send.mock.calls){expect(call[2]).toContain("小学奥数");expect(call[2]).toContain("sin/cos/tan");}
+  }finally{await shared.db.user.update({where:{id:"alice"},data:{educationStage:null,enrollmentYear:null}});}
  });
 });

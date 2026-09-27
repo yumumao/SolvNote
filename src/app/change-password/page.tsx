@@ -22,8 +22,8 @@ export default function ChangePasswordPage() {
     const [completed, setCompleted] = useState(false);
     const inFlight = useRef(false);
     const passwordHelp = zh
-        ? "新密码至少15个字符，最多72个UTF-8字节（中文等字符会占多个字节），不要求特定字符组合。"
-        : "Use at least 15 characters and at most 72 UTF-8 bytes (some characters use multiple bytes). No character composition rules.";
+        ? "新密码至少8个字符，最多72个UTF-8字节（中文等字符会占多个字节），不要求特定字符组合。"
+        : "Use at least 8 characters and at most 72 UTF-8 bytes (some characters use multiple bytes). No character composition rules.";
 
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -32,7 +32,7 @@ export default function ChangePasswordPage() {
         setError("");
         try {
             if (!currentPassword) { setError(zh ? "请输入当前密码。" : "Enter your current password."); return; }
-            if (newPassword.length < 15 || new TextEncoder().encode(newPassword).length > 72) { setError(passwordHelp); return; }
+            if (newPassword.length < 8 || new TextEncoder().encode(newPassword).length > 72) { setError(passwordHelp); return; }
             if (newPassword !== confirmPassword) { setError(zh ? "两次输入的新密码不一致。" : "New passwords do not match."); return; }
             setLoading(true);
             await apiClient.post<unknown>("/api/user/password", { currentPassword, newPassword });
@@ -72,12 +72,12 @@ export default function ChangePasswordPage() {
                         </div>
                         <div className="space-y-2">
                             <label htmlFor="newPassword" className="text-sm font-medium">{zh ? "新密码" : "New password"}</label>
-                            <Input id="newPassword" name="newPassword" type="password" autoComplete="new-password" aria-describedby="password-help" minLength={15} value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
+                            <Input id="newPassword" name="newPassword" type="password" autoComplete="new-password" aria-describedby="password-help" minLength={8} value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
                         </div>
                         <p id="password-help" className="text-sm text-muted-foreground">{passwordHelp}</p>
                         <div className="space-y-2">
                             <label htmlFor="confirmPassword" className="text-sm font-medium">{zh ? "确认新密码" : "Confirm new password"}</label>
-                            <Input id="confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" minLength={15} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required />
+                            <Input id="confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" minLength={8} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required />
                         </div>
                         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
                         <Button type="submit" className="w-full" disabled={loading}>

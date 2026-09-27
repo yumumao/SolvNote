@@ -37,7 +37,13 @@ export function gradeSemesterToGradeNumber(gradeSemester: string): 7 | 8 | 9 | 1
  */
 export function gradeSemesterToDisplayName(gradeSemester: string): string | null {
   if (!gradeSemester) return null;
-  const gs = gradeSemester;
+  const gs = gradeSemester.trim();
+  // Formats produced by calculateGrade(..., "en") use the same curriculum policy.
+  const english = gs.match(/^(?:(Junior High|Senior High)\s+)?Grade\s+([1-6])(?:\s*,.*)?$/i);
+  if (english && (!english[1] || Number(english[2]) <= 3)) {
+    const stage = !english[1] ? '小学' : english[1].toLowerCase() === 'junior high' ? '初中' : '高中';
+    return stage + '一二三四五六'[Number(english[2]) - 1] + '年级';
+  }
 
   // 小学
   const primaryMatch = gs.match(/primary[_\s]?(\d)/);
@@ -92,6 +98,12 @@ export function generateGradeInstruction(
   if (!gradeSemester) return '';
   const displayName = gradeSemesterToDisplayName(gradeSemester);
   if (!displayName) return '';
+  const primary = displayName.startsWith('小学');
+  const methodPolicy = language === 'en'
+    ? '\n[Grade-appropriate methods]\nChoose the least advanced sound method the student can understand, not the method with the shortest calculation. For plane geometry, first consider angle relations, auxiliary lines, rotations, areas, congruence and similarity. Explain any unfamiliar theorem and its applicability. An independent review must check both correctness and grade suitability, replacing an unnecessarily advanced solution with a valid accessible proof when available.\n' + (primary
+      ? 'For primary-school and elementary Olympiad problems, arithmetic and synthetic plane geometry are the default main solution. Explain congruence or similarity through corresponding sides, angles and proportions when needed. Do not default to sin/cos/tan, inverse-trigonometric numerical approximations, vectors, coordinates or analytic geometry merely because they are convenient. Approximate numerical agreement is not a proof. Use higher-level methods only when necessary for a correct solution or explicitly requested by the user, and explain the necessity and new concepts. Failure to find an elementary proof does not establish that none exists. Never fabricate a construction or suppress uncertainty.\n' : '')
+    : '\n【适龄解法选择与复核】\n选择最低必要知识的有效主解法，不以计算更短作为升级知识的理由。平面几何先考虑角度关系、辅助线、旋转、面积、全等或相似，交代对应条件、判定依据和构造目的。独立复核同时检查正确性与年级适配；存在有效的适龄证明时，将不必要的高阶解法改写为该证明，不只是认可数值结果。\n' + (primary
+      ? '小学及小学奥数默认以算术与平面几何作主解法；需要全等、相似时用对应边角、比例关系解释概念与判定，不假定学生已经学过。不能仅因计算方便或篇幅更短，默认用sin/cos/tan、反三角函数的近似数值、坐标、向量或解析几何替代可行的初等证明；近似数值吻合不等于严格证明。只有正确解题确实需要或用户明确要求时才使用高阶方法，先说明必要性和新增概念；暂未找到初等证明不等于已证明它不存在，不得硬凑辅助线或编造条件。\n' : '');
 
   if (language === 'en') {
     const level = displayName.match(/^(小学|初中|高中)([一二三四五六])年级$/);
@@ -101,10 +113,10 @@ export function generateGradeInstruction(
     const name = level
       ? `${stages[level[1]]} year ${'一二三四五六'.indexOf(level[2]) + 1}`
       : displayName;
-    return `\n[Grade preference]\nStudent level: ${name}. The grade is only an explanation preference, not a ceiling on valid methods. Correctness takes priority.\nPrefer valid methods familiar at the student's level. If current-grade methods cannot solve the problem correctly, use the necessary higher-level knowledge. Explain the new concepts, why they are needed, and each step in age-appropriate language.\n`;
+    return `\n[Grade preference]\nStudent level: ${name}. The grade is only an explanation preference, not a ceiling on valid methods. Correctness takes priority.\nPrefer valid methods familiar at the student's level. If current-grade methods cannot solve the problem correctly, use the necessary higher-level knowledge. Explain the new concepts, why they are needed, and each step in age-appropriate language.\n` + methodPolicy;
   }
 
-  return `\n【年级讲解偏好】\n学生年级：${displayName}。年级仅是讲解方式的偏好，不是解题方法的上限，正确性始终优先。\n优先使用学生熟悉的有效方法；若当前年级方法无法正确解题，必须使用必要的更高年级知识，并用适龄语言解释新增概念、使用原因和每一步推理。\n`;
+  return `\n【年级讲解偏好】\n学生年级：${displayName}。年级仅是讲解方式的偏好，不是解题方法的上限，正确性始终优先。\n优先使用学生熟悉的有效方法；若当前年级方法无法正确解题，必须使用必要的更高年级知识，并用适龄语言解释新增概念、使用原因和每一步推理。\n` + methodPolicy;
 }
 
 /**
