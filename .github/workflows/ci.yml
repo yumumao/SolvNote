@@ -88,8 +88,6 @@ jobs:
     timeout-minutes: 60
     env:
       SOLVNOTE_E2E_ISOLATED: '1'
-      SOLVNOTE_E2E_TEMP_DIR: ${{ runner.temp }}
-      DATABASE_URL: 'file:${{ runner.temp }}/solvnote-e2e-${{ github.run_id }}-${{ github.run_attempt }}.db'
       # Public, synthetic fixtures for this disposable DB; never deployment defaults.
       INITIAL_ADMIN_PASSWORD: 'e2e-only-admin-password-2026-fixture'
       INITIAL_ADMIN_EMAIL: 'admin@localhost'
@@ -101,6 +99,13 @@ jobs:
       SOLVNOTE_TURNSTILE_SITE_KEY: ''
       SOLVNOTE_TURNSTILE_SECRET_KEY: ''
     steps:
+      # runner context is unavailable in job-level env; initialize after allocation.
+      - name: Configure isolated E2E paths
+        shell: bash
+        run: |
+          echo "SOLVNOTE_E2E_TEMP_DIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=file:$RUNNER_TEMP/solvnote-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.db" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
