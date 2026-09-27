@@ -4,58 +4,45 @@ import { getAppConfig } from "../config";
 import { migrateLegacy } from "./legacy";
 import { parseConfig, type PortableConfig } from "./schema";
 import { protect, unprotect, masterKey } from "./vault";
-
-/** No-argument callers keep lazy migration; previews can opt into a read-only snapshot. */
-export async function loadAIConfig(options: { persist?: boolean } = {}) {
-    let row = await prisma.aiConfiguration.findUnique({
-        where: { id: "site" },
-    });
-    if (!row) {
-        const config = migrateLegacy(getAppConfig());
-        // Revision zero means no row exists, never a persisted revision. This
-        // branch must not create either a configuration row or a vault key.
-        if (options.persist === false) return { config, revision: 0 };
-        masterKey(true);
-        row = await prisma.aiConfiguration.upsert({
-            where: { id: "site" },
-            create: { id: "site", payload: protect(config) },
-            update: {},
-        });
-    }
-    return {
-        config: parseConfig(unprotect(row.payload)),
-        revision: row.revision,
-    };
+import { reconcileSiteModelAccess } from "../ai-access/reconcile";
+import { AIRequestError } from "../ai-access";
+import { assertAdminActor } from "../user-management/admin-actor";
+export type AiConfigActor={id:string;sessionVersion:number};
+async function requireConfigActor(tx:Prisma.TransactionClient,actor:AiConfigActor){
+    if(!Number.isSafeInteger(actor.sessionVersion) || actor.sessionVersion<0)throw new AIRequestError(403,"AI_ACCESS_REVOKED");
+    await assertAdminActor(tx,actor.id,actor.sessionVersion);
 }
-
-export async function saveAIConfig(
-    config: PortableConfig,
-    expectedRevision: number,
-) {
-    // Never generate a missing key here: first apply must use its preview's key.
-    const payload = protect(parseConfig(config));
-    if (expectedRevision === 0) {
-        try {
-            // A unique-key INSERT is the first-write CAS. Upsert would silently
-            // accept or overwrite a concurrent first apply / legacy migration.
-            await prisma.aiConfiguration.create({
-                data: { id: "site", revision: 1, payload },
-            });
-        } catch (error) {
-            if (
-                error instanceof Prisma.PrismaClientKnownRequestError &&
-                error.code === "P2002"
-            ) {
-                throw Error("CONFIG_CONFLICT");
-            }
-            throw error;
-        }
-        return 1;
-    }
-    const result = await prisma.aiConfiguration.updateMany({
-        where: { id: "site", revision: expectedRevision },
-        data: { payload, revision: { increment: 1 } },
+/** Read-only previews never create metadata, configuration rows or keys. */
+export async function loadAIConfig(options:{persist?:boolean;actor?:AiConfigActor}={}){
+    const row=await prisma.aiConfiguration.findUnique({where:{id:"site"}});
+    const config=row?parseConfig(unprotect(row.payload)):migrateLegacy(getAppConfig());
+    if(options.persist===false)return {config,revision:row?.revision??0};
+    return prisma.$transaction(async tx=>{
+        if(options.actor)await requireConfigActor(tx,options.actor);
+        if(!row)masterKey(true);
+        const current=await tx.aiConfiguration.upsert({where:{id:"site"},create:{id:"site",payload:protect(config)},update:{}});
+        const saved=parseConfig(unprotect(current.payload));
+        await reconcileSiteModelAccess(tx,saved);
+        return {config:saved,revision:current.revision};
     });
-    if (result.count !== 1) throw Error("CONFIG_CONFLICT");
-    return expectedRevision + 1;
+}
+export async function saveAIConfig(config:PortableConfig,expectedRevision:number,actor?:AiConfigActor){
+    const parsed=parseConfig(config), payload=protect(parsed);
+    try{
+        await prisma.$transaction(async tx=>{
+            if(actor)await requireConfigActor(tx,actor);
+            const previous=await tx.aiConfiguration.findUnique({where:{id:"site"}});
+            if(previous)await reconcileSiteModelAccess(tx,parseConfig(unprotect(previous.payload)));
+            if(expectedRevision===0)await tx.aiConfiguration.create({data:{id:"site",revision:1,payload}});
+            else{
+                const result=await tx.aiConfiguration.updateMany({where:{id:"site",revision:expectedRevision},data:{payload,revision:{increment:1}}});
+                if(result.count!==1)throw Error("CONFIG_CONFLICT");
+            }
+            await reconcileSiteModelAccess(tx,parsed,true);
+        });
+    }catch(error){
+        if(error instanceof Prisma.PrismaClientKnownRequestError && error.code==="P2002")throw Error("CONFIG_CONFLICT");
+        throw error;
+    }
+    return expectedRevision+1;
 }

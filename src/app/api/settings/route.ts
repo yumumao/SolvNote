@@ -14,7 +14,6 @@ const instance = z.object({
 }).strict();
 const settingsPatch = z.object({
     aiProvider: z.enum(['openai', 'gemini', 'azure']).optional(),
-    allowRegistration: z.boolean().optional(),
     openai: z.object({
         instances: z.array(instance).max(10).refine(values => new Set(values.map(value => value.id)).size === values.length).optional(),
         activeInstanceId: z.string().max(128).optional(),
@@ -42,7 +41,7 @@ function displayUrl(value?: string): string {
 
 function publicSettings(config: AppConfig) {
     // Ordinary users need timeouts, not provider endpoints or administrator prompts.
-    return { allowRegistration: config.allowRegistration !== false, timeouts: { analyze: config.timeouts?.analyze ?? 180000 } };
+    return { timeouts: { analyze: config.timeouts?.analyze ?? 180000 } };
 }
 function adminSettings(config: AppConfig) {
     // Explicit projection prevents future or imported config fields becoming public by accident.
@@ -88,6 +87,8 @@ export async function POST(req: Request) {
             const migrated = await prisma.aiConfiguration.findUnique({ where: { id: 'site' }, select: { id: true } });
             if (migrated) throw new AIRequestError(409, 'AI configuration is managed at /admin/ai');
         }
+        if (input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'allowRegistration'))
+            throw new AIRequestError(409, 'Registration policy is managed at /api/admin/registration');
         const parsed = settingsPatch.safeParse(input);
         if (!parsed.success) throw new AIRequestError(400, 'Invalid settings');
         const body = parsed.data;

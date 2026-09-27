@@ -8,6 +8,9 @@ import { JobInputSchema } from "../ai-jobs/schema";
 import { calculateGrade } from "../grade-calculator";
 import { DEFAULT_ACTIVE_MS, DEFAULT_ATTEMPTS, MAX_ACTIVE_MS, MAX_ATTEMPTS, MAX_ROUNDS, type DialoguePayload, type DialogueView, type StepMetadata } from "./types";
 export function dialogueError(code: string, status = 409): never { throw new AIRequestError(status, code); }
+import { requireLiveAiUser, requireTxAiUser } from "../ai-access/account";
+import { assertAiInputAllowed, assertModelsAllowedForUser } from "../ai-access/effective-config";
+import { assertConversationModelAccess } from "../ai-access/runtime";
 type Tx = Prisma.TransactionClient;
 const requestKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
 const ActionSchema = z.object({
@@ -19,6 +22,7 @@ const ActionSchema = z.object({
     amount: z.number().int().min(1).max(20).optional(),
 }).strict();
 async function account(tx: Tx, userId: string, admin = false) {
+    await requireTxAiUser(tx,userId);
     const user = await tx.user.findUnique({where:{id:userId}});
     if (!user?.isActive || (admin && user.role !== "admin")) dialogueError("FORBIDDEN",403);
     return user;
@@ -49,6 +53,7 @@ export async function updateDefaults(userId: string, raw: unknown) {
 export async function createConversation(userId: string, raw: unknown, key: string) {
     requestKey.parse(key);
     const input = JobInputSchema.parse(raw);
+    await assertAiInputAllowed(userId,input);
     // The immutable submitted input is stored encrypted for idempotency, before defaults enrichment.
     const submitted = protect(input);
     return prisma.$transaction(async tx => {
@@ -80,6 +85,12 @@ export async function createConversation(userId: string, raw: unknown, key: stri
 }
 export async function actConversation(userId:string,id:string,raw:unknown,key:string) {
     requestKey.parse(key);const action=ActionSchema.parse(raw);
+    await requireLiveAiUser(userId);
+    // Cancellation is always permitted; all content-changing/resuming actions revalidate prior contributors.
+    if(action.kind!=="cancel"){
+        const effective=await assertConversationModelAccess(userId,id);
+        if(!effective.config.models.length)dialogueError("AI_MODEL_ACCESS_REVOKED",403);
+    }
     return prisma.$transaction(async tx=>{
         const user=await account(tx,userId);
         const c=await tx.aiConversation.findFirst({where:{id,userId}});
@@ -153,8 +164,10 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
 }
 export async function readConversation(userId:string,id:string,includeImages=false):Promise<DialogueView|null>{
     const c=await prisma.aiConversation.findFirst({where:{id,userId}});if(!c)return null;
-    const p=unprotect<DialoguePayload>(c.payload);
+    await requireLiveAiUser(userId);
     const attempts=await prisma.aiAttempt.findMany({where:{job:{conversationId:id}},orderBy:[{startedAt:"asc"},{id:"asc"}]});
+    await assertModelsAllowedForUser(userId,attempts.map(a=>a.modelId));
+    const p=unprotect<DialoguePayload>(c.payload);
     const job=c.activeJobId?await prisma.aiJob.findUnique({where:{id:c.activeJobId},select:{errorCode:true}}):null;
     const input={...p.input};if(!includeImages){delete input.imageBase64;delete input.originalImageBase64;}
     const user=await prisma.user.findUnique({where:{id:userId},select:{role:true,isActive:true}});

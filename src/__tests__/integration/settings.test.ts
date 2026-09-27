@@ -10,7 +10,7 @@ vi.mock('@/lib/logger', () => ({ createLogger: () => ({ error: mocks.log, info: 
 import { GET, POST } from '@/app/api/settings/route';
 
 const fixture = () => ({
-    aiProvider: 'openai', allowRegistration: true,
+    aiProvider: 'openai',
     openai: { activeInstanceId: 'one', instances: [{ id: 'one', name: 'One', apiKey: 'fixture-openai-secret', baseUrl: 'https://api.example.com/v1', model: 'demo' }] },
     gemini: { apiKey: 'fixture-gemini-secret', baseUrl: '', model: 'demo' },
     azure: { apiKey: 'fixture-azure-secret', endpoint: 'https://azure.example.com', deploymentName: 'demo' },
@@ -23,7 +23,7 @@ function post(body: unknown, headers: Record<string, string> = {}) {
 beforeEach(() => {
     vi.resetAllMocks();
     mocks.session.mockResolvedValue({ user: { id: 'u1', role: 'admin' } });
-    mocks.user.mockResolvedValue({ id: 'u1', role: 'admin', isActive: true });
+    mocks.user.mockResolvedValue({ id: 'u1', role: 'admin', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false });
     mocks.configRow.mockResolvedValue(null);
     mocks.get.mockImplementation(fixture);
     mocks.update.mockImplementation((patch) => ({ ...fixture(), ...patch }));
@@ -41,9 +41,9 @@ describe('/api/settings security', () => {
         expect(mocks.get).not.toHaveBeenCalled();
     });
     it('uses current DB role and only exposes the minimal nonadmin subset', async () => {
-        mocks.user.mockResolvedValue({ id: 'u1', role: 'user', isActive: true });
+        mocks.user.mockResolvedValue({ id: 'u1', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false });
         const response = await GET(new Request('https://app.example.com/api/settings', { method: 'GET' }));
-        expect(await response.json()).toEqual({ allowRegistration: true, timeouts: { analyze: 180000 } });
+        expect(await response.json()).toEqual({ timeouts: { analyze: 180000 } });
         expect(response.headers.get('cache-control')).toContain('no-store');
     });
     it('masks every provider key and excludes unknown settings for admins without mutating the config', async () => {
@@ -59,8 +59,8 @@ describe('/api/settings security', () => {
         expect(response.headers.get('cache-control')).toContain('no-store');
     });
     it('blocks a stale JWT admin from writing', async () => {
-        mocks.user.mockResolvedValue({ id: 'u1', role: 'user', isActive: true });
-        expect((await POST(post({ allowRegistration: false }))).status).toBe(403);
+        mocks.user.mockResolvedValue({ id: 'u1', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false });
+        expect((await POST(post({ timeouts: { analyze: 60000 } }))).status).toBe(403);
         expect(mocks.update).not.toHaveBeenCalled();
     });
     it.each<Record<string, string>>([{ Origin: 'https://evil.example.com' }, { 'Sec-Fetch-Site': 'cross-site' }, { 'Sec-Fetch-Site': 'same-site' }])('blocks cross-origin writes: %j', async (headers) => {
@@ -80,9 +80,9 @@ describe('/api/settings security', () => {
         expect(JSON.stringify(await response.json())).not.toContain('fixture-');
     });
     it('accepts partial preference writes', async () => {
-        const response = await POST(post({ prompts: { similar: 'new' }, timeouts: { analyze: 60000 }, allowRegistration: false }));
+        const response = await POST(post({ prompts: { similar: 'new' }, timeouts: { analyze: 60000 } }));
         expect(response.status).toBe(200);
-        expect(mocks.update).toHaveBeenCalledWith({ prompts: { similar: 'new' }, timeouts: { analyze: 60000 }, allowRegistration: false });
+        expect(mocks.update).toHaveBeenCalledWith({ prompts: { similar: 'new' }, timeouts: { analyze: 60000 } });
     });
     it('does not save mask literals for an unknown instance', async () => {
         const instance = { ...fixture().openai.instances[0], id: 'unknown', apiKey: '********' };
@@ -91,7 +91,7 @@ describe('/api/settings security', () => {
     });
     it.each([
         { proxy: 'https://evil.example.com' }, { gemini: { headers: { authorization: 'danger' } } },
-        { timeouts: { analyze: -1 } }, { allowRegistration: 'false' },
+        { timeouts: { analyze: -1 } },
         { openai: { instances: [fixture().openai.instances[0], fixture().openai.instances[0]] } },
         { prompts: { analyze: 'x'.repeat(20000) } },
     ])('rejects unknown keys, invalid types and oversized fields case %#', async (body) => {
@@ -113,7 +113,7 @@ describe('/api/settings security', () => {
     });
     it('does not expose or log backend error details', async () => {
         mocks.update.mockImplementation(() => { throw new Error('fixture-secret-backend-detail'); });
-        const response = await POST(post({ allowRegistration: false }));
+        const response = await POST(post({ timeouts: { analyze: 60000 } }));
         expect(response.status).toBe(500);
         expect(JSON.stringify(await response.json())).not.toContain('fixture-secret');
         expect(JSON.stringify(mocks.log.mock.calls)).not.toContain('fixture-secret');
@@ -131,7 +131,7 @@ describe('/api/settings hostile configuration regression', () => {
         expect(JSON.stringify(data)).not.toContain('fixture-');
     });
     it.each(['text/plain', 'application/x-www-form-urlencoded'])('rejects CSRF-friendly content types: %s', async (type) => {
-        expect((await POST(post({ allowRegistration: false }, { 'Content-Type': type }))).status).toBe(415);
+        expect((await POST(post({ timeouts: { analyze: 60000 } }, { 'Content-Type': type }))).status).toBe(415);
         expect(mocks.update).not.toHaveBeenCalled();
     });
     it('rejects missing Azure/Gemini keys behind a mask', async () => {
@@ -163,7 +163,7 @@ describe('/api/settings after portable AI configuration migration', () => {
     ])('rejects every legacy AI patch as a whole without reading legacy config: case %#', async legacy => {
         const response = await POST(post({
             ...legacy, prompts: { similar: 'must not be partially saved' },
-            timeouts: { analyze: 60000 }, allowRegistration: false,
+            timeouts: { analyze: 60000 },
         }));
         expect(response.status).toBe(409);
         expect(await response.json()).toEqual({ error: 'AI configuration is managed at /admin/ai' });
@@ -186,8 +186,8 @@ describe('/api/settings after portable AI configuration migration', () => {
     it.each([
         { prompts: { analyze: 'updated prompt', similar: '' } },
         { timeouts: { analyze: 60000 } },
-        { allowRegistration: false },
-        { prompts: { similar: 'new' }, timeouts: { analyze: 60000 }, allowRegistration: true },
+        { timeouts: { analyze: 60000 } },
+        { prompts: { similar: 'new' }, timeouts: { analyze: 60000 } },
     ])('continues to save non-AI preferences without requiring a migration lookup: case %#', async patch => {
         const response = await POST(post(patch));
         expect(response.status).toBe(200);
@@ -220,7 +220,7 @@ describe('/api/settings after portable AI configuration migration', () => {
     it.each(['anonymous', 'ordinary', 'inactive'] as const)(
         'checks %s authorization before querying the migration state', async role => {
             if (role === 'anonymous') mocks.session.mockResolvedValue(null);
-            else mocks.user.mockResolvedValue({ id: 'u1', role: role === 'ordinary' ? 'user' : 'admin', isActive: role !== 'inactive' });
+            else mocks.user.mockResolvedValue({ id: 'u1', role: role === 'ordinary' ? 'user' : 'admin', isActive: role !== 'inactive', expiresAt: null, sessionVersion: 0, mustChangePassword: false });
             expect((await POST(post({ aiProvider: 'openai' }))).status).toBe(role === 'anonymous' ? 401 : 403);
             expect(mocks.configRow).not.toHaveBeenCalled();
             expect(mocks.get).not.toHaveBeenCalled();
@@ -240,3 +240,5 @@ describe('/api/settings after portable AI configuration migration', () => {
         expect(mocks.update).not.toHaveBeenCalled();
     });
 });
+
+it("rejects the retired registration settings writer even for admins",async()=>{expect((await POST(post({allowRegistration:true}))).status).toBe(409);expect(mocks.update).not.toHaveBeenCalled();});

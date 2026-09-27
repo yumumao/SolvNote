@@ -7,6 +7,9 @@ import { failureState } from "../ai-jobs/store";
 import { AIError } from "../ai/transport";
 import { advanceDialogue } from "./pipeline";
 import type { DialoguePayload } from "./types";
+import { requireTxAiUser } from "../ai-access/account";
+import { assertConversationModelAccess } from "../ai-access/runtime";
+import { loadEffectiveAIConfigInTx } from "../ai-access/effective-config";
 type Tx = Prisma.TransactionClient;
 export async function recoverDialogue(tx: Tx, job: AiJob, now: Date) {
     if (!job.conversationId) return;
@@ -21,8 +24,12 @@ async function guard(tx: Tx, job: AiJob, owner: string) {
     const now=new Date();
     const current=await tx.aiJob.findUnique({where:{id:job.id}});
     if(current?.cancelRequested)throw new AIError("AI_CANCELLED");
-    const account=await tx.user.findUnique({where:{id:job.userId},select:{isActive:true}});
-    if(!account?.isActive)throw new AIError("AI_USER_DISABLED");
+    try {
+        await requireTxAiUser(tx,job.userId);
+        const effective=await loadEffectiveAIConfigInTx(tx,job.userId);
+        const attempts=await tx.aiAttempt.findMany({where:{job:{conversationId:job.conversationId!,userId:job.userId}},select:{modelId:true}});
+        if(attempts.some(a=>!effective.config.models.some(m=>m.id===a.modelId)))throw Error();
+    }catch{throw new AIError("AI_ACCESS_REVOKED");}
     const lease=await tx.aiWorkerLease.findFirst({where:{id:"site",owner,until:{gt:now}}});
     if(!lease || current?.state!=="running" || current.leaseOwner!==owner || !current.leaseUntil || current.leaseUntil<=now)
         throw new AIError("AI_ACCEPTANCE_UNKNOWN");
@@ -36,6 +43,7 @@ export async function executeDialogueJob(job: AiJob, owner: string, controller: 
     let completed=false;
     const elapsed=()=>Math.min(remaining,Math.max(0,Date.now()-start));
     try {
+        try { await assertConversationModelAccess(job.userId,c.id); } catch { throw new AIError("AI_ACCESS_REVOKED"); }
         if(c.state!=="active")throw new AIError("AI_CANCELLED");
         if(!remaining || c.roundAttempts>=c.attemptLimit)throw new AIError("AI_BUDGET_EXHAUSTED");
         const payload=unprotect<DialoguePayload>(c.payload);
@@ -44,7 +52,7 @@ export async function executeDialogueJob(job: AiJob, owner: string, controller: 
             const changed=await tx.aiConversation.updateMany({where:{id:c.id,activeJobId:job.id,state:"active"},data:{payload:protect(payload),revision:{increment:1}}});
             if(changed.count!==1)throw new AIError("AI_ACCEPTANCE_UNKNOWN");
         });
-        const result=await aiRun.run({jobId:job.id,conversationId:c.id,round:c.roundsUsed+1,leaseOwner:owner,signal:controller.signal,
+        const result=await aiRun.run({userId:job.userId,jobId:job.id,conversationId:c.id,round:c.roundsUsed+1,leaseOwner:owner,signal:controller.signal,
             deadline:start+remaining,attempts:c.roundAttempts,startingAttempts:c.roundAttempts,maxAttempts:c.attemptLimit},
             ()=>advanceDialogue(payload,checkpoint));
         completed=true;
@@ -65,7 +73,7 @@ export async function executeDialogueJob(job: AiJob, owner: string, controller: 
         const code=completed ? "AI_ACCEPTANCE_UNKNOWN" : error instanceof AIError?error.code:"AI_INTERNAL_ERROR";
         await prisma.$transaction(async tx=>{
             const current=await tx.aiJob.findUnique({where:{id:job.id}});
-            const state=failureState(code,!!current?.cancelRequested || code==="AI_CANCELLED" || code==="AI_USER_DISABLED");
+            const state=failureState(code,!!current?.cancelRequested || code==="AI_CANCELLED" || code==="AI_USER_DISABLED" || code==="AI_ACCESS_REVOKED");
             const changed=await tx.aiJob.updateMany({where:{id:job.id,state:"running",leaseOwner:owner},data:{state,errorCode:code,leaseOwner:null,leaseUntil:null}});
             if(!changed.count)return;
             await tx.aiAttempt.updateMany({where:{jobId:job.id,state:"running"},data:{state:state==="cancelled"?"cancelled":"unknown",errorCode:code,finishedAt:new Date()}});

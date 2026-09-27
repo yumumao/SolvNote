@@ -3,7 +3,8 @@ import { diagnosticMessage } from "./diagnostics";
 import { protect } from "../ai-config/vault";
 import type { AIModel, AIProvider } from "../ai-config/schema";
 import { createHash } from "node:crypto";
-import { loadAIConfig } from "../ai-config/store";
+import { runtimeConfig, assertRunContributors } from "../ai-access/runtime";
+import { loadEffectiveAIConfigInTx } from "../ai-access/effective-config";
 import { prisma } from "../prisma";
 import { sendAI, AIError } from "./transport";
 import { sendImageEdit } from "../ai-drawing/image-edit";
@@ -32,13 +33,15 @@ async function registerAttempt(run: AIRun, model: AIModel, provider: AIProvider,
         const now = new Date();
         const job = await tx.aiJob.findUnique({ where: { id: run.jobId } });
         if (job?.cancelRequested) throw new AIError("AI_CANCELLED");
-        const account =
-            job &&
-            (await tx.user.findUnique({
-                where: { id: job.userId },
-                select: { isActive: true },
-            }));
-        if (job && !account?.isActive) throw new AIError("AI_USER_DISABLED");
+        if (!job || !run.userId || job.userId !== run.userId) throw new AIError("AI_ACCESS_REVOKED");
+        try {
+            const live = await loadEffectiveAIConfigInTx(tx, run.userId);
+            if ((job.conversationId || undefined) !== run.conversationId) throw Error();
+            await assertRunContributors(run, live.config, tx);
+            const m = live.config.models.find(m => m.id === model.id);
+            const p = live.config.providers.find(p => p.id === m?.providerId);
+            if (!m || !p || JSON.stringify(m) !== JSON.stringify(model) || JSON.stringify(p) !== JSON.stringify(provider)) throw Error();
+        } catch { throw new AIError("AI_ACCESS_REVOKED"); }
         const lease = await tx.aiWorkerLease.findFirst({
             where: { id: "site", owner: run.leaseOwner, until: { gt: now } },
         });
@@ -110,11 +113,12 @@ export async function callChain<T>(
             attempts: 0,
             maxAttempts: 3,
         } as AIRun);
-    const config = run.config || (run.config = (await loadAIConfig()).config);
+    const config = await runtimeConfig(run);
     const kind = options.role ? (options.role === "recognize" ? "vision" : "text") : image ? "vision" : "text";
     let last = new AIError(
         kind === "vision" ? "AI_NO_VISION_MODEL" : "AI_NO_TEXT_MODEL",
     );
+    if(options.modelId && !config.models.some(m=>m.id===options.modelId))throw new AIError("AI_ACCESS_REVOKED");
     if(options.imageEdit && (!options.modelId || !image))throw new AIError("AI_IMAGE_EDIT_UNSUPPORTED");
     const ids=options.imageEdit ? [options.modelId!] : config.chains[kind].filter(id => !options.modelId || options.modelId === id);
     for (const id of ids) {
@@ -122,8 +126,10 @@ export async function callChain<T>(
         if (run.signal.aborted) throw new AIError("AI_CANCELLED");
         if (run.attempts >= run.maxAttempts || Date.now() >= run.deadline)
             throw new AIError("AI_BUDGET_EXHAUSTED");
-        const model = config.models.find((m) => m.id === id);
-        const provider = config.providers.find(
+        const fresh = await runtimeConfig(run);
+        const model = fresh.models.find((m) => m.id === id);
+        if (!model) throw new AIError("AI_ACCESS_REVOKED");
+        const provider = fresh.providers.find(
             (p) => p.id === model?.providerId,
         );
         if (
@@ -147,6 +153,7 @@ export async function callChain<T>(
         const attempt = await registerAttempt(run, model, provider, attachedImage, options);
         if (run.signal.aborted) throw new AIError("AI_CANCELLED");
         run.attempts++;
+        run.usedModelIds = [...new Set([...(run.usedModelIds || []), id])];
         const signal = AbortSignal.any([
             run.signal,
             AbortSignal.timeout(
@@ -187,6 +194,7 @@ export async function callChain<T>(
             if (options.imageEdit || !e.fallback) throw e;
             continue;
         }
+        await runtimeConfig(run);
         run.lastModel = id;
         if (attempt) await finishAttempt(run, attempt.id, "success");
         return value;

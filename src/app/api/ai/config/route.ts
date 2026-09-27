@@ -26,10 +26,10 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
     try {
-        await requireAdmin(req);
+        const user = await requireAdmin(req);
         assertSameOrigin(req);
         const body = await readJSON(req);
-        const current = await loadAIConfig();
+        const current = await loadAIConfig({ actor: user });
         const config = parseConfig(body.config);
         for (const provider of config.providers) {
             if (provider.apiKey !== "********") continue;
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
             provider.apiKey = original.apiKey;
         }
         if (!Number.isInteger(body.revision)) throw Error("INVALID_REQUEST");
-        const revision = await saveAIConfig(config, body.revision);
+        const revision = await saveAIConfig(config, body.revision, user);
         return NextResponse.json({ config: redactConfig(config), revision });
     } catch (error) {
         return safeError(error);

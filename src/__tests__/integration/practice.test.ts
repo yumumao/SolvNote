@@ -84,7 +84,7 @@ describe('/api/practice', () => {
         }
         beforeEach(() => {
             mocks.mockPrismaUser.findUnique.mockReset().mockResolvedValue({
-                id: 'user-123', role: 'user', isActive: true,
+                id: 'user-123', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false,
                 educationStage: null, enrollmentYear: null,
             });
             mocks.mockPrismaErrorItem.findFirst.mockReset().mockResolvedValue(mockErrorItem);
@@ -108,7 +108,7 @@ describe('/api/practice', () => {
                 }), 'practice-request-1');
             expect(mocks.mockAIService.generateSimilarQuestion).not.toHaveBeenCalled();
             expect(mocks.mockPrismaUser.findUnique).toHaveBeenCalledWith({
-                where: { id: 'user-123' }, select: { id: true, role: true, isActive: true },
+                where: { id: 'user-123' }, select: { id: true, role: true, isActive: true, expiresAt: true, sessionVersion: true, mustChangePassword: true, revision: true, aiAccessInitialized: true },
             });
         });
 

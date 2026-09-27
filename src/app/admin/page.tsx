@@ -384,6 +384,7 @@ export default function AdminPage() {
                 </div>
             </div>
 
+            <a href="/admin/users" className="inline-block rounded-md border px-4 py-2 text-sm underline mr-3">用户与注册管理 / Users &amp; registration</a>
             <a href="/admin/announcements" className="inline-block rounded-md border px-4 py-2 text-sm underline">{t.broadcast?.manage || "Announcement management"}</a>
 
             {/* Overview Cards */}

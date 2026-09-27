@@ -4,6 +4,7 @@ vi.mock("next-auth/jwt", () => ({ getToken: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ createLogger: () => ({ debug: vi.fn(), warn: vi.fn(), error: vi.fn() }) }));
 import { getToken } from "next-auth/jwt";
 import { middleware } from "@/middleware";
+vi.mock("@/lib/user-management/live-session",()=>({getLiveUser:async(id:string)=>({id,role:id.includes("admin")?"admin":"user",isActive:true,sessionVersion:0,mustChangePassword:false}),isSessionCurrent:()=>true}));
 
 const canonical = "https://notebook.example.com";
 beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("NEXTAUTH_URL", canonical); });
@@ -66,7 +67,7 @@ describe("canonical notebook redirects", () => {
     });
     it("does not change an authenticated admin's page or redirect an unauthenticated login", async () => {
         vi.mocked(getToken).mockResolvedValue({ id: "synthetic-admin", role: "admin" });
-        expect(await middleware(new NextRequest(canonical + "/admin/ai"))).toBeUndefined();
+        expect(await middleware(new NextRequest(canonical + "/admin/ai"))).toBeNull();
         vi.mocked(getToken).mockResolvedValue(null);
         expect(await middleware(new NextRequest(canonical + "/login"))).toBeNull();
     });
@@ -84,13 +85,13 @@ it("does not loop when Next normalizes the URL but the browser Host is already c
     vi.stubEnv("NEXTAUTH_URL", "http://127.0.0.1:4317");
     vi.mocked(getToken).mockResolvedValue({ id: "synthetic-admin", role: "admin" });
     const response = await middleware(new NextRequest("http://localhost:4317/admin/ai", { headers: { Host: "127.0.0.1:4317" } }));
-    expect(response).toBeUndefined();
+    expect(response).toBeNull();
 });
 it("never rewrites POSTs or mistakes production proxy hosts for local aliases", async () => {
     vi.mocked(getToken).mockResolvedValue({ id: "synthetic-admin", role: "admin" });
-    expect(await middleware(new NextRequest("http://localhost:3000/admin/ai", { headers: { Host: "localhost:3000" } }))).toBeUndefined();
+    expect(await middleware(new NextRequest("http://localhost:3000/admin/ai", { headers: { Host: "localhost:3000" } }))).toBeNull();
     vi.stubEnv("NEXTAUTH_URL", "http://127.0.0.1:4317");
-    expect(await middleware(new NextRequest("http://localhost:4317/admin/ai", { method: "POST", headers: { Host: "localhost:4317" } }))).toBeUndefined();
+    expect(await middleware(new NextRequest("http://localhost:4317/admin/ai", { method: "POST", headers: { Host: "localhost:4317" } }))).toBeNull();
 });
 
 it("keeps local-alias navigation pinned to canonical even for protocol-relative paths and HTML-like queries", async () => {

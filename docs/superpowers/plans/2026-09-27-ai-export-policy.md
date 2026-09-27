@@ -1,5 +1,8 @@
 # AI configuration export policy and import template Implementation Plan
 
+> 2026-09-27 publication update: implemented in an isolated worktree; the user confirmed real local verification and authorized GitHub publication. Source publication does not authorize a production migration, image release, or Zeabur restart. Both login and registration require Turnstile; registration and AI export remain opt-in policies. See `docs/user-management.md` for current deployment variables and single-canonical-domain requirements. Historical checkboxes below are not deployment acceptance evidence.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans (recommended). Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Keep AI configuration import and editing available while disabling configuration export by default, with export possible only when the deployment explicitly enables one environment variable.

@@ -1,140 +1,84 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './session-fixture';
 
-// Seed and login must use the same explicit test-only credential; no weak fallback.
-const adminPassword = process.env.INITIAL_ADMIN_PASSWORD ?? '';
-if (adminPassword.length < 12) {
-    throw new Error('E2E requires INITIAL_ADMIN_PASSWORD with at least 12 characters');
-}
+test('Unauthenticated pages and APIs remain protected', async ({ page }) => {
+    await page.goto('/notebooks');
+    await expect(page).toHaveURL(/\/login\?callbackUrl=/);
+    expect((await page.request.get('/api/admin/users')).status()).toBe(401);
+    expect((await page.request.get('/api/user/ai-config')).status()).toBe(401);
+});
 
-test.describe('Authentication Flow', () => {
-
-    test('Registration and fallback Login', async ({ page }) => {
-        // 增加测试超时时间
-        test.setTimeout(60000);
-
-        const user = {
-            name: 'jason',
-            email: 'jason@qq.com',
-            password: '123456',
-            stage: 'junior_high',
-            year: '2024' // 使用当前年份确保有效
-        };
-
-        // --- Try Registration ---
-        await page.goto('/register');
-
-        // Wait for page to be ready (bypassing loading state)
-        // "注册" or "Create an Account"
-        await expect(page.locator('body')).toContainText(/注册|Register/, { timeout: 15000 });
-
-        // Selectors by NAME (Robust now)
-        await page.locator('input[name="name"]').fill(user.name);
-        await page.locator('input[name="email"]').fill(user.email);
-        await page.locator('input[name="password"]').fill(user.password);
-        await page.locator('input[name="confirmPassword"]').fill(user.password);
-
-        // Education Stage
-        await page.locator('select[name="educationStage"]').selectOption(user.stage);
-
-        // Enrollment Year
-        await page.locator('input[name="enrollmentYear"]').fill(user.year);
-
-        // Submit
-        await page.locator('button[type="submit"]').click();
-
-        // --- Handle Result ---
-        try {
-            // Error: "该邮箱已被注册"
-            const errorLocator = page.locator('.text-red-500');
-
-            // Race: Error text OR redirect to login
-            await Promise.race([
-                expect(errorLocator).toBeVisible({ timeout: 5000 }),
-                page.waitForURL('**/login', { timeout: 5000 })
-            ]);
-
-            if (await errorLocator.isVisible()) {
-                console.log('Registration error visible, going to login.');
-                await page.goto('/login');
-            }
-        } catch (e) {
-            if (page.url().includes('/login')) {
-                console.log('Redirected to login page automatically.');
-            } else {
-                console.log('State unclear, forcing login.');
-                await page.goto('/login');
-            }
-        }
-
-        // --- Login Flow ---
-        // Ensure we are on login page
-        await page.waitForURL('**/login');
-
-        await page.locator('input[name="email"]').fill(user.email);
-        await page.locator('input[name="password"]').fill(user.password);
-
-        await page.locator('button[type="submit"]').click();
-
-        // --- Verify Success ---
-        // Wait for redirect to home
-        await page.waitForURL('/', { timeout: 10000 });
-
-        // Verify Content
-        await expect(page.locator('body')).toContainText(user.name);
-
-        // --- Logout User ---
-        await page.locator('button[title*="Logout"], button[title*="退出"]').click();
-        await page.waitForURL('**/login');
-
-        // --- Login as Admin ---
-        await page.locator('input[name="email"]').fill('admin@localhost');
-        await page.locator('input[name="password"]').fill(adminPassword);
-        await page.locator('button[type="submit"]').click();
-
-        // Verify Admin Login and Home Page
-        await page.waitForURL('**/');
-
-        // --- Go to Settings > User Management ---
-        // Open Settings (Button with gear icon, sr-only text "Settings" or "设置")
-        await page.getByRole('button').filter({ has: page.locator('svg.lucide-settings') }).click();
-
-        // Wait for Dialog
-        await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
-
-        // Click "User Management" / "用户管理" Tab
-        await page.getByRole('tab', { name: /User Management|用户管理/ }).click();
-
-        // 等待用户列表加载
-        await page.waitForTimeout(1000);
-
-        // --- Delete User 'jason' ---
-        // Find row with 'jason@qq.com'
-        const userRow = page.locator('tr').filter({ hasText: user.email });
-
-        // 使用更长的超时时间等待用户行出现
-        await expect(userRow).toBeVisible({ timeout: 10000 });
-
-        // Setup dialog handler for delete confirmation
-        page.once('dialog', async dialog => {
-            console.log(`Delete User Dialog: ${dialog.message()}`);
-            await dialog.accept();
+test('Login without Turnstile fails closed even with the correct seeded password', async ({ page, context, baseURL }) => {
+    await page.goto('/login');
+    await expect(page.getByRole('alert').filter({ hasText: /验证未配置|verification is not configured/i })).toBeVisible();
+    await page.locator('input[name="email"]').fill(process.env.INITIAL_ADMIN_EMAIL || 'admin@localhost');
+    await page.locator('input[name="password"]').fill(process.env.INITIAL_ADMIN_PASSWORD!);
+    await expect(page.locator('button[type="submit"]')).toBeDisabled();
+    // Bypass ONLY the browser form, not server authentication: valid credentials still fail.
+    for (const token of [undefined, '']) {
+        const csrf = await page.request.get('/api/auth/csrf');
+        expect(csrf.status()).toBe(200);
+        const { csrfToken } = await csrf.json();
+        const response = await page.request.post('/api/auth/callback/credentials', {
+            headers: { Origin: baseURL! },
+            form: { csrfToken, email: process.env.INITIAL_ADMIN_EMAIL || 'admin@localhost',
+                password: process.env.INITIAL_ADMIN_PASSWORD!, callbackUrl: baseURL!, json: 'true',
+                ...(token === undefined ? {} : { turnstileToken: token }) },
         });
+        expect(response.status()).toBe(401);
+        expect(new URL((await response.json()).url).searchParams.get('error')).toBe('CredentialsSignin');
+        expect((await context.cookies()).some(cookie => cookie.name === 'next-auth.session-token')).toBe(false);
+        const session = await page.request.get('/api/auth/session');
+        expect((await session.json()).user).toBeUndefined();
+    }
+});
 
-        // Click Delete button in that row (Trash icon)
-        // The button has title "Delete" or "删除"
-        await userRow.getByRole('button', { name: /Delete|删除/ }).click();
+test('Registration defaults closed and reports no secret or displayed invite', async ({ page, baseURL }) => {
+    const status = await page.request.get('/api/registration/status');
+    expect(status.status()).toBe(200);
+    const body = await status.json();
+    expect(body).toEqual({ enabled: false, inviteRequired: false, inviteCode: null,
+        turnstileSiteKey: '', turnstileConfigured: false });
+    expect(await (await page.request.get('/api/register/status')).json()).toEqual({ ...body, allowRegistration: false });
+    await page.goto('/register');
+    await expect(page.getByRole('alert').filter({ hasText: /关闭|禁用|disabled/i })).toHaveCount(2);
+    await expect(page.locator('button[type="submit"]')).toBeDisabled();
+    await expect(page.locator('input[name="password"]')).toHaveAttribute('minlength', '15');
+    const request = { email: 'e2e-register@example.invalid', name: 'E2E registration', password: process.env.INITIAL_ADMIN_PASSWORD! };
+    const missing = await page.request.post('/api/register', { headers: { Origin: baseURL! }, data: request });
+    expect(missing.status()).toBe(400);
+    const disabled = await page.request.post('/api/register', { headers: { Origin: baseURL! }, data: { ...request, turnstileToken: 'synthetic-invalid-token' } });
+    expect(disabled.status()).toBe(403);
+    expect(await disabled.json()).toEqual({ error: 'REGISTRATION_DISABLED' });
+});
 
-        // Verify user is gone
-        await expect(page.locator('tr').filter({ hasText: user.email })).not.toBeVisible({ timeout: 5000 });
-
-        // --- Logout Admin ---
-        // Close dialog first
-        await page.keyboard.press('Escape');
-        await expect(page.getByRole('dialog')).not.toBeVisible();
-
-        // Click Logout
-        await page.locator('button[title*="Logout"], button[title*="退出"]').click();
-        await page.waitForURL('**/login');
-
+test('Admin cannot enable registration when Turnstile is unconfigured', async ({ page, signInAs, baseURL }) => {
+    await signInAs();
+    const policy = await (await page.request.get('/api/admin/registration')).json();
+    const response = await page.request.patch('/api/admin/registration', {
+        headers: { Origin: baseURL! }, data: { revision: policy.revision, enabled: true },
     });
+    expect(response.status()).toBe(503);
+    expect(await response.json()).toEqual({ error: 'TURNSTILE_NOT_CONFIGURED' });
+    expect((await (await page.request.get('/api/registration/status')).json()).enabled).toBe(false);
+});
+
+test('Test JWT uses the live sessionVersion and is rejected after revocation', async ({ page, signInAs, member, db }) => {
+    await signInAs(member.id);
+    const session = await (await page.request.get('/api/auth/session')).json();
+    expect(session.user.id).toBe(member.id);
+    await page.goto('/notebooks');
+    await expect(page).toHaveURL(/\/notebooks$/);
+    await db.user.update({ where: { id: member.id }, data: { sessionVersion: { increment: 1 } } });
+    expect((await page.request.get('/api/user/ai-config')).status()).toBe(401);
+    await page.reload();
+    await expect(page).toHaveURL(/\/login\?callbackUrl=/);
+});
+
+test('A forced password-change session cannot bypass the live account flag', async ({ page, signInAs, member, db }) => {
+    await db.user.update({ where: { id: member.id }, data: { mustChangePassword: true } });
+    await signInAs(member.id);
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/change-password$/);
+    expect((await page.request.get('/api/user/ai-config')).status()).toBe(403);
+    await expect(page.locator('input[name="newPassword"]')).toHaveAttribute('minlength', '15');
 });

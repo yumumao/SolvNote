@@ -3,6 +3,7 @@ import { getToken } from "next-auth/jwt";
 import type { NextRequest } from "next/server";
 import { createLogger } from "@/lib/logger";
 import { canonicalSiteOrigin } from "@/lib/site-origin";
+import { getLiveUser, isSessionCurrent } from "@/lib/user-management/live-session";
 
 const logger = createLogger('middleware');
 
@@ -51,66 +52,48 @@ export async function middleware(req: NextRequest) {
             return new NextResponse("Site URL configuration unavailable", { status: 503, headers: { "Cache-Control": "no-store" } });
         }
     }
-    // Debug logging for middleware
-    logger.debug({ method: req.method, path: req.nextUrl.pathname }, 'Processing request');
-
+    const path = req.nextUrl.pathname;
+    const isApi = path.startsWith("/api/");
+    const publicPaths = new Set(["/api/register", "/api/register/status", "/api/registration/status",
+        "/api/ai/config/template", "/favicon.ico", "/icon.svg", "/apple-icon.png"]);
+    if (publicPaths.has(path) || path.startsWith("/api/auth/") || path.startsWith("/icons/"))
+        return NextResponse.next();
     try {
-        const token = await getToken({
-            req,
-            secret: process.env.NEXTAUTH_SECRET,
-            cookieName: "next-auth.session-token", // Explicitly look for the standardized cookie
-        });
-
-        const isAuth = !!token;
-        const isAuthPage = req.nextUrl.pathname.startsWith("/login") || req.nextUrl.pathname.startsWith("/register");
-        const isAdminPage = req.nextUrl.pathname.startsWith("/admin");
-
-        logger.debug({
-            path: req.nextUrl.pathname,
-            isAuth,
-            isAuthPage,
-            hasToken: !!token,
-            cookies: req.cookies.getAll().map(c => c.name)
-        }, 'Auth status');
-
+        const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: "next-auth.session-token" });
+        const current = token && typeof token.id === "string" ? await getLiveUser(token.id) : null;
+        const user = current && token && isSessionCurrent(current, token) ? current : null;
+        const isAuthPage = path === "/login" || path === "/register";
         if (isAuthPage) {
-            if (isAuth) {
-                logger.debug('Redirecting authenticated user to /');
-                return redirectToSite("/", req);
-            }
-            return null;
+            if (!user) return null;
+            return redirectToSite(user.mustChangePassword ? "/change-password" : "/", req);
         }
-
-        if (!isAuth) {
-            let from = req.nextUrl.pathname;
-            if (req.nextUrl.search) {
-                from += req.nextUrl.search;
-            }
-
-            logger.debug({ callbackUrl: from }, 'Redirecting unauthenticated user to login');
-            return redirectToSite(`/login?callbackUrl=${encodeURIComponent(from)}`, req);
+        if (!user) {
+            if (isApi) return NextResponse.json({ error: "Authentication required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+            return redirectToSite(`/login?callbackUrl=${encodeURIComponent(path + req.nextUrl.search)}`, req);
         }
-
-        // Admin route protection: only allow users with admin role
-        if (isAdminPage && token?.role !== "admin") {
-            logger.warn({ userId: token?.id, path: req.nextUrl.pathname }, 'Non-admin user attempting to access admin area');
+        // A shared boundary also covers legacy cookie-authenticated write routes.
+        if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+            const site = req.headers.get("sec-fetch-site");
+            const origin = req.headers.get("origin");
+            if ((site !== null && site !== "same-origin" && site !== "none") ||
+                (origin !== null && origin !== canonicalSiteOrigin(req.url)))
+                return NextResponse.json({ error: "Cross-origin request denied" }, { status: 403, headers: { "Cache-Control": "no-store" } });
+        }
+        if (user.mustChangePassword && path !== "/change-password" && path !== "/api/user/password") {
+            if (isApi) return NextResponse.json({ error: "Password change required" }, { status: 403, headers: { "Cache-Control": "no-store" } });
+            return redirectToSite("/change-password", req);
+        }
+        if ((path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/admin/")) && user.role !== "admin") {
+            if (isApi) return NextResponse.json({ error: "Administrator access required" }, { status: 403, headers: { "Cache-Control": "no-store" } });
             return redirectToSite("/", req);
         }
-    } catch (e) {
-        logger.error({ error: e }, 'Error processing token');
-        return NextResponse.next();
+        return null;
+    } catch {
+        logger.error("Authentication boundary unavailable");
+        return NextResponse.json({ error: "Authentication temporarily unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });
     }
 }
-
 export const config = {
-    matcher: [
-        /*
-         * Match all request paths except for the ones starting with:
-         * - api (API routes)
-         * - _next/static (static files)
-         * - _next/image (image optimization files)
-         * - favicon.ico (favicon file)
-         */
-        "/((?!api|_next/static|_next/image|favicon.ico).*)",
-    ],
+    runtime: "nodejs",
+    matcher: ["/((?!_next/static/).*)"],
 };

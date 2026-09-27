@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Settings2 } from "lucide-react";
+import { AIAccessPanel } from "@/components/ai-access-panel";
 import { AIConfigExport } from "@/components/ai-config-export";
 import { AIOriginStatus } from "@/components/ai-origin-status";
 import { AIConfigDeduplicate } from "@/components/ai-config-deduplicate";
@@ -45,6 +46,7 @@ function ModelDetails({ model, children }: { model: AIModel; children: ReactNode
 export default function AIManagement() {
     const [config, setConfig] = useState<PortableConfig>(empty);
     const [revision, setRevision] = useState(0);
+    const [exportEnabled, setExportEnabled] = useState(false);
     const [message, setMessage] = useState("加载中…");
     const [busy, setBusy] = useState(false);
     const [testing, setTesting] = useState<string | null>(null);
@@ -56,8 +58,12 @@ export default function AIManagement() {
     const [order, setOrder] = useState<string[] | null>(null);
     const [openConnection, setOpenConnection] = useState<string | null>(null);
     const [importOpen, setImportOpen] = useState(false);
+    const [accessOpen, setAccessOpen] = useState(false);
     const [envelope, setEnvelope] = useState<unknown>();
     const [password, setPassword] = useState("");
+    // This selects UI affordances only. The server validates the full portable schema.
+    const plaintextTemplate = !!envelope && typeof envelope === "object" &&
+        "version" in envelope && envelope.version === 1 && !("format" in envelope);
     const [mode, setMode] = useState("merge");
     const [preview, setPreview] = useState<{ config: PortableConfig; revision: number; expires: number; previewToken: string } | null>(null);
     const fileSequence = useRef(0);
@@ -74,6 +80,9 @@ export default function AIManagement() {
                 acceptConfig(r.config, r.revision); setLoaded(true);
                 setMessage("配置仅管理员可见。密钥由服务端加密保存，星号表示保持原值。");
             }).catch(() => { if (active) setMessage("无法读取：请确认以启用的管理员账户登录。"); });
+        apiClient.get<{ exportEnabled?: unknown } | null>("/api/ai/config/export")
+            .then((r) => { if (active) setExportEnabled(r?.exportEnabled === true); })
+            .catch(() => { if (active) setExportEnabled(false); });
         return () => { active = false; };
     }, []);
     useEffect(() => {
@@ -144,10 +153,10 @@ export default function AIManagement() {
         importInFlight.current = true; setBusy(true);
         try {
             const r = await apiClient.post<{ config: PortableConfig; revision: number; expires: number; previewToken: string }>("/api/ai/config/import", {
-                envelope, password, mode, action,
+                envelope, password: plaintextTemplate ? "" : password, mode, action,
                 ...(action === "apply" ? { revision: preview?.revision, expires: preview?.expires, previewToken: preview?.previewToken } : {}),
             });
-            if (action === "preview") { setPreview(r); setMessage("预览已解密但尚未写入，请确认连接、模型和顺序。"); }
+            if (action === "preview") { setPreview(r); setMessage("预览已校验但尚未写入，请确认连接、模型和顺序。"); }
             else {
                 acceptConfig(r.config, r.revision); setPreview(null); setPassword(""); setEnvelope(undefined); setImportOpen(false);
                 setMessage("导入完成，原有非AI设置不变。");
@@ -183,7 +192,8 @@ export default function AIManagement() {
         <header className="flex flex-wrap items-start justify-between gap-3">
             <div><h1 className="text-2xl font-bold">AI设置</h1><p className="text-sm text-muted-foreground mt-1">先添加连接，再添加这把Key可用的模型。</p></div>
             <div className="flex flex-wrap gap-2">
-                <AIConfigExport disabled={busy || !loaded || dirty} revision={revision} />
+                <AIConfigExport disabled={busy || !loaded || dirty} revision={revision} exportEnabled={exportEnabled} />
+                <a className={buttonStyle} href="/api/ai/config/template" download="solvnote-ai-config.template.json" title="静态示例，不含已保存配置；在本地填写后导入并预览">下载导入模板</a>
                 <AIConfigDeduplicate disabled={busy || !loaded || dirty} onApplied={(c, r) => { acceptConfig(c, r); setMessage("已应用合并，调用顺序已更新。密钥仍由服务端加密保存。"); }} />
                 <Dialog open={importOpen} onOpenChange={(open) => {
                     if (importInFlight.current) return;
@@ -193,23 +203,26 @@ export default function AIManagement() {
                 }}>
                     <DialogTrigger asChild><button className={buttonStyle} disabled={busy || !loaded}>导入配置</button></DialogTrigger>
                     <DialogContent className="max-h-[85vh] overflow-y-auto max-w-2xl">
-                        <DialogHeader><DialogTitle>导入加密AI配置</DialogTitle><DialogDescription>兼容ScanDex导出文件，先预览再写入；仅管理员可操作。</DialogDescription></DialogHeader>
+                        <DialogHeader><DialogTitle>导入AI配置</DialogTitle><DialogDescription>兼容ScanDex加密导出文件与明文JSON模板，先校验并预览再写入；仅管理员可操作。</DialogDescription></DialogHeader>
                         <fieldset disabled={busy} className="space-y-3 min-w-0">
                             <p className="text-sm">合并时同ID使用导入值；替换会移除现有AI配置，不影响题目和账户。未保存的编辑不参与导入。</p>
+                            <p className="text-sm">模板不含真实密钥。在本地填写HTTPS地址、模型和密钥后导入；明文模板填写后含敏感信息，请勿公开分享，仅向可信的HTTPS本站提交。示例连接和模型默认停用，确认设置后再启用。</p>
                             <input aria-label="加密配置文件" type="file" accept=".json" className="w-full" onChange={async (e) => {
                                 const sequence = ++fileSequence.current;
-                                setPreview(null); setEnvelope(undefined);
+                                setPreview(null); setEnvelope(undefined); setPassword("");
                                 const f = e.target.files?.[0]; if (!f) return;
                                 if (f.size > 1024 * 1024) { setMessage("文件不能超过1MiB"); return; }
                                 try {
                                     const data: unknown = JSON.parse(await f.text());
                                     if (sequence !== fileSequence.current) return;
-                                    setEnvelope(data); setMessage("文件已选择，输入口令后预览。");
+                                    setEnvelope(data);
+                                    const isTemplate = !!data && typeof data === "object" && "version" in data && data.version === 1 && !("format" in data);
+                                    setMessage(isTemplate ? "明文模板已选择，无需口令；先校验并预览，不会直接保存。" : "文件已选择，输入口令后预览。");
                                 } catch { if (sequence === fileSequence.current) setMessage("文件不是有效JSON"); }
                             }} />
-                            <label className="block">导出口令<input className={inputStyle} type="password" autoComplete="off" value={password} onChange={(e) => { setPassword(e.target.value); setPreview(null); }} placeholder="独立导出口令（至少12个字符）" /></label>
+                            {!plaintextTemplate && <label className="block">导出口令<input className={inputStyle} type="password" autoComplete="off" value={password} onChange={(e) => { setPassword(e.target.value); setPreview(null); }} placeholder="独立导出口令（至少12个字符）" /></label>}
                             <label className="block">导入方式<select className={inputStyle} value={mode} onChange={(e) => { setMode(e.target.value); setPreview(null); }}><option value="merge">合并</option><option value="replace">替换全部AI配置</option></select></label>
-                            <button className={buttonStyle} disabled={!envelope || password.length < 12} onClick={() => importing("preview")}>解密并预览（不写入）</button>
+                            <button className={buttonStyle} disabled={!envelope || (!plaintextTemplate && password.length < 12)} onClick={() => importing("preview")}>{plaintextTemplate ? "预览模板（不写入）" : "解密并预览（不写入）"}</button>
                             {preview && <div className="space-y-3"><ConfigSummary config={preview.config} /><button className={buttonStyle} onClick={() => importing("apply")}>确认{mode === "replace" ? "替换" : "合并"}导入</button></div>}
                         </fieldset>
                         <p role="status" className="text-sm">{message}</p>
@@ -303,6 +316,11 @@ export default function AIManagement() {
         <AIDialogueSettings/>
         <AIDrawingSettings/>
         <p className="text-xs text-muted-foreground">年级只影响讲解难度，正确解题优先；需要时使用更高年级知识并解释。同题会话先做忠实转录，再按解题顺序调用；图片只发送给支持读图的模型。</p>
+        <details className="rounded border p-4" onToggle={event => { if (event.currentTarget.open) setAccessOpen(true); }}>
+            <summary className="cursor-pointer font-semibold">站点模型授权与新用户默认AI</summary>
+            <p className="my-3 text-sm text-muted-foreground">先保存连接与模型，再配置默认3项和用户可用范围。更多个人授权也可从用户管理进入。</p>
+            {accessOpen && <AIAccessPanel />}
+        </details>
         <aside aria-label="AI设置保存栏" className="fixed bottom-0 inset-x-0 z-40 border-t bg-background/95 shadow-lg backdrop-blur pb-[env(safe-area-inset-bottom)]">
             <div className="max-w-4xl mx-auto flex items-center gap-3 p-3 sm:px-6">
                 <p role="status" className="text-sm flex-1 min-w-0 break-words">{message}{dirty && " · 有未保存修改"}</p>
