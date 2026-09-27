@@ -12,7 +12,7 @@ export function dialogueContext(p: DialoguePayload) {
     const context = JSON.stringify({
         question: p.input.questionText, subject: p.input.subject,
         transcription: p.transcript, questionsToCheck: p.questions,
-        ...(p.userCorrectedTranscript ? {transcriptionAuthority:"user_corrected"} : {}),
+        ...(p.transcriptClarifications?.length ? {transcriptionAuthority:"user_clarified",transcriptionClarifications:p.transcriptClarifications} : p.userCorrectedTranscript ? {transcriptionAuthority:"user_corrected"} : {}),
         imageContext: { sourceImageAvailable: !!p.input.imageBase64, rereadsUsed: p.rereads, rereadLimit: 1 },
         messages: p.messages.map(m => ({ kind: m.kind, text: m.text, round: m.round })),
     });
@@ -38,11 +38,12 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
     }
     let detailImages:string[]=[];
     const geometry=p.transcript?.geometry;
-    if(image && geometry && !p.userCorrectedTranscript){
+    const humanReviewed=p.userCorrectedTranscript || !!p.transcriptClarifications?.length;
+    if(image && geometry && !humanReviewed){
         const regions=[...geometry.regions,...geometry.angles.flatMap(a=>a.region?[a.region]:[])];
         detailImages=await detailCrops(rereadImage!,regions);
         if(geometry.angles.length && !p.geometryChecked){
-            if(p.geometryCheckStarted || p.rereads>=1)return wait(["关键角标尚未核对完成，请在识图题设中纠正后继续，避免重复发送同一核对请求。"]);
+            if(p.geometryCheckStarted || p.rereads>=1)return wait(["关键角标尚未核对完成，请补充具体角标说明或修订题设后继续，避免重复发送同一核对请求。"]);
             p.geometryCheckStarted=true;p.rereads++;
             await checkpoint();
             const checked=await callChain(GEOMETRY_CHECK_PROMPT,JSON.stringify({question:p.input.questionText,labelsToLocate:geometry.angles.map(a=>a.label),humanMessages:p.messages.filter(m=>m.kind==="question" || m.kind==="clarification").map(m=>m.text)}),rereadImage,
@@ -72,7 +73,7 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
         // keyword guess or an unbounded cycle of expensive requests.
         const needsImageCheck = decision.status === "needs_visual_check" ||
             (decision.status === "needs_user" && decision.reason !== "missing_source" && decision.reason !== "user_choice");
-        if (!needsImageCheck || !image || p.rereads >= 1 || p.userCorrectedTranscript) return decision;
+        if (!needsImageCheck || !image || p.rereads >= 1 || humanReviewed) return decision;
         const modelId = review ? run.lastModel : p.solverId;
         p.questions = decision.questions;
         p.rereads++;

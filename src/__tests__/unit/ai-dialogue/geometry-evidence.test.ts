@@ -7,11 +7,11 @@ import { advanceDialogue, dialogueContext } from "@/lib/ai-dialogue/pipeline";
 import { aiRun } from "@/lib/ai-jobs/context";
 import { JobInputSchema } from "@/lib/ai-jobs/schema";
 import { TranscriptSchema } from "@/lib/ai-dialogue/protocol";
-import type { DialoguePayload } from "@/lib/ai-dialogue/types";
+import type { DialoguePayload, Transcript } from "@/lib/ai-dialogue/types";
 const rect={x:0.2,y:0.2,width:0.5,height:0.5};
-const wrong={label:"1",vertex:"Y",arms:["X","Z"],region:rect};
-const correct={...wrong,arms:["X","W"]};
-const transcript={text:"synthetic numbered angle",facts:[],uncertainties:[],missingInformation:[],geometry:{regions:[rect],angles:[wrong]}};
+const wrong={label:"1",vertex:"Y",arms:["X","Z"] as [string,string],region:rect};
+const correct={...wrong,arms:["X","W"] as [string,string]};
+const transcript:Transcript={text:"synthetic numbered angle",facts:[],uncertainties:[],missingInformation:[],geometry:{regions:[rect],angles:[wrong]}};
 const fixed={...transcript,geometry:{regions:[rect],angles:[correct]}};
 const solved={status:"solved",result:{questionText:"synthetic corrected problem",answerText:"synthetic answer",analysis:"synthetic proof",subject:"数学",knowledgePoints:[]}};
 async function payload():Promise<DialoguePayload>{const b=await sharp({create:{width:300,height:240,channels:3,background:"white"}}).png().toBuffer();return {input:JobInputSchema.parse({questionText:"synthetic",imageBase64:`data:image/png;base64,${b.toString("base64")}`}),messages:[],questions:[],rereads:0};}
@@ -39,4 +39,26 @@ it("uses the original image when optional coordinates fail, and still independen
  expect(chain.mock.calls[1][4].detailImages).toEqual([]);
  expect(p.geometryChecked).toBe(true);
  expect(p.transcript?.geometry?.angles[0].arms).toEqual(correct.arms);
+});
+
+
+describe("human supplements confirm existing transcription",()=>{
+ it("sends the original transcription plus supplements straight to solving after an unresolved check",async()=>{
+  const p=await payload();p.transcript={...transcript,uncertainties:["which ray?"]};p.rereads=1;p.geometryCheckStarted=true;
+  p.transcriptClarifications=["The ray is YW; retain the other conditions."];
+  replies([solved]);expect((await run(p)).state).toBe("answered");expect(chain.mock.calls.map(c=>c[4].stage)).toEqual(["solve"]);
+  const context=JSON.parse(chain.mock.calls[0][1]);expect(context.transcription.text).toBe(transcript.text);
+  expect(context.transcriptionClarifications).toEqual(p.transcriptClarifications);expect(context.transcriptionAuthority).toBe("user_clarified");
+  expect(p.geometryChecked).not.toBe(true);expect(p.rereads).toBe(1);
+ });
+ it("still asks a specific question if the supplement is insufficient",async()=>{
+  const p=await payload();p.transcript=transcript;p.transcriptClarifications=["Use the marked arc."];
+  replies([{status:"needs_visual_check",questions:["Which endpoint is hidden?"]}]);
+  expect((await run(p)).state).toBe("awaiting_user");expect(p.questions).toEqual(["Which endpoint is hidden?"]);
+  expect(chain).toHaveBeenCalledTimes(1);expect(p.transcript).toBe(transcript);expect(p.rereads).toBe(0);
+ });
+ it("retains the bounded geometry guard when no supplement was supplied",async()=>{
+  const p=await payload();p.transcript=transcript;p.geometryCheckStarted=true;p.rereads=1;
+  expect((await run(p)).state).toBe("awaiting_user");expect(chain).not.toHaveBeenCalled();
+ });
 });

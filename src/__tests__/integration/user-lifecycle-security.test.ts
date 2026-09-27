@@ -35,7 +35,7 @@ describe.sequential('registration and account lifecycle on disposable SQLite',()
   expect((await getRegistrationSettings()).enabled).toBe(false);
   await expect(registerUser(input(),{},now)).rejects.toThrow('REGISTRATION_DISABLED');
   expect((await shared.db.user.findUniqueOrThrow({where:{id:'admin'}})).expiresAt).toBeNull();
-  await enable();const user=await registerUser(input(),{},now);
+  await enable();const user=await registerUser({...input(),password:'abcdefgh'},{},now);
   expect(user.expiresAt).toEqual(new Date(now.getTime()+7*DAY));
   expect(await shared.db.aiUserModelGrant.count({where:{userId:user.id}})).toBe(3);
   expect(JSON.stringify(user)).not.toMatch(/password|sessionVersion|apiKey/);
@@ -78,7 +78,7 @@ describe.sequential('registration and account lifecycle on disposable SQLite',()
   const reset=await resetManagedPassword('admin',made.user.id,{revision:made.user.revision});
   const row=await shared.db.user.findUniqueOrThrow({where:{id:made.user.id}});
   expect(row.mustChangePassword).toBe(true);expect(row.sessionVersion).toBe(1);expect(row.password).not.toBe(reset.temporaryPassword);
-  await changeOwnPassword(row.id,{currentPassword:reset.temporaryPassword,newPassword:'Changed-synthetic-passphrase'},row.sessionVersion);
+  await changeOwnPassword(row.id,{currentPassword:reset.temporaryPassword,newPassword:'abcdefgh'},row.sessionVersion);
   const changed=await shared.db.user.findUniqueOrThrow({where:{id:row.id}});expect(changed.mustChangePassword).toBe(false);expect(changed.sessionVersion).toBe(2);
  });
  it('protects self and last usable admin; expiry extension revokes sessions and uses CAS',async()=>{

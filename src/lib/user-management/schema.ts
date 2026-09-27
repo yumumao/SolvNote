@@ -1,6 +1,6 @@
 import {z} from "zod";
 export const expirationDaysSchema=z.union([z.literal(7),z.literal(30),z.null()]);
-export const passwordSchema=z.string().min(15).max(72).refine(v=>Buffer.byteLength(v,"utf8")<=72,"Password exceeds bcrypt byte limit");
+export const passwordSchema=z.string().min(8).max(72).refine(v=>Buffer.byteLength(v,"utf8")<=72,"Password exceeds bcrypt byte limit");
 export const emailSchema=z.string().trim().min(3).max(254).regex(/^[^\s@]+@[^\s@]+$/).transform(v=>v.toLowerCase());
 export const registrationSchema=z.object({email:emailSchema,name:z.string().trim().min(1).max(100),password:passwordSchema,turnstileToken:z.string().min(1).max(2048),inviteCode:z.string().trim().max(128).optional(),educationStage:z.enum(["primary","junior_high","senior_high","university"]).optional(),enrollmentYear:z.number().int().min(1900).max(2200).optional()}).strict();
 export const registrationSettingsSchema=z.object({revision:z.number().int().positive(),enabled:z.boolean().optional(),inviteRequired:z.boolean().optional(),defaultExpirationDays:expirationDaysSchema.optional(),inviteDisplayEnabled:z.boolean().optional(),displayedInviteId:z.string().max(100).nullable().optional()}).strict();

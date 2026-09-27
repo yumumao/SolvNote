@@ -103,3 +103,12 @@ describe("safe failure explanations",()=>{
   await render();expect(host.textContent).not.toContain("PRIVATE-UNTRUSTED");expect(host.textContent).toContain("未记录细分原因");
  });
 });
+
+
+it("explains supplemental confirmation and sends just the added text",async()=>{
+ c.transcript={text:"synthetic original",facts:[],uncertainties:[],missingInformation:[]};await render();
+ expect(host.textContent).toContain("已有识图题设一起发送解题");expect(host.textContent).toContain("无需重新输入完整题设");
+ await fill("synthetic added condition");await click("继续当前轮");
+ expect(mocks.post.mock.calls.at(-1)?.[1]).toMatchObject({kind:"continue",text:"synthetic added condition",revision:2});
+ expect(mocks.post.mock.calls.at(-1)?.[1]).not.toHaveProperty("correctedTranscript");
+});

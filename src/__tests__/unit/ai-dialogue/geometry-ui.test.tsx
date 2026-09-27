@@ -30,3 +30,24 @@ describe("geometry evidence and drawing UI",()=>{
   mock.post.mockResolvedValue({type:"construction",plan});vi.spyOn(window,"confirm").mockReturnValue(true);const save=vi.fn();await act(async()=>root.render(<AuxiliaryDrawing questionText="q" answerText="a" analysis="steps" onUseCommands={save}/>));await act(async()=>button("生成分步辅助线方案").click());await act(async()=>root.render(<AuxiliaryDrawing questionText="corrected q" answerText="a" analysis="steps" onUseCommands={save}/>));expect(button("保留全部步骤到当前题目")).toBeUndefined();expect(host.textContent).toContain("旧版本构造");
  });
 });
+
+
+describe("default expanded evidence",()=>{
+ it("opens both panels but preserves manual collapse on re-render",async()=>{
+  const props={transcript,image:"data:image/png;base64,YQ==",revision:7,onCorrect:vi.fn()};
+  await act(async()=>root.render(<GeometryEvidence {...props}/>));
+  const panels=[...host.querySelectorAll("details")];
+  expect(panels).toHaveLength(2);expect(panels.every(p=>p.open)).toBe(true);
+  expect(panels.map(p=>p.querySelector("summary")?.textContent)).toEqual(["原图对照","完整识图转录"]);
+  panels[0].open=false;await act(async()=>root.render(<GeometryEvidence {...props} disabled/>));
+  expect(panels[0].open).toBe(false);expect(panels[1].open).toBe(true);
+ });
+ it("restores supplemental review alongside the unchanged transcription",async()=>{
+  await act(async()=>root.render(<GeometryEvidence transcript={transcript} clarifications={["角1的边为QP与QS，其余条件不变。"]} revision={8} onCorrect={vi.fn()}/>));
+  expect(host.textContent).toContain("已采用的补充说明");expect(host.textContent).toContain("角1的边为QP与QS");expect(host.textContent).toContain("original synthetic statement");expect(host.textContent).toContain("下方角标仍为原转录");expect(host.textContent).not.toContain("已进行一次独立角标核对");
+ });
+ it("opens just the transcript when no source image exists",async()=>{
+  await act(async()=>root.render(<GeometryEvidence transcript={transcript} revision={7} onCorrect={vi.fn()}/>));
+  expect(host.querySelectorAll("details")).toHaveLength(1);expect(host.querySelector("details")?.open).toBe(true);expect(host.querySelector("img")).toBeNull();
+ });
+});

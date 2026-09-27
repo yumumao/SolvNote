@@ -11,6 +11,8 @@ export type DialoguePayload = {
     geometryCheckStarted?: boolean;
     geometryChecked?: boolean;
     userCorrectedTranscript?: boolean;
+    /** Human supplements tied to this transcription; cleared when its source is replaced. */
+    transcriptClarifications?: string[];
     solverId?: string;
     questions: string[];
     rereads: number;
@@ -23,7 +25,9 @@ export type DialogueView = {
     id: string; state: string; revision: number; roundsUsed: number; roundLimit: number; roundOpen: boolean;
     roundAttempts: number; attemptLimit: number; roundElapsedMs: number; timeLimitMs: number;
     isAdmin: boolean; activeJobId: string | null; errorCode?: string | null;
-    transcript?: Transcript; userCorrectedTranscript?: boolean; geometryChecked?: boolean;
+    transcript?: Transcript; userCorrectedTranscript?: boolean;
+    /** Human supplements tied to this transcription; cleared when its source is replaced. */
+    transcriptClarifications?: string[]; geometryChecked?: boolean;
     input: JobInput; messages: DialogueMessage[]; questions: string[]; result?: ParsedQuestion;
     steps: ProcessStep[]; updatedAt: string | Date;
 };

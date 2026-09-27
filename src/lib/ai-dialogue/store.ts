@@ -140,12 +140,18 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
             if(action.originalImageBase64 && !action.imageBase64)dialogueError("INVALID_IMAGE",400);
             if(action.imageBase64){
                 p.input=JobInputSchema.parse({...p.input,mode:"transcribe",imageBase64:action.imageBase64,originalImageBase64:action.originalImageBase64 || action.imageBase64});
-                p.transcript=undefined;p.reviewDone=false;p.geometryCheckStarted=false;p.geometryChecked=false;p.userCorrectedTranscript=false;
+                p.transcript=undefined;p.transcriptClarifications=undefined;p.reviewDone=false;p.geometryCheckStarted=false;p.geometryChecked=false;p.userCorrectedTranscript=false;
             }
             if(action.correctedTranscript){
                 p.transcript={text:action.correctedTranscript,facts:[],uncertainties:[],missingInformation:[]};
-                p.userCorrectedTranscript=true;p.geometryCheckStarted=false;p.geometryChecked=false;p.reviewDone=false;p.questions=[];
+                p.transcriptClarifications=undefined;p.userCorrectedTranscript=true;p.geometryCheckStarted=false;p.geometryChecked=false;p.reviewDone=false;p.questions=[];
                 message(p,"clarification",`人工已完整修订题设，以本版为准：\n${action.correctedTranscript}`,c.roundsUsed+1);
+            }
+            // Added text in an open round reviews the current transcription without
+            // replacing it. A new image already invalidated the old source above.
+            if(action.text && p.transcript && action.kind!=="ask"){
+                p.transcriptClarifications=[...(p.transcriptClarifications || []),action.text];
+                p.reviewDone=false;p.questions=[];
             }
             if(action.text || action.imageBase64)
                 message(p,action.kind==="ask"?"question":"clarification",action.text || "用户补充了题图，旧转录失效。",c.roundsUsed+1);
@@ -175,7 +181,7 @@ export async function readConversation(userId:string,id:string,includeImages=fal
     return {id:c.id,state:c.state,revision:c.revision,roundsUsed:c.roundsUsed,roundLimit:c.roundLimit,roundOpen:c.roundOpen,
         roundAttempts:c.roundAttempts,attemptLimit:c.attemptLimit,roundElapsedMs:c.roundElapsedMs,timeLimitMs:c.timeLimitMs,
         isAdmin:user.role==="admin",activeJobId:c.activeJobId,errorCode:job?.errorCode,
-        input,transcript:p.transcript,userCorrectedTranscript:p.userCorrectedTranscript,geometryChecked:p.geometryChecked,messages:p.messages,questions:p.questions,result:c.state==="answered"?p.result:undefined,updatedAt:c.updatedAt,
+        input,transcript:p.transcript,transcriptClarifications:p.transcriptClarifications,userCorrectedTranscript:p.userCorrectedTranscript,geometryChecked:p.geometryChecked,messages:p.messages,questions:p.questions,result:c.state==="answered"?p.result:undefined,updatedAt:c.updatedAt,
         steps:attempts.map(a=>({id:a.id,modelId:a.modelId,state:a.state,errorCode:a.errorCode,startedAt:a.startedAt,finishedAt:a.finishedAt,...(a.metadata?unprotect<StepMetadata>(a.metadata):{})})),
     };
 }
