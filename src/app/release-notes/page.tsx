@@ -26,7 +26,7 @@ export default function ReleaseNotes() {
         ["发布状态", "本页说明当前实例程序的改动，不代表对应GitHub发行包或容器镜像已经发布。升级其他部署前请核对仓库历史和镜像工作流。"],
     ];
     return <main className="container mx-auto max-w-3xl px-4 py-8 space-y-6">
-        <div className="flex gap-3 items-start"><BackButton fallbackUrl="/"/><div><h1 className="text-2xl font-bold">{en ? "Version notes" : "版本说明"}</h1><p className="text-muted-foreground">v{version} · 2026-09-26</p></div></div>
+        <div className="flex gap-3 items-start"><BackButton fallbackUrl="/"/><div><h1 className="text-2xl font-bold">{en ? "Version notes" : "版本说明"}</h1><p className="text-muted-foreground">v{version} · 2026-09-27</p></div></div>
         {notes.map(([title,body])=><section key={title} className="rounded-xl border p-5 space-y-2"><h2 className="font-semibold">{title}</h2><p className="text-sm leading-relaxed text-muted-foreground">{body}</p></section>)}
         <footer className="flex gap-4 flex-wrap text-sm"><Link href="/solving-records" className="underline">{en ? "Solving records" : "解题记录"}</Link><a className="underline" href={APP_REPOSITORY} target="_blank" rel="noopener noreferrer">SolvNote GitHub</a><a className="underline" href={APP_UPSTREAM} target="_blank" rel="noopener noreferrer">{en ? "Upstream · wttwins" : "上游 · wttwins"}</a></footer>
     </main>;
