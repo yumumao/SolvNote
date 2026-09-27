@@ -26,11 +26,13 @@ import { PrismaClient } from "@prisma/client";
 import type { PortableConfig } from "@/lib/ai-config/schema";
 import type { ExportEnvelope } from "@/lib/ai-config/crypto";
 
+vi.mock("server-only", () => ({}));
+
 const shared = vi.hoisted(() => ({
     db: null as unknown as PrismaClient,
     current: null as { id: string; role: string; isActive: boolean } | null,
     requireAdmin:
-        vi.fn<(req?: Request) => Promise<{ id: string; role: string }>>(),
+        vi.fn<(req?: Request) => Promise<{ id: string; role: string; sessionVersion: number }>>(),
     legacy: vi.fn(),
     network: vi.fn(() => {
         throw new Error("NETWORK_DISABLED_IN_CONFIG_ROUTE_TESTS");
@@ -114,7 +116,7 @@ const overlapping: PortableConfig = {
         ...incoming.providers,
     ],
     models: [
-        { ...current.models[0], model: "synthetic-replacement-model" },
+        { ...current.models[0], name: "Replacement model label" },
         ...incoming.models,
     ],
 };
@@ -242,6 +244,9 @@ beforeAll(async () => {
     await shared.db.$executeRawUnsafe(
         'CREATE TABLE "AiConfiguration" ("id" TEXT NOT NULL PRIMARY KEY, "revision" INTEGER NOT NULL DEFAULT 1, "payload" TEXT NOT NULL, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL)',
     );
+    await shared.db.$executeRawUnsafe('CREATE TABLE "AiAccessPolicy" ("id" TEXT NOT NULL PRIMARY KEY, "revision" INTEGER NOT NULL DEFAULT 1, "initialized" BOOLEAN NOT NULL DEFAULT false)');
+    await shared.db.$executeRawUnsafe('CREATE TABLE "AiSiteModelAccess" ("modelId" TEXT NOT NULL PRIMARY KEY, "fingerprint" TEXT NOT NULL, "isAllowed" BOOLEAN NOT NULL DEFAULT true, "defaultRank" INTEGER, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL)');
+    await shared.db.$executeRawUnsafe(`CREATE TABLE "User" ("id" TEXT NOT NULL PRIMARY KEY, "role" TEXT NOT NULL DEFAULT 'user', "isActive" BOOLEAN NOT NULL DEFAULT true, "expiresAt" DATETIME, "mustChangePassword" BOOLEAN NOT NULL DEFAULT false, "sessionVersion" INTEGER NOT NULL DEFAULT 0)`);
     [envelope, otherEnvelope, overlappingEnvelope] = await Promise.all([
         sealExport(incoming, PASSWORD),
         sealExport(alternative, PASSWORD),
@@ -249,23 +254,28 @@ beforeAll(async () => {
     ]);
 }, 30000);
 beforeEach(async () => {
+    vi.stubEnv("SOLVNOTE_ENABLE_AI_CONFIG_EXPORT", undefined);
     vi.stubEnv("AI_CONFIG_MASTER_KEY", syntheticMasterKey);
     vi.stubEnv("AI_CONFIG_DIR", path.join(directory, "vault"));
     vi.stubEnv("NEXTAUTH_URL", ORIGIN);
     await shared.db.$executeRawUnsafe(
         'DROP TRIGGER IF EXISTS "reject_config_write"',
     );
+    await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
     await shared.db.aiConfiguration.deleteMany();
     await shared.db.aiConfiguration.create({
         data: { id: "site", revision: 1, payload: protect(current) },
     });
+    await shared.db.$executeRawUnsafe('DELETE FROM "User"');
+    for (const id of ["synthetic-admin-a", "synthetic-admin-b"]) await shared.db.$executeRawUnsafe('INSERT INTO "User" ("id", "role") VALUES (?, ?)', id, "admin");
     shared.current = { id: "synthetic-admin-a", role: "admin", isActive: true };
     shared.requireAdmin.mockReset().mockImplementation(async () => {
         if (!shared.current)
             throw new AIRequestError(401, "Authentication required");
         if (!shared.current.isActive || shared.current.role !== "admin")
             throw new AIRequestError(403, "Administrator access required");
-        return { id: shared.current.id, role: shared.current.role };
+        return { id: shared.current.id, role: shared.current.role, sessionVersion: 0 };
     });
     shared.legacy.mockReset().mockReturnValue({
         aiProvider: "openai",
@@ -348,7 +358,9 @@ describe.sequential(
                     "rejects $label before reading or migrating configuration",
                     async ({ user, status }) => {
                         shared.current = user;
-                        await shared.db.aiConfiguration.deleteMany();
+                        await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
                         const response = await invoke(operation);
                         expect(response.status).toBe(status);
                         expect(await response.json()).toEqual({
@@ -500,6 +512,8 @@ describe.sequential("GET/POST /api/ai/config", () => {
         "allows an explicit replacement/cleared key when changing target and protocol",
         async (apiKey) => {
             const config = fixture("current");
+            config.models[0].id = "model-new-target";
+            config.chains = { text: ["model-new-target"], vision: ["model-new-target"] };
             Object.assign(config.providers[0], {
                 baseUrl: "https://other.example.com/v1",
                 protocol: "responses",
@@ -605,13 +619,17 @@ describe.sequential("POST /api/ai/config/import preview and apply", () => {
         },
     );
     it("does not create/migrate a configuration row during the first preview", async () => {
-        await shared.db.aiConfiguration.deleteMany();
+        await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
         const response = await IMPORT(request("import", importBody()));
         await expectMaskedResponse(response, incoming, 0);
         expect(await shared.db.aiConfiguration.count()).toBe(0);
     });
     it("does not leave a migrated row behind after an invalid first apply", async () => {
-        await shared.db.aiConfiguration.deleteMany();
+        await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
         const response = await invoke("apply");
         expect([400, 409]).toContain(response.status);
         expect(await shared.db.aiConfiguration.count()).toBe(0);
@@ -697,7 +715,9 @@ describe.sequential(
     "first import snapshots, vault and atomic initialization",
     () => {
         it("can inspect an unpersisted legacy snapshot without creating a row or master key", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const keyFile = freshFileVault();
             const snapshot = await store.loadAIConfig({ persist: false });
             expect(snapshot.revision).toBe(0);
@@ -709,7 +729,9 @@ describe.sequential(
             expect(existsSync(keyFile)).toBe(false);
         });
         it("initializes only a signing/master key on first preview and reuses it without a configuration row", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const keyFile = freshFileVault();
             const first = await preview();
             expect(first.revision).toBe(0);
@@ -729,7 +751,9 @@ describe.sequential(
             expect(readFileSync(keyFile).equals(key)).toBe(true);
         });
         it("does not initialize a key or row for an invalid first apply without a preview", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const keyFile = freshFileVault();
             const response = await IMPORT(
                 request("import", {
@@ -744,7 +768,9 @@ describe.sequential(
             expect(existsSync(keyFile)).toBe(false);
         });
         it("does not recreate a lost preview signing key during first apply", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const originalFile = freshFileVault();
             const approved = await preview();
             const originalKey = readFileSync(originalFile);
@@ -758,7 +784,9 @@ describe.sequential(
             expect(readFileSync(originalFile).equals(originalKey)).toBe(true);
         });
         it("does not rotate an invalid existing key even when the configuration row is absent", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const keyFile = freshFileVault();
             const invalidKey = Buffer.alloc(7, 1);
             writeFileSync(keyFile, invalidKey);
@@ -798,7 +826,9 @@ describe.sequential(
         it.each<Mode>(["merge", "replace"])(
             "creates revision one only after a valid first %s apply",
             async (mode) => {
-                await shared.db.aiConfiguration.deleteMany();
+                await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
                 const initial = await store.loadAIConfig({ persist: false });
                 const expected =
                     mode === "merge"
@@ -817,7 +847,9 @@ describe.sequential(
             },
         );
         it("permits exactly one first apply even when both have verified revision zero before creating", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const approvals = await Promise.all([
                 preview("replace", envelope),
                 preview("replace", otherEnvelope),
@@ -832,10 +864,10 @@ describe.sequential(
                 release = resolve;
             });
             vi.spyOn(store, "saveAIConfig").mockImplementation(
-                async (config, revision) => {
+                async (config, revision, actor) => {
                     if (++arrivals === 2) release();
                     await gate;
-                    return realSave(config, revision);
+                    return realSave(config, revision, actor);
                 },
             );
             const sources = [envelope, otherEnvelope];
@@ -859,7 +891,9 @@ describe.sequential(
             expect(await shared.db.aiConfiguration.count()).toBe(1);
         });
         it("rejects a first preview after another caller initializes the legacy configuration", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const approved = await preview();
             expect(approved.revision).toBe(0);
             expect((await store.loadAIConfig()).revision).toBe(1);
@@ -870,14 +904,16 @@ describe.sequential(
             expect(await row()).toEqual(before);
         });
         it("uses create-only CAS if legacy migration races after first-apply token verification", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const approved = await preview();
             expect(approved.revision).toBe(0);
             const realSave = store.saveAIConfig;
             vi.spyOn(store, "saveAIConfig").mockImplementationOnce(
-                async (config, revision) => {
+                async (config, revision, actor) => {
                     await store.loadAIConfig();
-                    return realSave(config, revision);
+                    return realSave(config, revision, actor);
                 },
             );
             expect(
@@ -892,7 +928,9 @@ describe.sequential(
             );
         });
         it("rolls back the complete first insert if SQLite aborts after inserting the encrypted document", async () => {
-            await shared.db.aiConfiguration.deleteMany();
+            await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany();
             const approved = await preview();
             expect(approved.revision).toBe(0);
             await shared.db.$executeRawUnsafe(
@@ -1089,9 +1127,9 @@ describe.sequential(
             const approved = await preview();
             const realSave = store.saveAIConfig;
             vi.spyOn(store, "saveAIConfig").mockImplementationOnce(
-                async (config, revision) => {
+                async (config, revision, actor) => {
                     await realSave(alternative, revision);
-                    return realSave(config, revision);
+                    return realSave(config, revision, actor);
                 },
             );
             const response = await IMPORT(
@@ -1198,8 +1236,8 @@ describe("saved configuration deduplication route", () => {
     });
     it("uses the store CAS if a save races after snapshot loading", async () => {
         const p = await detect(), original = store.saveAIConfig;
-        const spy = vi.spyOn(store, "saveAIConfig").mockImplementationOnce(async (config, revision) => {
-            await original(alternative, revision); return original(config, revision);
+        const spy = vi.spyOn(store, "saveAIConfig").mockImplementationOnce(async (config, revision, actor) => {
+            await original(alternative, revision); return original(config, revision, actor);
         });
         try { expect((await apply(p)).status).toBe(409); await expectStored(alternative, 2); } finally { spy.mockRestore(); }
     });
@@ -1209,7 +1247,9 @@ describe("saved configuration deduplication route", () => {
         expect((await apply(p)).status).toBe(409); expect(await row()).toEqual(before);
     });
     it("does not migrate or create a key on a fresh site", async () => {
-        await shared.db.aiConfiguration.deleteMany(); const keyFile = freshFileVault();
+        await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany(); const keyFile = freshFileVault();
         expect((await DEDUP(request("deduplicate", {action:"preview"}))).status).toBe(409);
         expect(await shared.db.aiConfiguration.count()).toBe(0); expect(existsSync(keyFile)).toBe(false);
     });
@@ -1263,6 +1303,8 @@ it("returns safe field diagnostics after decryption without creating a key or co
     const invalid = fixture("invalid-http");
     invalid.providers[0].baseUrl = "http://example.com/v1?synthetic-private-value";
     const source = { ...envelope, salt: salt.toString("base64"), ...encryptWithKey(JSON.stringify(invalid), pbkdf2Sync(PASSWORD, salt, 300000, 32, "sha256")) };
+    await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
     await shared.db.aiConfiguration.deleteMany();
     const file = freshFileVault();
     const response = await IMPORT(request("import", importBody("preview", "replace", source)));
@@ -1276,9 +1318,26 @@ it("returns safe field diagnostics after decryption without creating a key or co
 
 
 describe("administrator portable export", () => {
+    beforeEach(() => vi.stubEnv("SOLVNOTE_ENABLE_AI_CONFIG_EXPORT", "true"));
     const exportRequest = (body = {password: PASSWORD, revision: 1}, headers = {}) =>
         new Request(`${ORIGIN}/api/ai/config/export`, {method: "POST", headers: {"content-type": "application/json", Origin: ORIGIN, ...headers}, body: JSON.stringify(body)});
     const runExport = async (req: Request) => (await import("@/app/api/ai/config/export/route")).POST(req);
+    it("denies export by default for administrators and ordinary users without reading config or vault", async () => {
+        vi.stubEnv("SOLVNOTE_ENABLE_AI_CONFIG_EXPORT", undefined);
+        const load = vi.spyOn(store, "loadAIConfig");
+        const file = freshFileVault();
+        try {
+            for (const role of ["admin", "user"]) {
+                shared.current = { id: "synthetic-export-policy", role, isActive: true };
+                const response = await runExport(exportRequest());
+                expect(response.status).toBe(403);
+                expect(response.headers.get("cache-control")).toBe("no-store");
+                expect(await response.json()).toEqual({ message: role === "admin" ? "AI_CONFIG_EXPORT_DISABLED" : "FORBIDDEN" });
+            }
+            expect(load).not.toHaveBeenCalled();
+            expect(existsSync(file)).toBe(false);
+        } finally { load.mockRestore(); }
+    });
     it("exports only encrypted saved AI config, roundtrips into import, with no writes", async () => {
         const before = await row();
         const response = await runExport(exportRequest());
@@ -1315,7 +1374,9 @@ describe("administrator portable export", () => {
         await expectStored(current, 1);
     });
     it("does not initialize storage or a master key when exporting legacy config", async () => {
-        await shared.db.aiConfiguration.deleteMany(); const file = freshFileVault();
+        await shared.db.aiSiteModelAccess.deleteMany();
+    await shared.db.aiAccessPolicy.deleteMany();
+    await shared.db.aiConfiguration.deleteMany(); const file = freshFileVault();
         shared.legacy.mockReturnValue({aiProvider: "openai", openai: {instances: [{id: "fixture", name: "Fixture", apiKey: "synthetic-legacy-only", baseUrl: "https://example.com/v1", model: "synthetic"}]}});
         const response = await runExport(exportRequest({password: PASSWORD, revision: 0}));
         expect(response.status).toBe(200);

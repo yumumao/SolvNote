@@ -98,7 +98,6 @@ export interface UpdateUserProfileRequest {
     email?: string;
     educationStage?: string;
     enrollmentYear?: number;
-    password?: string;
 }
 
 export interface OpenAIInstance {
@@ -167,8 +166,12 @@ export interface TagSuggestionsResponse {
 }
 
 export interface AdminUser extends UserProfile {
+    role: "user" | "admin";
+    expiresAt: string | null;
+    mustChangePassword: boolean;
+    revision: number;
     createdAt: string;
-    _count: {
+    _count?: {
         errorItems: number;
         practiceRecords: number;
     };

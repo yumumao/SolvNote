@@ -1,0 +1,4 @@
+import type {User,InvitationCode,RegistrationSettings} from "@prisma/client";
+export function userDto(u:User){return {id:u.id,email:u.email,name:u.name,role:u.role,isActive:u.isActive,expiresAt:u.expiresAt,mustChangePassword:u.mustChangePassword,revision:u.revision,createdAt:u.createdAt,educationStage:u.educationStage,enrollmentYear:u.enrollmentYear};}
+export function inviteDto(i:InvitationCode){return {id:i.id,maxUses:i.maxUses,usedCount:i.usedCount,expiresAt:i.expiresAt,enabled:i.enabled,revision:i.revision,createdAt:i.createdAt};}
+export function settingsDto(s:RegistrationSettings){return {enabled:s.enabled,inviteRequired:s.inviteRequired,defaultExpirationDays:s.defaultExpirationDays,inviteDefaultLifetimeDays:s.inviteDefaultLifetimeDays,inviteDisplayEnabled:s.inviteDisplayEnabled,displayedInviteId:s.displayedInviteId,revision:s.revision};}

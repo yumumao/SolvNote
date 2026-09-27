@@ -3,6 +3,7 @@ import {z} from "zod";
 import {prisma} from "../prisma";
 import {protect,unprotect} from "../ai-config/vault";
 import {loadAIConfig} from "../ai-config/store";
+import {loadEffectiveAIConfig} from "../ai-access/effective-config";
 import type {PortableConfig} from "../ai-config/schema";
 import {AIRequestError} from "../ai-access";
 const ID="notebook-drawing";
@@ -15,8 +16,8 @@ function modelChoice(config:PortableConfig,id:string){
     const fingerprint=createHash("sha256").update(JSON.stringify([m.id,m.model,p.id,p.protocol,p.baseUrl,p.apiKey])).digest("hex");
     return {model:m,provider:p,fingerprint};
 }
-export async function drawingSettings(admin=false){
-    const {config,revision:configRevision}=await loadAIConfig({persist:false});
+export async function drawingSettings(admin=false,userId?:string){
+    const {config,revision:configRevision}=userId?await loadEffectiveAIConfig(userId):await loadAIConfig({persist:false});
     const row=await prisma.aiConfiguration.findUnique({where:{id:ID}});
     const stored=row?unprotect<Saved>(row.payload):{modelId:null};
     const choice=stored.modelId?modelChoice(config,stored.modelId):null;

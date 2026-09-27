@@ -50,7 +50,7 @@ const request = (
 beforeEach(() => {
     vi.resetAllMocks();
     mocks.session.mockResolvedValue({ user: { id: "u1", role: "admin" } });
-    mocks.user.mockResolvedValue({ id: "u1", role: "admin", isActive: true });
+    mocks.user.mockResolvedValue({ id: "u1", role: "admin", isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false });
     mocks.fetch.mockResolvedValue(
         Response.json({ choices: [{ message: { content: "OK" } }] }),
     );
@@ -79,7 +79,7 @@ describe("/api/ai/test security", () => {
         expect(mocks.fetch).not.toHaveBeenCalled();
     });
     it.each([
-        { id: "u1", role: "user", isActive: true },
+        { id: "u1", role: "user", isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false },
         { id: "u1", role: "admin", isActive: false },
         null,
     ])("uses DB role/active state: %j", async (user) => {

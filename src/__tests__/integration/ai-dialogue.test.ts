@@ -155,8 +155,8 @@ describe.sequential("persistent dialogue with synthetic SQLite and mocked provid
   shared.send.mockResolvedValueOnce(JSON.stringify({status:"needs_user",questions:["condition?"]}));const id=await create("alice",false);await processOne();
   const {config:original}=await loadAIConfig();const revision=await shared.db.aiConfiguration.findUniqueOrThrow({where:{id:"site"}});
   await saveAIConfig({...original,models:original.models.map(m=>m.id==="t"?{...m,enabled:false}:m),chains:{...original.chains,text:["v"]}},revision.revision);
-  try{await act(id,"continue",{text:"condition provided"});await processOne();expect((await view(id)).state).toBe("failed");expect(shared.send).toHaveBeenCalledTimes(1);}
-  finally{await saveAIConfig(original,revision.revision+1);}
+  try{await expect(act(id,"continue",{text:"condition provided"})).rejects.toThrow("AI_MODEL_ACCESS_REVOKED");await expect(view(id)).rejects.toThrow("AI_MODEL_ACCESS_REVOKED");expect(shared.send).toHaveBeenCalledTimes(1);}
+  finally{await saveAIConfig(original,revision.revision+1);await shared.db.aiSiteModelAccess.update({where:{modelId:"t"},data:{isAllowed:true}});}
  });
  it("bounds administrator budget extension, never dispatches on extension alone",async()=>{
   const id=await create("admin",false);await shared.db.aiConversation.update({where:{id},data:{roundAttempts:6}});await processOne();

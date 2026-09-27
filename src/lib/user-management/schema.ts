@@ -1,0 +1,12 @@
+import {z} from "zod";
+export const expirationDaysSchema=z.union([z.literal(7),z.literal(30),z.null()]);
+export const passwordSchema=z.string().min(15).max(72).refine(v=>Buffer.byteLength(v,"utf8")<=72,"Password exceeds bcrypt byte limit");
+export const emailSchema=z.string().trim().min(3).max(254).regex(/^[^\s@]+@[^\s@]+$/).transform(v=>v.toLowerCase());
+export const registrationSchema=z.object({email:emailSchema,name:z.string().trim().min(1).max(100),password:passwordSchema,turnstileToken:z.string().min(1).max(2048),inviteCode:z.string().trim().max(128).optional(),educationStage:z.enum(["primary","junior_high","senior_high","university"]).optional(),enrollmentYear:z.number().int().min(1900).max(2200).optional()}).strict();
+export const registrationSettingsSchema=z.object({revision:z.number().int().positive(),enabled:z.boolean().optional(),inviteRequired:z.boolean().optional(),defaultExpirationDays:expirationDaysSchema.optional(),inviteDisplayEnabled:z.boolean().optional(),displayedInviteId:z.string().max(100).nullable().optional()}).strict();
+export const inviteCreateSchema=z.object({maxUses:z.number().int().min(1).max(10000).default(1),lifetimeDays:z.number().int().min(1).max(3650).default(30)}).strict();
+export const inviteUpdateSchema=z.object({revision:z.number().int().positive(),enabled:z.boolean().optional(),renewDays:z.number().int().min(1).max(3650).optional(),maxUses:z.number().int().min(1).max(10000).optional()}).strict();
+export const createUserSchema=z.object({email:emailSchema,name:z.string().trim().min(1).max(100),role:z.enum(["user","admin"]).default("user"),expirationDays:expirationDaysSchema.default(null)}).strict();
+export const updateUserSchema=z.object({revision:z.number().int().positive(),isActive:z.boolean().optional(),role:z.enum(["user","admin"]).optional(),expirationDays:expirationDaysSchema.optional()}).strict();
+export const revisionSchema=z.object({revision:z.number().int().positive()}).strict();
+export const changePasswordSchema=z.object({currentPassword:z.string().min(1).max(256),newPassword:passwordSchema}).strict();

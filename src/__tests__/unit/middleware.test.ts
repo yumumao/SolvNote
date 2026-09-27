@@ -16,6 +16,7 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 import { middleware } from '@/middleware';
+vi.mock("@/lib/user-management/live-session",()=>({getLiveUser:async(id:string)=>({id,role:"user",isActive:true,sessionVersion:0,mustChangePassword:false}),isSessionCurrent:()=>true}));
 import { getToken } from 'next-auth/jwt';
 
 describe('middleware', () => {
@@ -74,7 +75,7 @@ describe('middleware', () => {
 
     describe('已认证用户', () => {
         const mockToken = {
-            sub: 'user-123',
+            id: 'user-123', sub: 'user-123',
             email: 'test@example.com',
             name: 'Test User',
         };
@@ -86,7 +87,7 @@ describe('middleware', () => {
             const response = await middleware(req);
 
             // 返回 undefined 表示允许继续
-            expect(response).toBeUndefined();
+            expect(response).toBeNull();
         });
 
         it('应该重定向已认证用户离开登录页', async () => {
@@ -117,12 +118,12 @@ describe('middleware', () => {
             const req = new NextRequest('http://localhost:3000/');
             const response = await middleware(req);
 
-            expect(response).toBeUndefined();
+            expect(response).toBeNull();
         });
     });
 
     describe('错误处理', () => {
-        it('Token 验证失败时应该继续请求而不是崩溃', async () => {
+        it('Token验证失败时必须拒绝请求而不是放行', async () => {
             vi.mocked(getToken).mockRejectedValue(new Error('Token validation failed'));
 
             const req = new NextRequest('http://localhost:3000/notebooks');
@@ -131,7 +132,7 @@ describe('middleware', () => {
             const response = await middleware(req);
 
             // 应该调用 NextResponse.next()，允许请求继续
-            expect(response).toBeDefined();
+            expect(response?.status).toBe(503);
         });
 
         it('Token 验证失败时应该记录错误日志', async () => {

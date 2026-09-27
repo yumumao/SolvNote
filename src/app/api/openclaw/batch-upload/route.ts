@@ -5,13 +5,12 @@ import { createErrorResponse, ErrorCode } from "@/lib/api-errors";
 import { calculateGrade } from "@/lib/grade-calculator";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
-import { compare } from "bcryptjs";
+import { requireUser, assertSameOrigin, aiErrorResponse, AIRequestError } from "@/lib/ai-access";
 
 const logger = createLogger('api:openclaw:batch-upload');
 
 const MAX_IMAGES = 20;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png'];
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png'];
 
 interface ImageData {
@@ -76,8 +75,7 @@ async function callOpenclawAgent(imageBase64: string, mimeType: string, timeout:
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-            const errorText = await response.text();
-            logger.error({ status: response.status, error: errorText }, 'Openclaw agent error');
+            logger.error({ status: response.status }, 'Openclaw agent error');
             return {
                 success: false,
                 error: `识别服务异常: HTTP ${response.status}`,
@@ -86,10 +84,10 @@ async function callOpenclawAgent(imageBase64: string, mimeType: string, timeout:
 
         const data = await response.json() as OpenclawResponse;
         return data;
-    } catch (error: any) {
+    } catch (error: unknown) {
         clearTimeout(timeoutId);
         
-        if (error.name === 'AbortError') {
+        if (error instanceof Error && error.name === 'AbortError') {
             logger.error('Openclaw agent timeout');
             return {
                 success: false,
@@ -97,10 +95,10 @@ async function callOpenclawAgent(imageBase64: string, mimeType: string, timeout:
             };
         }
         
-        logger.error({ error: error?.message || String(error) }, 'Openclaw agent request failed');
+        logger.error('Openclaw agent request failed');
         return {
             success: false,
-            error: `识别服务请求失败: ${error?.message || String(error)}`,
+            error: '识别服务请求失败',
         };
     }
 }
@@ -160,7 +158,8 @@ async function createErrorItem(
 
             tagConnections.push({ id: tag.id });
         } catch (tagError) {
-            logger.error({ tagName, error: tagError }, 'Error processing tag');
+            void tagError;
+            logger.error('Error processing tag');
         }
     }
 
@@ -195,95 +194,20 @@ async function createErrorItem(
 export async function POST(req: Request) {
     logger.info('POST /api/openclaw/batch-upload called');
 
-    // 获取请求头中的 API Key
-    const apiKey = req.headers.get('x-api-key');
-    // 从环境变量获取配置的 API Key
-    const expectedApiKey = process.env.OPENCLAW_INTEGRATION_API_KEY;
-    // 认证模式：credentials（用户名密码，默认）或 apikey（API Key）
-    const authMode = process.env.OPENCLAW_AUTH_MODE || 'credentials';
-
-    let user = null;
-    let userEmail = null;
-    let subjectId = null;
-
+    // Legacy integrations must use the same live, Turnstile-authenticated session
+    // as the site. API keys and body credentials are no longer alternate logins.
+    let identity: { id: string; role: string };
+    try { identity = await requireUser(req); assertSameOrigin(req); }
+    catch (error) { return aiErrorResponse(error); }
     try {
-        const body = await req.json();
-        const requestData = body;
-
-        // 根据认证模式选择验证方式
-        if (authMode === 'apikey' && expectedApiKey) {
-            // API Key 认证模式
-            if (!apiKey) {
-                logger.warn('Missing API key in request');
-                return createErrorResponse(
-                    '未提供API密钥',
-                    401,
-                    ErrorCode.UNAUTHORIZED,
-                    'Missing API key'
-                );
-            }
-
-            if (apiKey !== expectedApiKey) {
-                logger.warn('Invalid API key provided');
-                return createErrorResponse(
-                    'API密钥无效',
-                    401,
-                    ErrorCode.UNAUTHORIZED,
-                    'Invalid API key'
-                );
-            }
-
-            userEmail = requestData.userEmail;
-            subjectId = requestData.subjectId;
-        } else {
-            // 用户名密码认证模式（默认）
-            const { username, password } = requestData;
-
-            if (!username || !password) {
-                return createErrorResponse(
-                    '请提供用户名和密码',
-                    401,
-                    ErrorCode.UNAUTHORIZED,
-                    'Missing username or password'
-                );
-            }
-
-            // 从数据库查找用户（支持邮箱或用户名登录）
-            user = await prisma.user.findFirst({
-                where: {
-                    OR: [
-                        { email: username },
-                        { name: username }
-                    ]
-                }
-            });
-
-            if (!user) {
-                logger.warn({ username }, 'User not found');
-                return createErrorResponse(
-                    '用户不存在',
-                    404,
-                    ErrorCode.USER_NOT_FOUND,
-                    'User not found'
-                );
-            }
-
-            // 验证密码（使用 bcrypt 比对）
-            const isPasswordValid = await compare(password, user.password);
-            if (!isPasswordValid) {
-                logger.warn({ username }, 'Invalid password');
-                return createErrorResponse(
-                    '密码错误',
-                    401,
-                    ErrorCode.UNAUTHORIZED,
-                    'Invalid password'
-                );
-            }
-
-            userEmail = user.email;
-            subjectId = requestData.subjectId;
-            logger.info({ userId: user.id, email: user.email }, 'User authenticated via credentials');
-        }
+        const requestData = await req.json();
+        const dbUser = await prisma.user.findUnique({ where: { id: identity.id } });
+        if (!dbUser) return aiErrorResponse(new AIRequestError(401, "Authentication required"));
+        if (requestData.userEmail && requestData.userEmail !== dbUser.email)
+            return aiErrorResponse(new AIRequestError(403, "Cross-account upload denied"));
+        const subjectId = typeof requestData.subjectId === "string" ? requestData.subjectId : undefined;
+        if (subjectId && !await prisma.subject.findFirst({ where: { id: subjectId, userId: identity.id } }))
+            return aiErrorResponse(new AIRequestError(403, "Subject access denied"));
 
         // 获取图片数组
         const { images } = requestData;
@@ -305,24 +229,6 @@ export async function POST(req: Request) {
                 400,
                 ErrorCode.BAD_REQUEST,
                 `Maximum ${MAX_IMAGES} images allowed`
-            );
-        }
-
-        // 获取用户信息（API Key模式需要单独查询）
-        let dbUser = user;
-        if (!dbUser) {
-            dbUser = await prisma.user.findUnique({
-                where: { email: userEmail },
-            });
-        }
-
-        if (!dbUser) {
-            logger.warn({ userEmail }, 'User not found');
-            return createErrorResponse(
-                '用户不存在',
-                404,
-                ErrorCode.USER_NOT_FOUND,
-                'User not found'
             );
         }
 
@@ -353,11 +259,11 @@ export async function POST(req: Request) {
             const openclawResponse = await callOpenclawAgent(base64, mimeType, singleImageTimeout);
 
             if (!openclawResponse.success || !openclawResponse.data) {
-                logger.error({ index: i, error: openclawResponse.error }, 'Openclaw recognition failed');
+                logger.error({ index: i }, 'Openclaw recognition failed');
                 results.push({
                     success: false,
                     index: i,
-                    error: openclawResponse.error || '识别失败',
+                    error: '识别服务未能完成请求',
                 });
                 continue;
             }
@@ -378,12 +284,12 @@ export async function POST(req: Request) {
                 });
 
                 logger.info({ index: i, errorItemId: errorItem.id }, 'Error item created successfully');
-            } catch (dbError: any) {
-                logger.error({ index: i, error: dbError?.message || String(dbError) }, 'Failed to create error item');
+            } catch {
+                logger.error({ index: i }, 'Failed to create error item');
                 results.push({
                     success: false,
                     index: i,
-                    error: `数据库写入失败: ${dbError?.message || String(dbError)}`,
+                    error: '数据库写入失败',
                 });
             }
         }
@@ -406,13 +312,8 @@ export async function POST(req: Request) {
             failCount,
             results,
         }, { status: statusCode });
-    } catch (error: any) {
-        logger.error({ error: error?.message || String(error), stack: error?.stack }, 'Batch upload error');
-        return createErrorResponse(
-            error?.message || '批量上传失败',
-            500,
-            ErrorCode.INTERNAL_ERROR,
-            error?.message || String(error)
-        );
+    } catch {
+        logger.error('Batch upload error');
+        return createErrorResponse('批量上传失败', 500, ErrorCode.INTERNAL_ERROR, 'Batch upload failed');
     }
 }

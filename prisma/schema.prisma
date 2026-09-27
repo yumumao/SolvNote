@@ -25,6 +25,16 @@ model User {
   role      String   @default("user") // "admin" or "user"
   isActive  Boolean  @default(true)   // 用户是否启用
 
+  expiresAt DateTime?
+  sessionVersion Int @default(0)
+  mustChangePassword Boolean @default(false)
+  revision Int @default(1)
+  aiAccessInitialized Boolean @default(false)
+  aiModelGrants AiUserModelGrant[]
+  aiConfiguration UserAiConfiguration?
+  inviteUse InvitationUse?
+  @@index([expiresAt])
+
   announcementReads AnnouncementRead[]
   conversations AiConversation[]
   errorItems ErrorItem[]
@@ -265,4 +275,83 @@ model AnnouncementRead {
  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
  @@id([announcementId, userId])
  @@index([userId, readAt])
+}
+
+model RegistrationSettings {
+ id String @id
+ enabled Boolean @default(false)
+ inviteRequired Boolean @default(false)
+ defaultExpirationDays Int? @default(7)
+ inviteDefaultLifetimeDays Int @default(30)
+ inviteDisplayEnabled Boolean @default(false)
+ displayedInviteId String?
+ revision Int @default(1)
+ updatedAt DateTime @updatedAt
+}
+model InvitationCode {
+ id String @id @default(cuid())
+ codeHash String @unique
+ encryptedCode String
+ maxUses Int @default(1)
+ usedCount Int @default(0)
+ expiresAt DateTime
+ enabled Boolean @default(true)
+ revision Int @default(1)
+ createdById String
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ uses InvitationUse[]
+ @@index([expiresAt, enabled])
+}
+model InvitationUse {
+ userId String @id
+ inviteId String
+ user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+ invite InvitationCode @relation(fields:[inviteId], references:[id], onDelete:Restrict)
+ createdAt DateTime @default(now())
+}
+model AuthRateLimit {
+ key String @id
+ count Int @default(0)
+ windowEnd DateTime
+ @@index([windowEnd])
+}
+model UserAuditEvent {
+ id String @id @default(cuid())
+ actorId String?
+ targetId String?
+ action String
+ createdAt DateTime @default(now())
+}
+model AiAccessPolicy {
+ id String @id
+ revision Int @default(1)
+ initialized Boolean @default(false)
+}
+model AiSiteModelAccess {
+ modelId String @id
+ fingerprint String
+ isAllowed Boolean @default(true)
+ defaultRank Int?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ grants AiUserModelGrant[]
+}
+model AiUserModelGrant {
+ userId String
+ modelId String
+ source String
+ rank Int?
+ createdAt DateTime @default(now())
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ siteModel AiSiteModelAccess @relation(fields:[modelId],references:[modelId],onDelete:Restrict)
+ @@id([userId,modelId])
+}
+model UserAiConfiguration {
+ userId String @id
+ revision Int @default(1)
+ payload String
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
 }

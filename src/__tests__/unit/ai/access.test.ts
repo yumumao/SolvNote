@@ -11,17 +11,17 @@ beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv("NEXTAUTH_URL", undefined);
     mocks.session.mockResolvedValue({ user: { id: "u1", role: "admin" } });
-    mocks.user.mockResolvedValue({ id: "u1", role: "user", isActive: true });
+    mocks.user.mockResolvedValue({ id: "u1", role: "user", isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false });
 });
 afterEach(() => {
     vi.unstubAllEnvs();
 });
 describe("shared AI access boundary", () => {
-    it("only returns ID and the current DB role", async () => {
-        expect(await requireUser()).toEqual({ id: "u1", role: "user" });
+    it("returns only the current account identity and revocation version", async () => {
+        expect(await requireUser()).toEqual({ id: "u1", role: "user", sessionVersion: 0 });
         expect(mocks.user).toHaveBeenCalledWith({
             where: { id: "u1" },
-            select: { id: true, role: true, isActive: true },
+            select: { id: true, role: true, isActive: true, expiresAt: true, sessionVersion: true, mustChangePassword: true, revision: true, aiAccessInitialized: true },
         });
     });
     it("requires an active database admin, not a session role", async () => {
@@ -29,9 +29,9 @@ describe("shared AI access boundary", () => {
         mocks.user.mockResolvedValue({
             id: "u1",
             role: "admin",
-            isActive: true,
+            isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false,
         });
-        expect(await requireAdmin()).toEqual({ id: "u1", role: "admin" });
+        expect(await requireAdmin()).toEqual({ id: "u1", role: "admin", sessionVersion: 0 });
     });
     it.each([null, { user: {} }, { user: { id: "" } }])(
         "rejects missing session IDs: %j",
