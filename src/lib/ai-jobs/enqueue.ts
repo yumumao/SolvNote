@@ -72,7 +72,7 @@ export async function enqueue(
                 );
         }
         const input = JobInputSchema.parse(body);
-        if(kind === "construction" || kind === "image_edit")await validateDrawingInput(kind,input);
+        if(kind === "construction" || kind === "image_edit")await validateDrawingInput(kind,input,user.id);
         const key = req.headers.get("x-request-id") || crypto.randomUUID();
         if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) throw Error("INVALID_REQUEST");
         const job = await submitJob(user.id, kind, input, key);

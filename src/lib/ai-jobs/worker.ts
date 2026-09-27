@@ -12,6 +12,9 @@ import { aiRun, TOTAL_MS } from "./context";
 import { type JobInput } from "./schema";
 import { failureState } from "./store";
 import { executeDialogueJob, recoverDialogue } from "../ai-dialogue/execution";
+import { requireLiveAiUser } from "../ai-access/account";
+import { loadEffectiveAIConfigInTx } from "../ai-access/effective-config";
+import { assertJobModelAccess, assertConversationModelAccess } from "../ai-access/runtime";
 const LEASE_MS = 60000;
 const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
 export async function claimJob(owner: string) {
@@ -190,6 +193,8 @@ export async function processOne(owner: string = randomUUID()) {
     const total = setTimeout(() => controller.abort(), job.kind === "dialogue" ? 1800000 : TOTAL_MS);
     const heartbeat = setInterval(() => {
         void (async () => {
+            if (job.conversationId) await assertConversationModelAccess(job.userId,job.conversationId);
+            else await assertJobModelAccess(job.userId,job.id);
             const now = new Date(Date.now() + LEASE_MS);
             const updated = await prisma.aiWorkerLease.updateMany({
                 where: { id: "site", owner, until: { gt: new Date() } },
@@ -213,14 +218,12 @@ export async function processOne(owner: string = randomUUID()) {
         })().catch(() => controller.abort());
     }, 5000);
     try {
+        try { await requireLiveAiUser(job.userId); } catch { throw new AIError("AI_ACCESS_REVOKED"); }
         if (job.kind === "dialogue") {
             await executeDialogueJob(job, owner, controller);
             return true;
         }
-        const account = await prisma.user.findUnique({
-            where: { id: job.userId },
-            select: { isActive: true },
-        });
+        const account = await requireLiveAiUser(job.userId);
         if (!account?.isActive) {
             await prisma.aiJob.updateMany({
                 where: { id: job.id, leaseOwner: owner, state: "running" },
@@ -231,6 +234,7 @@ export async function processOne(owner: string = randomUUID()) {
         const input = unprotect<JobInput>(job.input);
         const result = await aiRun.run(
             {
+                userId: job.userId,
                 jobId: job.id,
                 leaseOwner: owner,
                 signal: controller.signal,
@@ -241,6 +245,7 @@ export async function processOne(owner: string = randomUUID()) {
             () => execute(job.kind, input),
         );
         executionCompleted = true;
+        try { await assertJobModelAccess(job.userId,job.id); } catch { throw new AIError("AI_ACCESS_REVOKED"); }
         const current = await prisma.aiJob.findUnique({
             where: { id: job.id },
         });
@@ -250,6 +255,9 @@ export async function processOne(owner: string = randomUUID()) {
             current?.leaseOwner === owner
         ) {
             await prisma.$transaction(async (tx) => {
+                const effective = await loadEffectiveAIConfigInTx(tx,job.userId);
+                const contributors = await tx.aiAttempt.findMany({where:{jobId:job.id},select:{modelId:true}});
+                if(contributors.some(a=>!effective.config.models.some(m=>m.id===a.modelId))) throw new AIError("AI_ACCESS_REVOKED");
                 const committed = await tx.aiJob.updateMany({
                     where: {
                         id: job.id,
@@ -300,7 +308,7 @@ export async function processOne(owner: string = randomUUID()) {
             });
             const state = failureState(
                 code,
-                !!current?.cancelRequested || code === "AI_USER_DISABLED",
+                !!current?.cancelRequested || code === "AI_USER_DISABLED" || code === "AI_ACCESS_REVOKED",
             );
             const changed = await tx.aiJob.updateMany({
                 where: { id: job.id, state: "running", leaseOwner: owner },
@@ -311,6 +319,8 @@ export async function processOne(owner: string = randomUUID()) {
                     leaseUntil: null,
                 },
             });
+            if (changed.count === 1 && job.conversationId)
+                await tx.aiConversation.updateMany({where:{id:job.conversationId,activeJobId:job.id},data:{state,revision:{increment:1}}});
             if (changed.count === 1)
                 await tx.aiAttempt.updateMany({
                     where: { jobId: job.id, state: "running" },

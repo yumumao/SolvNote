@@ -1,5 +1,8 @@
 # User Management Implementation Plan
 
+> 2026-09-27 publication update: implemented in an isolated worktree; the user confirmed real local verification and authorized GitHub publication. Source publication does not authorize a production migration, image release, or Zeabur restart. Both login and registration require Turnstile; registration and AI export remain opt-in policies. See `docs/user-management.md` for current deployment variables and single-canonical-domain requirements. Historical checkboxes below are not deployment acceptance evidence.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a secure, administratively controlled public-registration and user-lifecycle system with Turnstile verification, invitation codes, account expiry, password reset, session revocation, and safe admin APIs.

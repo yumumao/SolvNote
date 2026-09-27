@@ -197,7 +197,12 @@ Announcement (id, bilingual content, status, pinned, readPolicy, time window, re
   → 已登录账号在/announcements查看并按账号记录已读
 
 AI配置：管理员在/admin/ai编辑、导入、去重和连通性测试；加密配置交换格式见docs/portable-ai-config.md。
-当前用户注册、邀请码、Turnstile、账户期限和AI配置导出开关仍处于实施计划阶段，项目概览不得视为这些策略已在运行中生效。
+2026-09-27用户系统源码已实现，本地真实验证经用户确认；源码推送不等于镜像发布或线上升级：
+登录和注册均强制Turnstile；注册默认关闭，邀请码默认30天、1次，可续期/停用/公开自动显示。
+自注册7天试用、手建永久，管理员可设7天/30天/永久；到期禁用访问，满30天分批清理。
+/admin/users管理用户与注册；/admin/ai设置新账号默认3项模型及逐人授权；/ai-settings维护本人私有AI。
+默认禁止所有角色AI导出，运维显式SOLVNOTE_ENABLE_AI_CONFIG_EXPORT=true仅恢复管理员加密导出。
+保留导入、编辑和无密钥模板。实施/升级/验收边界见docs/user-management.md。
 
 ```
 
@@ -255,8 +260,8 @@ AI配置：管理员在/admin/ai编辑、导入、去重和连通性测试；加
 | `npm run test:unit` | 单元测试 |
 | `npm run test:integration` | 集成测试 |
 | `npm run test:coverage` | 带覆盖率测试 |
-| `npm run test:e2e` | Playwright E2E |
-| `node scripts/reset-password.js <email> <password>` | 重置用户密码 |
+| `node e2e/run-isolated.mjs` | 本地隔离Playwright E2E：临时源码与数据库、合成会话、仅4330；不读取部署配置，不复用现有服务。`npm run test:e2e`只接受已经设置好的隔离环境。 |
+| `/admin/users`重置密码 | 推荐入口：一次性临时密码、强制改密并撤销旧会话；不要使用旧版命令行明文传参脚本。 |
 
 ---
 

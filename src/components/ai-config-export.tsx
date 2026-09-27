@@ -7,6 +7,7 @@ const button = "border rounded-md px-3 py-2 text-sm disabled:opacity-40 hover:bg
 function exportError(error: unknown): string {
     const e = error as {status?: number; data?: {message?: string}} | null;
     const code = e?.data?.message;
+    if (code === "AI_CONFIG_EXPORT_DISABLED") return "部署已关闭AI配置导出，管理员也不能导出。导入和编辑仍可使用。";
     if (code === "IMPORT_ORIGIN_REJECTED") return "导出被同源校验拒绝。请关闭此窗口，查看页面的站点地址检查，对照浏览器地址与NEXTAUTH_URL；与ScanDex文件来源无关。未导出文件。";
     if (code === "CONFIG_CONFLICT") return "配置已被其他操作更新，请刷新页面、核对配置后重新导出。";
     if (code === "PASSPHRASE_LENGTH") return "口令须为12至1024个字符，不能全为空白。";
@@ -25,7 +26,7 @@ function encryptedFile(raw: unknown) {
     if (blob.size > 1024 * 1024) throw Error("INVALID_EXPORT_RESPONSE");
     return blob;
 }
-export function AIConfigExport({disabled, revision}: {disabled: boolean; revision: number}) {
+export function AIConfigExport({disabled, revision, exportEnabled = false}: {disabled: boolean; revision: number; exportEnabled?: boolean}) {
     const [open,setOpen] = useState(false), [busy,setBusy] = useState(false);
     const [password,setPassword] = useState(""), [confirm,setConfirm] = useState(""), [message,setMessage] = useState("");
     const inFlight = useRef(false), downloadUrl = useRef<string | null>(null), timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -33,7 +34,7 @@ export function AIConfigExport({disabled, revision}: {disabled: boolean; revisio
     useEffect(() => () => { if(timer.current) clearTimeout(timer.current); if(downloadUrl.current) URL.revokeObjectURL(downloadUrl.current); }, []);
     function changeOpen(value: boolean) {if(inFlight.current) return;setOpen(value);setPassword("");setConfirm("");setMessage("");release();}
     async function download() {
-        if(inFlight.current || disabled) return;
+        if(inFlight.current || disabled || exportEnabled !== true) return;
         if(password.length < 12 || password.length > 1024 || !password.trim()) {setMessage("口令须为12至1024个字符，不能全为空白。");return;}
         if(password !== confirm) {setMessage("两次口令不一致。");return;}
         inFlight.current=true;setBusy(true);setMessage("");
@@ -47,6 +48,7 @@ export function AIConfigExport({disabled, revision}: {disabled: boolean; revisio
         } catch(error) {release();setMessage(exportError(error));}
         finally {setPassword("");setConfirm("");inFlight.current=false;setBusy(false);}
     }
+    if (exportEnabled !== true) return null;
     return <Dialog open={open} onOpenChange={changeOpen}>
         <DialogTrigger asChild><button className={button} disabled={disabled} title={disabled ? "请先加载并保存设置" : "导出已保存的AI配置"}>导出配置</button></DialogTrigger>
         <DialogContent className="max-h-[85vh] overflow-y-auto">

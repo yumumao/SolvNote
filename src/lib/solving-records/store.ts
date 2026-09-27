@@ -5,6 +5,8 @@ import type {DialoguePayload} from "../ai-dialogue/types";
 import type {JobInput} from "../ai-jobs/schema";
 import {SOLVING_JOB_KINDS} from "./retention";
 import {recordStatus,stateGroups,type RecordStatus,type RecordPage,type SolvingRecord,type SolvingStats} from "./types";
+import { requireLiveAiUser } from "../ai-access/account";
+import { loadEffectiveAIConfig } from "../ai-access/effective-config";
 const PAGE_SIZE=20;
 type Cursor={at:string;key:string};
 function cursorFrom(raw:string|null):Cursor|null {
@@ -30,6 +32,7 @@ function titleOf(encrypted:string,conversation:boolean,result?:string|null):stri
     }catch{return "记录内容暂不可读，请检查备份和主钥";}
 }
 export async function listSolvingRecords(userId:string,params:URLSearchParams):Promise<RecordPage> {
+    await requireLiveAiUser(userId);
     const cursor=cursorFrom(params.get("cursor"));const status=params.get("status")||"all";
     if(status!=="all" && !Object.hasOwn(stateGroups,status))throw new AIRequestError(400,"INVALID_FILTER");
     const state=status==="all"?{}:{state:{in:stateGroups[status as RecordStatus]}};
@@ -41,7 +44,11 @@ export async function listSolvingRecords(userId:string,params:URLSearchParams):P
     const candidates=[...conversations.map(c=>({...c,key:"c:"+c.id,kind:"conversation" as const,encrypted:c.payload})),...jobs.map(j=>({...j,key:"j:"+j.id,kind:j.kind as "analyze"|"reanswer",encrypted:j.input}))];
     candidates.sort((a,b)=>b.createdAt.getTime()-a.createdAt.getTime() || (a.key<b.key?1:a.key>b.key?-1:0));
     const page=candidates.slice(0,PAGE_SIZE);
-    const records:SolvingRecord[]=page.map(r=>({key:r.key,id:r.id,kind:r.kind,title:titleOf(r.encrypted,r.kind==="conversation","result" in r?r.result:undefined),state:r.state,status:recordStatus(r.state),createdAt:r.createdAt.toISOString(),updatedAt:r.updatedAt.toISOString(),...("roundsUsed" in r?{roundsUsed:r.roundsUsed}:{})}));
+    const effective=await loadEffectiveAIConfig(userId);
+    const allowed=new Set(effective.config.models.map(m=>m.id));
+    const attempts=await prisma.aiAttempt.findMany({where:{job:{userId,OR:[{id:{in:page.filter(r=>r.kind!=="conversation").map(r=>r.id)}},{conversationId:{in:page.filter(r=>r.kind==="conversation").map(r=>r.id)}}]}},select:{modelId:true,job:{select:{id:true,conversationId:true}}}});
+    const blocked=new Set(attempts.filter(a=>!allowed.has(a.modelId)).map(a=>a.job.conversationId?"c:"+a.job.conversationId:"j:"+a.job.id));
+    const records:SolvingRecord[]=page.map(r=>({key:r.key,id:r.id,kind:r.kind,title:blocked.has(r.key)?"AI access revoked":titleOf(r.encrypted,r.kind==="conversation","result" in r?r.result:undefined),state:r.state,status:recordStatus(r.state),createdAt:r.createdAt.toISOString(),updatedAt:r.updatedAt.toISOString(),...("roundsUsed" in r?{roundsUsed:r.roundsUsed}:{})}));
     const last=records.at(-1);
     return {records,nextCursor:candidates.length>PAGE_SIZE && last?Buffer.from(JSON.stringify({at:last.createdAt,key:last.key})).toString("base64url"):null};
 }

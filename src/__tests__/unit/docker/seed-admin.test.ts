@@ -1,3 +1,4 @@
+import * as zod from "zod";
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -31,13 +32,13 @@ function evaluateSource(
     globals: Record<string, unknown>,
     isEntry = true,
 ) {
-    const module = { exports: {} as Record<string, unknown> };
+    const evaluatedModule = { exports: {} as Record<string, unknown> };
     const require = Object.assign((name: string) => {
         if (!Object.prototype.hasOwnProperty.call(modules, name)) {
             throw new Error(`Unexpected dependency in isolated test: ${name}`);
         }
         return modules[name];
-    }, { main: isEntry ? module : undefined });
+    }, { main: isEntry ? evaluatedModule : undefined });
     const source = readFileSync(resolve(root, path), 'utf8');
     const code = path.endsWith('.ts') ? transpileModule(source, {
         compilerOptions: {
@@ -47,10 +48,10 @@ function evaluateSource(
         },
         fileName: path,
     }).outputText : source;
-    runInNewContext(code, { module, exports: module.exports, require, ...globals }, {
+    runInNewContext(code, { module: evaluatedModule, exports: evaluatedModule.exports, require, ...globals }, {
         filename: path,
     });
-    return module.exports;
+    return evaluatedModule.exports;
 }
 
 function makeUser(overrides: Partial<User> = {}): User {
@@ -278,21 +279,42 @@ describe('seed-admin injectable helper', () => {
 
 function loadAuth() {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const prisma = { user: { findUnique: vi.fn() } };
+    const user = { findUnique: vi.fn() };
+    const identities = vi.fn().mockResolvedValue([{ id: 'synthetic-user-id', email: initialEmail }]);
+    const tx = { user, $queryRaw: identities };
+    const prisma = {
+        user,
+        $transaction: vi.fn(async (action: (client: typeof tx) => Promise<unknown>) => action(tx)),
+    };
     const compare = vi.fn().mockResolvedValue(true);
+    // Exercise the real identity helper without expanding the allowlist to any
+    // database/config loader; only the supplied in-memory transaction can read rows.
+    const emailIdentity = evaluateSource('src/lib/user-management/email-identity.ts', {
+        './schema': evaluateSource('src/lib/user-management/schema.ts', { zod }, {}),
+        './errors': evaluateSource('src/lib/user-management/errors.ts', {}, {}),
+    }, {});
+    const authenticate = evaluateSource('src/lib/user-management/authenticate.ts', {
+        zod, bcryptjs: { compare }, '@/lib/prisma': { prisma },
+        '@/lib/security/turnstile': { verifyTurnstileToken: async () => true },
+        './rate-limit': { limitAuthentication: async () => true, requestIp: () => undefined },
+        './email-identity': emailIdentity,
+        './policy': { isAccountExpired: (u: { expiresAt?: Date | null }) => !!u.expiresAt && u.expiresAt <= new Date() },
+    }, { process: { env: {} } });
     const exports = evaluateSource('src/lib/auth.ts', {
         '@next-auth/prisma-adapter': { PrismaAdapter: vi.fn() },
         'next-auth/providers/credentials': (options: unknown) => options,
         '@/lib/prisma': { prisma },
         bcryptjs: { compare },
         '@/lib/logger': { createLogger: () => logger },
-    }, { process: { env: { NODE_ENV: 'production' } } });
+        '@/lib/user-management/authenticate': authenticate,
+        '@/lib/user-management/live-session': {},
+    }, { process: { env: { NODE_ENV: 'production' } }, Headers });
     const options = exports.authOptions as {
         debug: boolean;
-        providers: { authorize: (credentials?: { email: string; password: string }) => Promise<unknown> }[];
+        providers: { authorize: (credentials?: { email: string; password: string; turnstileToken?: string }) => Promise<unknown> }[];
         logger: { error: (code: string, metadata: unknown) => void; debug: (code: string, metadata: unknown) => void };
     };
-    return { options, logger, prisma, compare };
+    return { options, logger, prisma, compare, identities };
 }
 
 describe('authentication logging only', () => {
@@ -307,35 +329,42 @@ describe('authentication logging only', () => {
     });
 
     it('keeps successful authorization unchanged without logging credentials or user email', async () => {
-        const { options, logger, prisma, compare } = loadAuth();
-        const user = { ...makeUser({ email: initialEmail }), name: 'Synthetic Admin' };
+        const { options, logger, prisma, compare, identities } = loadAuth();
+        const user = { ...makeUser({ email: initialEmail }), name: 'Synthetic Admin', sessionVersion: 3, mustChangePassword: false };
         prisma.user.findUnique.mockResolvedValue(user);
-        const result = await options.providers[0].authorize({ email: initialEmail, password: initialPassword });
+        const result = await options.providers[0].authorize({ email: initialEmail, password: initialPassword, turnstileToken: "synthetic-token-only" });
 
-        expect(prisma.user.findUnique).toHaveBeenCalledExactlyOnceWith({ where: { email: initialEmail } });
+        expect(prisma.$transaction).toHaveBeenCalledOnce();
+        expect(identities).toHaveBeenCalledOnce();
+        expect(identities.mock.calls[0][1]).toBe(initialEmail);
+        expect(prisma.user.findUnique).toHaveBeenCalledExactlyOnceWith({ where: { id: user.id } });
         expect(compare).toHaveBeenCalledExactlyOnceWith(initialPassword, storedHash);
-        expect(result).toEqual({ id: user.id, email: user.email, name: user.name, role: user.role });
+        expect(result).toEqual({ id: user.id, email: user.email, name: user.name, role: user.role, sessionVersion: 3, mustChangePassword: false });
         const output = Object.values(logger).flatMap((fn) => fn.mock.calls.map((args) => format(...args))).join('\n');
         expectNoCredentials(output);
     });
 
     it('still rejects missing credentials without a lookup', async () => {
-        const { options, prisma } = loadAuth();
+        const { options, prisma, identities } = loadAuth();
         await expect(options.providers[0].authorize()).resolves.toBeNull();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(identities).not.toHaveBeenCalled();
         expect(prisma.user.findUnique).not.toHaveBeenCalled();
     });
 
     it('still rejects an unknown user', async () => {
         const { options, prisma, compare } = loadAuth();
         prisma.user.findUnique.mockResolvedValue(null);
-        await expect(options.providers[0].authorize({ email: initialEmail, password: initialPassword })).resolves.toBeNull();
+        await expect(options.providers[0].authorize({ email: initialEmail, password: initialPassword, turnstileToken: "synthetic-token-only" })).resolves.toBeNull();
+        expect(prisma.user.findUnique).toHaveBeenCalledExactlyOnceWith({ where: { id: 'synthetic-user-id' } });
         expect(compare).not.toHaveBeenCalled();
     });
 
     it('still rejects a disabled account without comparing its password', async () => {
         const { options, prisma, compare } = loadAuth();
         prisma.user.findUnique.mockResolvedValue(makeUser({ isActive: false }));
-        await expect(options.providers[0].authorize({ email: initialEmail, password: initialPassword })).rejects.toThrow('Account is disabled');
+        await expect(options.providers[0].authorize({ email: initialEmail, password: initialPassword, turnstileToken: "synthetic-token-only" })).resolves.toBeNull();
+        expect(prisma.user.findUnique).toHaveBeenCalledExactlyOnceWith({ where: { id: 'synthetic-user-id' } });
         expect(compare).not.toHaveBeenCalled();
     });
 
@@ -343,6 +372,7 @@ describe('authentication logging only', () => {
         const { options, prisma, compare } = loadAuth();
         prisma.user.findUnique.mockResolvedValue(makeUser());
         compare.mockResolvedValue(false);
-        await expect(options.providers[0].authorize({ email: initialEmail, password: initialPassword })).resolves.toBeNull();
+        await expect(options.providers[0].authorize({ email: initialEmail, password: initialPassword, turnstileToken: "synthetic-token-only" })).resolves.toBeNull();
+        expect(compare).toHaveBeenCalledExactlyOnceWith(initialPassword, storedHash);
     });
 });

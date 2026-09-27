@@ -1,6 +1,8 @@
 import type { PortableConfig } from "../ai-config/schema";
 import { AsyncLocalStorage } from "node:async_hooks";
 export type AIRun = {
+    userId?: string;
+    usedModelIds?: string[];
     config?: PortableConfig;
     conversationId?: string;
     round?: number;

@@ -1,118 +1,83 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TurnstileWidget, useRegistrationStatus } from "@/components/turnstile-widget";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { Eye, EyeOff, Loader2, AlertCircle } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
-import { RegisterRequest } from "@/types/api";
+import type { RegisterRequest } from "@/types/api";
+
+type RegistrationRequest = RegisterRequest & { inviteCode: string; turnstileToken: string };
 
 export default function RegisterPage() {
     const router = useRouter();
     const { t, language } = useLanguage();
+    const { status, error: statusError } = useRegistrationStatus();
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [educationStage, setEducationStage] = useState("junior_high");
     const [enrollmentYear, setEnrollmentYear] = useState("2025");
+    const [enteredInviteCode, setInviteCode] = useState<string | null>(null);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-    const [allowRegistration, setAllowRegistration] = useState<boolean | null>(null);
-
-    useEffect(() => {
-        checkRegistrationStatus();
-    }, []);
-
-    const checkRegistrationStatus = async () => {
-        try {
-            const res = await fetch("/api/register/status");
-            const data = await res.json();
-            setAllowRegistration(data.allowRegistration);
-        } catch (error) {
-            console.error("Failed to check registration status", error);
-            setAllowRegistration(true); // 默认允许
-        }
-    };
+    const [turnstileToken, setTurnstileToken] = useState("");
+    const [resetKey, setResetKey] = useState(0);
+    const inFlight = useRef(false);
+    const inviteCode = enteredInviteCode ?? status?.inviteCode ?? "";
+    const configured = Boolean(status?.turnstileConfigured && status.turnstileSiteKey.trim());
+    const unavailable = language === "zh"
+        ? "安全验证未配置或暂不可用，注册已禁用。请刷新重试或联系管理员。"
+        : "Security verification is not configured or unavailable. Registration is disabled. Reload or contact the administrator.";
+    const passwordHelp = language === "zh"
+        ? "密码至少15个字符，最多72个UTF-8字节（中文等字符会占多个字节），不要求特定字符组合。"
+        : "Use at least 15 characters and at most 72 UTF-8 bytes (some characters use multiple bytes). No character composition rules.";
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true);
+        if (inFlight.current) return;
+        inFlight.current = true;
+        const token = turnstileToken;
+        setTurnstileToken("");
         setError("");
-
-        // 验证两次密码是否一致
-        if (password !== confirmPassword) {
-            setError(t.auth?.register?.passwordMismatch || 'Passwords do not match');
-            setLoading(false);
-            return;
-        }
-
         try {
-            await apiClient.post<any, RegisterRequest>("/api/register", {
-                name,
-                email,
-                password,
-                educationStage,
-                enrollmentYear: parseInt(enrollmentYear)
-            });
-
-            alert(t.auth?.register?.success || 'Registration successful! Please login');
-            router.push("/login");
-        } catch (error: any) {
-            let errorMsg = error.data?.message;
-            if (errorMsg === 'User with this email already exists') {
-                errorMsg = t.auth?.register?.emailExists || errorMsg;
-            } else {
-                errorMsg = errorMsg || (t.auth?.register?.failed || 'Registration failed');
+            if (!status?.enabled) {
+                setError(t.auth?.register?.disabled || "Registration is disabled");
+                return;
             }
-            setError(errorMsg);
+            if (!configured) { setError(unavailable); return; }
+            if (!token) { setError(language === "zh" ? "请先完成安全验证。" : "Complete security verification first."); return; }
+            if (password !== confirmPassword) { setError(t.auth?.register?.passwordMismatch || "Passwords do not match"); return; }
+            if (password.length < 15 || new TextEncoder().encode(password).length > 72) { setError(passwordHelp); return; }
+            if (status.inviteRequired && !inviteCode.trim()) { setError(language === "zh" ? "请输入邀请码。" : "Enter an invitation code."); return; }
+            setLoading(true);
+            await apiClient.post<unknown, RegistrationRequest>("/api/register", {
+                name, email, password, educationStage, enrollmentYear: parseInt(enrollmentYear, 10),
+                inviteCode: inviteCode.trim(), turnstileToken: token,
+            });
+            // The registration token is consumed: never reuse it for automatic login.
+            router.push("/login");
+        } catch (cause: unknown) {
+            const data = cause && typeof cause === "object" && "data" in cause ? cause.data : null;
+            const message = data && typeof data === "object" && "message" in data && typeof data.message === "string" ? data.message : "";
+            setError(message === "User with this email already exists"
+                ? (t.auth?.register?.emailExists || message)
+                : (message || t.auth?.register?.failed || "Registration failed"));
         } finally {
+            setTurnstileToken("");
+            setResetKey(value => value + 1);
+            inFlight.current = false;
             setLoading(false);
         }
     };
-
-    // 加载中状态
-    if (allowRegistration === null) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-        );
-    }
-
-    // 注册已禁用
-    if (allowRegistration === false) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-                <Card className="w-full max-w-md">
-                    <CardHeader>
-                        <CardTitle className="text-2xl text-center">
-                            {t.auth?.register?.disabled || 'Registration Disabled'}
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="flex flex-col items-center gap-4 py-6">
-                            <AlertCircle className="h-12 w-12 text-muted-foreground" />
-                            <p className="text-center text-muted-foreground">
-                                {t.auth?.register?.disabledMessage || 'Registration is currently disabled by administrator. Please contact admin for access.'}
-                            </p>
-                        </div>
-                        <div className="text-center">
-                            <Link href="/login" className="text-primary hover:underline">
-                                {t.auth?.register?.backToLogin || 'Back to Login'}
-                            </Link>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-        );
-    }
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -124,6 +89,9 @@ export default function RegisterPage() {
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleSubmit} className="space-y-4">
+                        {!status && !statusError && <p role="status" className="text-sm text-muted-foreground">{language === "zh" ? "正在加载安全设置…" : "Loading security settings…"}</p>}
+                        {status?.enabled === false && <p role="alert" className="text-sm text-red-600">{t.auth?.register?.disabledMessage || "Registration is currently disabled by administrator."}</p>}
+                        {(statusError || (status && !configured)) && <p role="alert" className="text-sm text-red-600">{unavailable}</p>}
                         <div className="space-y-2">
                             <label htmlFor="name" className="text-sm font-medium">
                                 {t.auth?.name || 'Name'}
@@ -158,11 +126,13 @@ export default function RegisterPage() {
                                 <Input
                                     id="password"
                                     name="password"
+                                    autoComplete="new-password"
+                                    aria-describedby="password-help"
                                     type={showPassword ? "text" : "password"}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
-                                    minLength={6}
+                                    minLength={15}
                                     className="pr-10"
                                 />
                                 <Button
@@ -189,11 +159,12 @@ export default function RegisterPage() {
                                 <Input
                                     id="confirmPassword"
                                     name="confirmPassword"
+                                    autoComplete="new-password"
                                     type={showConfirmPassword ? "text" : "password"}
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     required
-                                    minLength={6}
+                                    minLength={15}
                                     className="pr-10"
                                 />
                                 <Button
@@ -247,10 +218,16 @@ export default function RegisterPage() {
                                 max={new Date().getFullYear()}
                             />
                         </div>
+                        <p id="password-help" className="text-sm text-muted-foreground">{passwordHelp}</p>
+                        {(status?.inviteRequired || inviteCode) && <div className="space-y-2">
+                            <label htmlFor="inviteCode" className="text-sm font-medium">{language === "zh" ? "邀请码" : "Invitation code"}</label>
+                            <Input id="inviteCode" name="inviteCode" value={inviteCode} onChange={e => setInviteCode(e.target.value)} required={status?.inviteRequired} autoComplete="off" />
+                        </div>}
+                        {status?.enabled && configured && <TurnstileWidget siteKey={status.turnstileSiteKey} action="register" onTokenChange={setTurnstileToken} resetKey={resetKey} language={language} />}
                         {error && (
-                            <div className="text-red-500 text-sm text-center">{error}</div>
+                            <div role="alert" className="text-red-500 text-sm text-center">{error}</div>
                         )}
-                        <Button type="submit" className="w-full" disabled={loading}>
+                        <Button type="submit" className="w-full" disabled={loading || !status?.enabled || !configured || !turnstileToken}>
                             {loading
                                 ? (t.auth?.register?.registering || 'Registering...')
                                 : (t.auth?.register?.action || 'Register')}

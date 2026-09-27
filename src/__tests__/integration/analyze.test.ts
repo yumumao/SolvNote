@@ -34,7 +34,7 @@ describe('POST /api/analyze (202持久任务契约)', () => {
         vi.resetAllMocks();
         mocks.session.mockResolvedValue({ user: { id: 'user-123', role: 'admin' } });
         mocks.user.findUnique.mockResolvedValue({
-            id: 'user-123', role: 'user', isActive: true,
+            id: 'user-123', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false,
             educationStage: null, enrollmentYear: null,
         });
         mocks.submitJob.mockResolvedValue({ id: 'job-analyze-1', state: 'pending' });
@@ -52,7 +52,7 @@ describe('POST /api/analyze (202持久任务契约)', () => {
             expect.objectContaining({ questionText: '求解 x + 2 = 5', mode: 'text', language: 'zh', tags: [] }),
             'analyze-request-1');
         expect(mocks.user.findUnique).toHaveBeenCalledWith({
-            where: { id: 'user-123' }, select: { id: true, role: true, isActive: true },
+            where: { id: 'user-123' }, select: { id: true, role: true, isActive: true, expiresAt: true, sessionVersion: true, mustChangePassword: true, revision: true, aiAccessInitialized: true },
         });
     });
 
@@ -94,7 +94,7 @@ describe('POST /api/analyze (202持久任务契约)', () => {
 
     it('未给年级时使用用户档案推导，作为后续讲解偏好', async () => {
         mocks.user.findUnique.mockResolvedValue({
-            id: 'user-123', role: 'user', isActive: true,
+            id: 'user-123', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0, mustChangePassword: false,
             educationStage: 'junior_high', enrollmentYear: 2025,
         });
         expect((await POST(request({ questionText: 'q' }))).status).toBe(202);

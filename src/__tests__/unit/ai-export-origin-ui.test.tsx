@@ -20,7 +20,7 @@ beforeEach(() => {
  vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(()=>{});
 });
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals();});
-const renderExport=async(disabled=false)=>{await act(async()=>root.render(<AIConfigExport revision={4} disabled={disabled}/>));};
+const renderExport=async(disabled=false)=>{await act(async()=>root.render(<AIConfigExport revision={4} disabled={disabled} exportEnabled={true}/>));};
 it("disables export for unsaved/unloaded settings",async()=>{await renderExport(true);expect(host.querySelector("button")!.disabled).toBe(true);});
 it("requires matching independent passwords, then downloads encrypted envelope only",async()=>{
  await renderExport(); await click("导出配置");
@@ -48,4 +48,17 @@ it.each(["missing","invalid","configured"])("shows actionable origin diagnostics
 });
 it("does not warn when canonical origin matches",async()=>{
  api.get.mockResolvedValue({state:"configured",canonicalOrigin:window.location.origin});await act(async()=>root.render(<AIOriginStatus/>));expect(host.querySelector('[role="alert"]')).toBeNull();expect(host.textContent).toContain("地址一致");
+});
+
+it("hides export unless given the explicit server capability", async () => {
+ for (const capability of [undefined, false]) {
+  await act(async()=>root.render(<AIConfigExport revision={4} disabled={false} exportEnabled={capability}/>));
+  expect(host.querySelector("button")).toBeNull();
+ }
+ expect(api.post).not.toHaveBeenCalled();
+});
+it("handles the server disabling export after the capability was fetched", async () => {
+ await renderExport();await click("导出配置");await fill("设置导出口令","synthetic-export-password");await fill("再次输入导出口令","synthetic-export-password");
+ api.post.mockRejectedValue({status:403,data:{message:"AI_CONFIG_EXPORT_DISABLED"}});await click("加密并下载");
+ expect(document.body.textContent).toContain("部署已关闭AI配置导出");expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
