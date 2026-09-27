@@ -6,9 +6,10 @@
 
 - 先在本地完成定向测试、TypeScript检查、生产构建和`git diff --check`。
 - 本地目录名为`solvnote`，代码包名为`solvnote`；版本号以`package.json`为准。
-- GitHub仓库重命名后，确认`origin`已指向`https://github.com/yumumao/solvnote.git`再推送。本地改名本身不会自动修改远程仓库，也不会发布镜像。
+- GitHub仓库重命名后，确认`origin`已指向`https://github.com/yumumao/SolvNote.git`再推送。本地改名本身不会自动修改远程仓库，也不会发布镜像。
 - 涉及Prisma迁移时，先停止目标实例写入并配对备份数据库、配置目录和原秘密变量，尤其是AI加密主钥。
-- 只有明确确认镜像构建成功后，才让部署平台拉取新摘要；不要用`latest`替代迁移前的版本核对。
+- 只有明确确认镜像构建成功后，才让部署平台拉取新摘要；不要用`latest`替代迁移前的版本核对。当前GitHub仓库为公开的`yumumao/SolvNote`，默认分支为`main`，Issues已启用；关于页面的问题反馈链接指向仓库Issues。
+- 用户系统新注册、Turnstile、邀请码、期限和账户清理仍以实施计划为准；在新流程本地验收前，不要把旧注册接口直接开放到公网。
 
 ## 版本标签策略
 
@@ -27,8 +28,8 @@
 ```bash
 git status --short
 git diff --check
-npm run test:run
-npm run typecheck
+npm run test
+npx tsc --noEmit
 npm run build
 ```
 

@@ -14,6 +14,7 @@
 
 - Do not open public registration, run a production migration, run `prisma generate` in the main worktree, call a real AI provider, or change Zeabur/Cloudflare production settings during implementation.
 - Existing administrator accounts start with `expiresAt = null`; no existing account is silently expired or deleted.
+- Invitation lifetime is 30 days by default; renewal/extension is an explicit administrator action, and registration-box auto-display is a separate setting. Plaintext invitation codes are returned only at creation or explicit reveal according to the display policy, never included in ordinary list DTOs.
 - An expired, disabled, or session-revoked account is rejected by the server before reading or changing private data; hiding a page or button is never an authorization control.
 - API responses use explicit allowlisted DTOs and never include `password`, password hashes, session tokens, invite-code plaintext, AI keys, or complete Prisma objects.
 - The last usable administrator cannot be disabled, deleted, or demoted; an administrator cannot disable/delete the currently authenticated account.
@@ -66,7 +67,7 @@ Expected: FAIL because the policy module and exported contracts do not exist.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Define the policy object with explicit values only after the user accepts them. The confirmed policy values are: new registrations default to a `7`-day trial; an administrator may choose only `7` days, `30` days, or permanent (`null`) for the registration default; users created manually by an administrator are permanent by default; expiry blocks the entire site rather than only AI; an expired account is retained for `30` days and then permanently purged by an idempotent cleanup task; invitation required when the administrator enables it, invitation default one use with a `30`-day lifetime, and reset mode `temporary-password-and-force-change`. Existing administrators and existing ordinary users are not silently changed until a separate migration policy is approved. Use UTC `Date` comparisons and fixed public error codes such as `REGISTRATION_DISABLED`, `INVITE_REQUIRED`, `INVITE_INVALID`, `ACCOUNT_EXPIRED`, and `SESSION_REVOKED`.
+Define the policy object with explicit values only after the user accepts them. The confirmed policy values are: new registrations default to a `7`-day trial; an administrator may choose only `7` days, `30` days, or permanent (`null`) for the registration default; users created manually by an administrator are permanent by default; expiry blocks the entire site rather than only AI; an expired account is retained for `30` days and then permanently purged by an idempotent cleanup task; invitation required when the administrator enables it, invitation default one use with a `30`-day lifetime, renewable by an administrator; the admin may choose whether the active registration code is automatically displayed in the registration box; and reset mode `temporary-password-and-force-change`. Existing administrators and existing ordinary users are not silently changed until a separate migration policy is approved. Use UTC `Date` comparisons and fixed public error codes such as `REGISTRATION_DISABLED`, `INVITE_REQUIRED`, `INVITE_INVALID`, `ACCOUNT_EXPIRED`, and `SESSION_REVOKED`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -90,8 +91,8 @@ git commit -m "docs: define user management policy boundary"
 
 **Interfaces:**
 - `User` adds `expiresAt DateTime?`, `sessionVersion Int @default(0)`, and `mustChangePassword Boolean @default(false)`. Add a cleanup service/command contract that permanently deletes users whose non-null `expiresAt` is at least `30` days in the past; `expiresAt = null` is permanent and is never selected.
-- Create `RegistrationSettings` singleton with `id`, `allowRegistration`, `inviteRequired`, `defaultExpirationDays`, `revision`, timestamps.
-- Create `InviteCode` with hashed code, `maxUses`, `usedCount`, `expiresAt`, `disabledAt`, creator, timestamps, and a unique hash index. Never store plaintext codes.
+- Create `RegistrationSettings` singleton with `id`, `allowRegistration`, `inviteRequired`, `defaultExpirationDays`, `inviteDefaultLifetimeDays` (default `30`), `inviteDisplayEnabled`, `revision`, timestamps.
+- Create `InviteCode` with hashed code, `maxUses`, `usedCount`, `expiresAt`, `disabledAt`, creator, timestamps, and a unique hash index. Store only a hash; support explicit administrator renewal/extension and usage metadata, while never returning plaintext in list responses. Never store plaintext codes.
 - `dto.ts` exports `publicUserDTO`, `adminUserDTO`, `publicRegistrationStatusDTO`; each uses explicit fields and Date-to-ISO conversion.
 
 - [ ] **Step 1: Write the failing test**
@@ -274,7 +275,7 @@ Expected: FAIL because only the legacy `allowRegistration` JSON setting exists.
 
 - [ ] **Step 3: Implement admin APIs and UI**
 
-Add fields for registration toggle, Turnstile enabled indicator (the secret itself is never editable in the site), invitation requirement, default expiry days, and revision. Expose only the choices `7` days, `30` days, and permanent; reject arbitrary values and prevent enabling registration when Turnstile is enabled but the server secret/site key are unavailable. An administrator-created user action must default to permanent unless an explicit expiry is selected. Provide invite create/revoke/copy-once controls and a warning that the code cannot be recovered. Use live-admin checks and same-origin protection on every mutation.
+Add fields for registration toggle, Turnstile enabled indicator (the secret itself is never editable in the site), invitation requirement, default expiry days, and revision. Invitation settings include a default 30-day lifetime, administrator renewal/extension, and a separate `inviteDisplayEnabled` switch: when enabled, the active registration form may show the current usable code; when disabled, the registration form must not reveal it. The code is still hashed at rest and ordinary list responses contain only masked metadata. Expose only the choices `7` days, `30` days, and permanent; reject arbitrary values and prevent enabling registration when Turnstile is enabled but the server secret/site key are unavailable. An administrator-created user action must default to permanent unless an explicit expiry is selected. Provide invite create/revoke/copy-once controls and a warning that the code cannot be recovered. Use live-admin checks and same-origin protection on every mutation.
 
 - [ ] **Step 4: Run tests to verify they pass**
 

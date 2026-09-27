@@ -1,4 +1,10 @@
 # Version notes / 版本说明
+## Unreleased · 2026-09-27
+
+- 文档同步用户系统设计口径：新注册默认为7天试用，管理员可选择7天、30天或永久；管理员手动建用户默认永久；到期全站禁止访问，满30天后才清理。注册码默认有效30天，管理员可续期或调整有效期，并可选择是否在注册页面自动显示当前可用注册码；公开注册、Turnstile、邀请码及账户管理功能尚未进入运行代码，当前不应视为已启用。
+- README中英区分AI配置导出的目标安全策略与当前运行状态：目标是默认关闭、仅部署环境变量明确开启时放行，但当前源码尚未实现该运行时开关，管理员导出接口仍可能可用；导入和无密钥格式模板保留。
+- Documentation records the user-system design policy: new registrations default to a seven-day trial; administrators may choose seven days, 30 days, or permanent; administrator-created accounts are permanent by default; expired accounts are blocked site-wide and purged only after 30 days. Invitation codes are designed to default to 30 days and may later be renewed or displayed in the registration box by administrators. Registration, Turnstile, invitations, and account expiry remain unimplemented; the legacy source still defaults to allowing registration, so public deployments must disable it explicitly until the new flow is accepted locally.
+- README files now distinguish the target AI-export policy from the running source: the target is disabled by default and requires an explicit deployment environment variable, but the current export endpoint is not guarded by that switch yet; import and an empty format template remain available or planned as documented.
 
 ## 2.0.0-yus.2 · 2026-09-26
 

@@ -1,7 +1,7 @@
 # 解迹 · SolvNote — 项目概览
 
-> 基于 AI 的智能错题管理系统，帮助学生高效整理、分析和复习错题。
-> 版本: 1.5.5 | 框架: Next.js 16 (App Router) | 语言: TypeScript (strict)
+> 解迹·SolvNote是一个以AI解题、解题记录和错题复习为核心的学习记录系统。
+> 当前源码版本: 2.0.0-yus.2 | 框架: Next.js 16 (App Router) | 语言: TypeScript (strict)
 
 ---
 
@@ -166,8 +166,18 @@ User (id, email, password, name, role, isActive, educationStage, enrollmentYear)
   │     └── KnowledgeTag[] (多对多)
   │     └── ReviewSchedule[] (复习计划)
   ├── PracticeRecord (id, userId, subject, difficulty, isCorrect)
-  └── KnowledgeTag (id, name, subject, parentId, order, code, isSystem, userId)
-       └── 无限层级树 (邻接表) + 系统/自定义标签
+  ├── AiConversation / AiConversationAction   ← 长期解题会话与追问
+  ├── AiJob / AiAttempt                       ← 直接解题、重新解答及可取回任务
+  └── AnnouncementRead                       ← 公告已读状态
+
+KnowledgeTag (id, name, subject, parentId, order, code, isSystem, userId)
+  └── 无限层级树（邻接表）+系统/自定义标签
+
+AiConfiguration (id, revision, payload)       ← 加密AI配置快照
+AiDialogueSettings (id, defaultRounds, revision) ← 追问轮数设置
+Announcement (id, bilingual content, status, pinned, readPolicy, time window, revision)
+  └── AnnouncementRead (announcementId, userId) ← 按账号记录已读
+
 ```
 
 ---
@@ -175,15 +185,20 @@ User (id, email, password, name, role, isActive, educationStage, enrollmentYear)
 ## 核心业务流程
 
 ```
-用户上传图片 → 图片裁剪 → 图片压缩 (base64)
-  → POST /api/analyze (AI分析)
-    → 获取用户年级/学科 → 注入标签列表到 prompt
-    → AI Provider (Gemini/OpenAI/Azure) 分析
-    → Zod 校验返回数据
-    → 返回 ParsedQuestion { questionText, answerText, analysis, subject, knowledgePoints, requiresImage }
-  → 用户编辑确认 → POST /api/error-items (保存)
-    → 自动去重检测
-    → 保存到数据库 → 跳转错题本详情
+直接解题：上传图片/输入文字 → 裁剪压缩 → 受理为AiJob
+  → AI Provider（Gemini/OpenAI/Azure）识别、解题与必要补读
+  → Zod校验结果 → 首页展示并可编辑
+  → POST /api/error-items保存为错题本；受理后可从“我的AI任务”取回
+
+连续解题：创建AiConversation → 记录解题结果与追问/纠错动作
+  → /solving-records按游标查看长期解题记录 → /stats查看解题、错题与练习分项统计
+
+公告：管理员在/admin/announcements维护草稿、发布、隐藏、置顶、有效期和读后策略
+  → 已登录账号在/announcements查看并按账号记录已读
+
+AI配置：管理员在/admin/ai编辑、导入、去重和连通性测试；加密配置交换格式见docs/portable-ai-config.md。
+当前用户注册、邀请码、Turnstile、账户期限和AI配置导出开关仍处于实施计划阶段，项目概览不得视为这些策略已在运行中生效。
+
 ```
 
 ---
