@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/components/geogebra-demo", () => ({ GeogebraDemo: () => <div>external</div> }));
 vi.mock("@/components/ai-conversation", () => ({ dialogueLabels: {} }));
-import { ConstructionSchema, compileConstruction, CONSTRUCTION_PROMPT } from "@/lib/ai-drawing/construction";
+import { ConstructionSchema, compileConstruction, BASE_CONSTRUCTION_PROMPT } from "@/lib/ai-drawing/construction";
 import { AuxiliaryDrawing, DrawingResultPreview } from "@/components/auxiliary-drawing";
 import AITasks from "@/app/ai-tasks/page";
 import { apiClient } from "@/lib/api-client";
@@ -41,9 +41,9 @@ describe("original circle foundation", () => {
         expect(host.textContent).toContain("不是在原图片上叠线");
     });
     it("requires the original foundation instead of silently omitting unsupported curves", () => {
-        expect(CONSTRUCTION_PROMPT).toContain("先完整重建原题底图");
-        expect(CONSTRUCTION_PROMPT).toContain('"circles"');
-        expect(CONSTRUCTION_PROMPT).toContain("不得省略");
+        expect(BASE_CONSTRUCTION_PROMPT).toContain("原题底图重建助手");
+        expect(BASE_CONSTRUCTION_PROMPT).toContain('"circles"');
+        expect(BASE_CONSTRUCTION_PROMPT).toContain("必须保留原题全部边");
     });
     it("does not fetch arbitrary remote or executable original image URLs", async () => {
         const old = { ...raw, circles: undefined };
@@ -73,10 +73,10 @@ describe("honest drawing acceptance and restoration", () => {
     });
     it("does not claim recovery while still submitting and gives the exact job link after acceptance", async () => {
         let accept!: (r: Response) => void;
-        const fetchMock = vi.fn().mockImplementationOnce(() => new Promise<Response>(r => { accept = r; })).mockResolvedValueOnce(response({ state: "success", result: { type: "construction", plan: raw } }));
+        const fetchMock = vi.fn().mockImplementationOnce(() => new Promise<Response>(r => { accept = r; })).mockResolvedValueOnce(response({ state: "success", result: { type: "construction", plan: {...raw,steps:[]} } }));
         vi.stubGlobal("fetch", fetchMock); vi.spyOn(window, "confirm").mockReturnValue(true);
         await render(<AuxiliaryDrawing questionText="合成题" answerText="合成答案" analysis="合成解析" image={source} />);
-        await click("生成分步辅助线方案");
+        await click("第一步：生成原题底图");
         expect(host.querySelector('[role="status"]')?.textContent).toContain("尚未确认受理");
         expect(host.querySelector('a[href="/ai-tasks?job=drawing-owned"]')).toBeNull();
         await act(async () => accept(response({ jobId: "drawing-owned" }, 202)));
@@ -86,7 +86,7 @@ describe("honest drawing acceptance and restoration", () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         await render(<AuxiliaryDrawing questionText="合成题" answerText="合成答案" analysis="合成解析" image="data:image/png;base64,Yg==" />);
         expect(host.querySelector('img[alt="辅助线原题图对照"]')?.getAttribute("src")).toBe(source);
-        expect(host.querySelector('[role="alert"]')?.textContent).toContain("旧版本构造");
+        expect(host.querySelector('[role="alert"]')?.textContent).toContain("底图属于旧版本");
     });
     it("ignores stale detail responses and allows selecting the same job to retry", async () => {
         vi.useFakeTimers(); let finishOld!: (r: Response) => void; let reads = 0;

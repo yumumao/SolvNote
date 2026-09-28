@@ -22,3 +22,30 @@ describe("dialogue keeps notebook teaching requirements",()=>{
   expect(decoded.status).toBe("solved");if(decoded.status==="solved")expect(decoded.result.analysis).toContain(String.raw`\neq`);
  });
 });
+
+it("makes the solved result contract explicit for strict providers",()=>{
+ const prompt=solvePrompt("五年级");
+ for(const field of ["questionText","answerText","analysis","subject","knowledgePoints"])expect(prompt).toContain(field);
+ expect(prompt).toContain("必须是数组");
+ expect(prompt).toContain("必须完整返回");
+});
+
+
+describe("solver ingress metadata compatibility",()=>{
+ const result={answerText:"synthetic answer",analysis:"synthetic proof"};
+ it("accepts omitted duplicate question text and translates subject metadata",()=>{
+  expect(DecisionSchema.parse({status:"solved",result:{...result,subject:"math"}})).toMatchObject({status:"solved",result:{questionText:"",subject:"数学",knowledgePoints:[]}});
+ });
+ it("accepts a flattened solved envelope and explicit boolean strings",()=>{
+  expect(DecisionSchema.parse({status:"solved",...result,requiresImage:"true"})).toMatchObject({status:"solved",result:{requiresImage:true}});
+  expect(DecisionSchema.parse({status:"solved",result:{...result,requiresImage:"false"}})).toMatchObject({status:"solved",result:{requiresImage:false}});
+ });
+ it.each([{answerText:""},{answerText:"  "},{analysis:undefined},{analysis:"  "},{requiresImage:"sometimes"},{subject:"not-a-subject"}])("does not fabricate a missing answer or coerce ambiguous metadata %#",override=>{
+  expect(DecisionSchema.safeParse({status:"solved",result:{...result,...override}}).success).toBe(false);
+ });
+ it("uses a parseable solved example instead of slash-separated enum placeholders",()=>{
+  const example=solvePrompt().split("\n").find(line=>line.startsWith('{"status":"solved"'))!;
+  expect(example).toBeDefined();
+  expect(()=>parseJSON(example.replace(/。$/, ""),DecisionSchema)).not.toThrow();
+ });
+});

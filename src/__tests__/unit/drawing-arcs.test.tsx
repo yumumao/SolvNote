@@ -1,7 +1,7 @@
 import {act} from "react";
 import {createRoot} from "react-dom/client";
 import {describe,it,expect,vi} from "vitest";
-import {ConstructionSchema,compileConstruction,CONSTRUCTION_PROMPT} from "@/lib/ai-drawing/construction";
+import {ConstructionSchema,compileConstruction,BASE_CONSTRUCTION_PROMPT} from "@/lib/ai-drawing/construction";
 import {DrawingResultPreview} from "@/components/auxiliary-drawing";
 vi.mock("@/components/geogebra-demo",()=>({GeogebraDemo:()=>null}));
 const plan={title:"合成圆弧底图",points:[{id:"O",x:0,y:0},{id:"A",x:4,y:0},{id:"B",x:0,y:4},{id:"C",x:-4,y:0}],segments:[],arcs:[{center:"O",start:"A",end:"B",direction:"ccw",sector:true},{center:"O",start:"A",end:"C",direction:"cw"}],steps:[{description:"连接弦",operation:{kind:"segment",a:"A",b:"B"}}]};
@@ -22,5 +22,5 @@ describe("bounded circular arc foundations",()=>{
    const button=[...host.querySelectorAll('button')].find(b=>b.textContent==='上一步')!;await act(async()=>button.click());expect(host.querySelectorAll('path[data-base-arc]')).toHaveLength(2);expect(host.querySelectorAll('line')).toHaveLength(2);
   }finally{await act(async()=>root.unmount());vi.unstubAllGlobals();}
  });
- it("asks for supported arcs and does not demand an exact shaded-region reconstruction",()=>{expect(CONSTRUCTION_PROMPT).toContain('"arcs"');expect(CONSTRUCTION_PROMPT).toContain('阴影');});
+ it("asks for supported arcs and does not demand an exact shaded-region reconstruction",()=>{expect(BASE_CONSTRUCTION_PROMPT).toContain('"arcs"');expect(BASE_CONSTRUCTION_PROMPT).toContain('阴影');});
 });

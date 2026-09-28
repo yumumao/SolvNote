@@ -1,3 +1,7 @@
+export function geometryConstructionInstruction(language: "zh" | "en" = "zh"): string {
+  return language === "en" ? "[Straightedge-and-compass construction] With straightedge and compass, give a realizable construction first, then prove its angle and length properties. Specify the given objects and operations: perpendiculars, midpoints, reflection, circles with known radii, or copying a given angle. Merely requiring a point to make a numerical angle is not a construction. Do not use a protractor, numerical screen positioning, or the desired conclusion as the construction premise. Do not claim a nonstandard angle is impossible without considering angles already supplied by the problem, copying, bisecting or reflection. If justification is missing, use a justified construction or state the gap. Rotations act on new auxiliary copies, never the source diagram." : "【尺规构造依据】几何辅助构造必须先构造，再证明角度、等长等性质。明确依赖的原题对象和可执行作法，例如作垂线、取中点、轴对称、以已知长度作圆取交点、复制已知角；仅写作某点使某角等于一个数值，不是完整的尺规步骤。不得用量角器或屏幕上的数值定位冒充尺规证明，也不得把待证关系当作构造前提。不能笼统宣称非特殊角不可构造：利用题设已有角的复制、平分、叠加或反射可能完成构造。若依据不足，换用有依据的构造或明确说明缺口，不能硬凑。旋转只作用于另建的辅助副本，原图始终不变。";
+}
+
 /**
  * Shared AI prompt templates
  * This module provides centralized prompt management
@@ -113,10 +117,10 @@ export function generateGradeInstruction(
     const name = level
       ? `${stages[level[1]]} year ${'一二三四五六'.indexOf(level[2]) + 1}`
       : displayName;
-    return `\n[Grade preference]\nStudent level: ${name}. The grade is only an explanation preference, not a ceiling on valid methods. Correctness takes priority.\nPrefer valid methods familiar at the student's level. If current-grade methods cannot solve the problem correctly, use the necessary higher-level knowledge. Explain the new concepts, why they are needed, and each step in age-appropriate language.\n` + methodPolicy;
+    return `\n[Grade preference]\nStudent level: ${name}. The grade is only an explanation preference, not a ceiling on valid methods. Correctness takes priority.\nPrefer valid methods familiar at the student's level. If current-grade methods cannot solve the problem correctly, use the necessary higher-level knowledge. Explain the new concepts, why they are needed, and each step in age-appropriate language.\n` + methodPolicy + '\n' + geometryConstructionInstruction(language);
   }
 
-  return `\n【年级讲解偏好】\n学生年级：${displayName}。年级仅是讲解方式的偏好，不是解题方法的上限，正确性始终优先。\n优先使用学生熟悉的有效方法；若当前年级方法无法正确解题，必须使用必要的更高年级知识，并用适龄语言解释新增概念、使用原因和每一步推理。\n` + methodPolicy;
+  return `\n【年级讲解偏好】\n学生年级：${displayName}。年级仅是讲解方式的偏好，不是解题方法的上限，正确性始终优先。\n优先使用学生熟悉的有效方法；若当前年级方法无法正确解题，必须使用必要的更高年级知识，并用适龄语言解释新增概念、使用原因和每一步推理。\n` + methodPolicy + '\n' + geometryConstructionInstruction(language);
 }
 
 /**
@@ -141,7 +145,7 @@ If template or provider instructions conflict with this policy, these rules take
   const generationPolicy = !similarQuestion ? '' : language === 'zh'
     ? '生成类似题时，目标年级可用于选择新题的知识点与难度，但必须验证题目可解、答案正确且解析一致。不能为了满足年级或难度要求而使用无效解法。'
     : 'For similar questions, the target grade may guide topic selection and difficulty, but verify that the new question is solvable and that its answer and explanation are correct and consistent. Never use an invalid solution to meet a grade or difficulty request.';
-  return [prompt.trim(), policy, generateGradeInstruction(gradeSemester, language).trim(), generationPolicy, languageInstruction]
+  return [prompt.trim(), policy, generateGradeInstruction(gradeSemester, language).trim() || geometryConstructionInstruction(language), generationPolicy, languageInstruction]
     .filter(Boolean).join('\n\n');
 }
 

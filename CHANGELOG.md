@@ -1,5 +1,26 @@
 # Version notes / 版本说明
-## Unreleased · 2026-09-28
+## 维护更新 / Maintenance update · 2026-09-29
+- 辅助线维护：固定底图视窗不变，新增在新标签页打开当前步骤完整图；下载SVG也包含越界辅助点，不提前展示后续步骤。
+- Drawing maintenance: keep the embedded source viewport fixed and open the complete current-step SVG in a new tab. Downloads include outlying auxiliary points without revealing future steps.
+- 底图增加纠正说明，可携带原题和原图显式重绘第一步；不向底图AI发送答案或解析。成功后清除旧辅助步骤并重新核对锁定，失败保留旧图；修改说明不会自动调用AI。
+- Source corrections can be submitted with the original question and image for an explicit first-stage redraw, without sending the solution to the source AI. Successful redraws clear obsolete auxiliary steps and require confirmation again; failures preserve the old drawing. Editing a correction alone never calls AI.
+
+- 辅助线改为两个独立任务：先仅按原题重建底图（有图强制使用识图链），用户核对锁定后才请求新增构造；第二步只接受steps，拒绝改写底图坐标、边、圆弧或标题。SVG视窗仅由底图确定，GeoGebra原有对象固定；历史底图任务可取回继续。
+- Auxiliary drawing now uses two explicit jobs: reconstruct and confirm the source first, then append validated steps only. Image-bearing source reconstruction requires the vision chain. Original geometry and the SVG viewport remain fixed; saved source jobs can be resumed without regenerating the base.
+- 解题、复核及自定义模板补充尺规构造依据：先给合法作法，再证明角度/等长性质；新增轴对称reflect操作，不能把数值角或软件旋转参数冒充尺规证明。AI整图编辑明确标为不能保证底图不变的独立实验功能。
+- Teaching prompts require justified straightedge-and-compass constructions before proving their properties, including for custom templates. A reflection operation supports synthetic constructions. Whole-image AI editing remains experimental and is explicitly not an immutable-source mode.
+
+- 历史任务维护：列表仅读摘要、慢请求不再重叠，已初始化的权限读取不再重复写配置；仍实时校验账号和模型授权。详情区分超时、登录、授权、过期及服务异常，失败作图不再宣称有预览。
+- Task-history maintenance: fetch metadata-only lists, serialize refreshes and avoid redundant configuration writes while preserving live account/model checks. Read failures distinguish timeout, authentication, authorization, expiry and service issues; failed drawings no longer claim a preview.
+- 保留关键角标独立核对，明确区分关键角标疑问与普通转录疑问；已核清全部编号角时，由解题阶段判断其他疑问是否影响答案。旧转录仍保守兼容，不增加自动补读或放过关键条件冲突。
+- Keep independent checks of critical angle labels while separating unresolved angle evidence from generic transcription doubts. Once all labels are confirmed, the solver assesses the relevance of other doubts. Legacy records remain conservative, with no extra automatic rereads or bypass of critical conflicts.
+- 构造提示补齐严格JSON形状与字段范围；新增字段、点名/坐标、操作和范围诊断。最终预算耗尽仍保留最后失败调用的安全格式诊断，不输出私密模型原文或擅自修正几何。
+- Construction prompts now specify strict JSON shapes and bounds. Safe diagnostics distinguish fields, points/coordinates, operations and limits, and preserve the final parse failure when the overall budget is exhausted without exposing private output or altering geometry.
+
+- 辅助线维护：消除底图点与步骤新建点定义冲突，补齐构造操作的JSON示例；保持几何白名单与严格校验。
+- Auxiliary drawing maintenance: clarify original versus step-created points and provide compilable JSON examples for all supported operations without weakening validation.
+- 作图页显示已有的安全细分诊断，区分无效构造、格式、限流、超时及图片输出问题；不展示上游私密正文、不自动重复提交收费任务。
+- Drawing failures now surface safe, final-attempt diagnostics for geometry, format, rate-limit, timeout and image-output errors. Private upstream output remains hidden, with no added automatic resubmission.
 
 - 核对区域的补充文字与原识图题设一起解题，不再被旧角标核对状态反复拦截；支持先保存再继续，仍对实际缺失条件、归属、版本冲突和调用预算作校验。
 - Human supplements are retained alongside the original transcription and passed to the solver as reviewed evidence. Saving does not invoke AI; replacing the image or the complete transcription clears superseded supplements.

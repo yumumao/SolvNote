@@ -22,12 +22,29 @@ describe("geometry evidence and drawing UI",()=>{
  it("keeps a draft but prevents committing over a newer revision",async()=>{
   const save=vi.fn(),props={transcript,revision:7,onCorrect:save};await act(async()=>root.render(<GeometryEvidence {...props}/>));await act(async()=>button("修订完整题设").click());await input("draft retained");await act(async()=>root.render(<GeometryEvidence {...props} revision={8}/>));expect(host.querySelector("textarea")?.value).toBe("draft retained");expect(button("采用修订并继续").disabled).toBe(true);
  });
- it("requires an explicit click and fee confirmation, sends current editor fields, and saves constrained commands",async()=>{
-  mock.post.mockResolvedValue({type:"construction",plan});const confirm=vi.spyOn(window,"confirm").mockReturnValue(true),save=vi.fn();
-  await act(async()=>root.render(<AuxiliaryDrawing questionText="edited q" answerText="edited a" analysis="edited steps" onUseCommands={save}/>));expect(mock.post).not.toHaveBeenCalled();await act(async()=>button("生成分步辅助线方案").click());expect(mock.post).toHaveBeenCalledWith("/api/ai/drawing/construction",expect.objectContaining({questionText:"edited q",answerText:"edited a",analysis:"edited steps"}),expect.objectContaining({onJobAccepted:expect.any(Function)}));expect(confirm).toHaveBeenCalled();expect(host.textContent).toContain("midpoint");await act(async()=>button("保留全部步骤到当前题目").click());expect(save.mock.calls[0][0]).toContain("Midpoint(P,Q)");
+ it("requires two explicit fee confirmations, sends edited fields, and saves constrained commands",async()=>{
+  const base={...plan,steps:[]};
+  mock.post.mockResolvedValueOnce({type:"construction",plan:base}).mockResolvedValueOnce({type:"construction",plan});
+  const confirm=vi.spyOn(window,"confirm").mockReturnValue(true),save=vi.fn();
+  await act(async()=>root.render(<AuxiliaryDrawing questionText="edited q" answerText="edited a" analysis="edited steps" onUseCommands={save}/>));
+  expect(mock.post).not.toHaveBeenCalled();await act(async()=>button("第一步：生成原题底图").click());
+  expect(mock.post).toHaveBeenNthCalledWith(1,"/api/ai/drawing/construction",expect.objectContaining({questionText:"edited q",answerText:"edited a",analysis:"edited steps"}),expect.objectContaining({onJobAccepted:expect.any(Function)}));
+  expect(button("第二步：在锁定底图上添加辅助线").disabled).toBe(true);
+  await act(async()=>(host.querySelector("input[data-confirm-base]") as HTMLInputElement).click());
+  await act(async()=>button("第二步：在锁定底图上添加辅助线").click());
+  expect(mock.post).toHaveBeenNthCalledWith(2,"/api/ai/drawing/construction",expect.objectContaining({questionText:"edited q",answerText:"edited a",analysis:"edited steps",drawingPlan:base}),expect.objectContaining({onJobAccepted:expect.any(Function)}));
+  expect(confirm).toHaveBeenCalledTimes(2);expect(host.textContent).toContain("midpoint");
+  await act(async()=>button("保留全部步骤到当前题目").click());expect(save.mock.calls[0][0]).toContain("Midpoint(P,Q)");
  });
  it("does not apply a stale construction to edited content",async()=>{
-  mock.post.mockResolvedValue({type:"construction",plan});vi.spyOn(window,"confirm").mockReturnValue(true);const save=vi.fn();await act(async()=>root.render(<AuxiliaryDrawing questionText="q" answerText="a" analysis="steps" onUseCommands={save}/>));await act(async()=>button("生成分步辅助线方案").click());await act(async()=>root.render(<AuxiliaryDrawing questionText="corrected q" answerText="a" analysis="steps" onUseCommands={save}/>));expect(button("保留全部步骤到当前题目")).toBeUndefined();expect(host.textContent).toContain("旧版本构造");
+  mock.post.mockResolvedValueOnce({type:"construction",plan:{...plan,steps:[]}}).mockResolvedValueOnce({type:"construction",plan});
+  vi.spyOn(window,"confirm").mockReturnValue(true);const save=vi.fn();
+  await act(async()=>root.render(<AuxiliaryDrawing questionText="q" answerText="a" analysis="steps" onUseCommands={save}/>));
+  await act(async()=>button("第一步：生成原题底图").click());
+  await act(async()=>(host.querySelector("input[data-confirm-base]") as HTMLInputElement).click());
+  await act(async()=>button("第二步：在锁定底图上添加辅助线").click());
+  await act(async()=>root.render(<AuxiliaryDrawing questionText="corrected q" answerText="a" analysis="steps" onUseCommands={save}/>));
+  expect(button("保留全部步骤到当前题目")).toBeUndefined();expect(host.textContent).toContain("原题、原图或底图纠正说明已修改");expect(mock.post).toHaveBeenCalledTimes(2);
  });
 });
 

@@ -4,7 +4,7 @@ import {AIError,buildRequest} from "../ai/transport";
 import {AIUrlError,withSafeAIResponse} from "../ai-url";
 export function buildImageEditRequest(p:AIProvider,m:AIModel,prompt:string,image:string){
     if(p.protocol!=="gemini" || !image)throw new AIError("AI_IMAGE_EDIT_UNSUPPORTED");
-    const req=buildRequest(p,m,"只编辑用户提供的几何题图，保留原题和标注。禁止改变原有数学条件。",prompt,image);
+    const req=buildRequest(p,m,"只在用户提供的几何题图上添加已核对的辅助线和新点标记。原题底图是不可变层：不得整体旋转、镜像或翻转原题底图，禁止裁切、平移或改变原有文字、点名、角弧、线段与尺寸；解题所需旋转只能画成另加的辅助点和辅助线，不能改写原图。禁止改变原有数学条件。",prompt,image);
     return {...req,body:{...req.body,generationConfig:{responseModalities:["TEXT","IMAGE"]}}};
 }
 export async function decodeEditedImage(raw:unknown):Promise<string>{

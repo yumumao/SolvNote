@@ -33,3 +33,26 @@ describe('short task recovery dialog',()=>{
   await click('关闭详情');fixture(()=>response({id:'owned',kind:'construction',state:'unknown',errorCode:'AI_ACCEPTANCE_UNKNOWN'}));await click('详情/取回结果');expect(dialog()?.textContent).toContain('这里不会自动重新收费');
  });
 });
+
+
+describe('task history read failures are actionable and bounded',()=>{
+ it.each([
+  [401,'UNAUTHORIZED','登录'],[403,'AI_MODEL_ACCESS_REVOKED','模型使用权限'],
+  [404,'NOT_FOUND','不存在或已过期'],[408,'AI_REQUEST_TIMEOUT_CHECK_TASKS','读取超时'],
+  [503,'AUTHENTICATION_UNAVAILABLE','服务暂时不可用'],
+ ])('shows a specific safe message for HTTP %s',async(status,code,text)=>{
+  fixture(()=>response({message:code,raw:'private-upstream-marker'},Number(status)));await mount();await click('详情/取回结果');
+  expect(dialog()?.textContent).toContain(text);expect(dialog()?.textContent).not.toContain('private-upstream-marker');
+ });
+ it('does not start overlapping list requests while a previous list is slow',async()=>{
+  let resolve!:(r:Response)=>void;
+  const mock=vi.fn(async(url:string)=>url==='/api/ai/conversations'?new Promise<Response>(r=>{resolve=r;}):response({jobs:[]}));
+  vi.stubGlobal('fetch',mock);await mount();await act(async()=>{await vi.advanceTimersByTimeAsync(10000);});
+  expect(mock.mock.calls.filter(([url])=>url==='/api/ai/conversations')).toHaveLength(1);
+  await act(async()=>resolve(response({conversations:[]})));
+ });
+ it('does not claim a failed construction has a preview result',async()=>{
+  fixture(()=>response({id:'owned',kind:'construction',state:'failed',errorCode:'AI_BUDGET_EXHAUSTED'}));await mount();await click('详情/取回结果');
+  expect(dialog()?.textContent).not.toContain('见下方作图预览');
+ });
+});

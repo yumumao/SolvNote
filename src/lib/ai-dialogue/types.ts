@@ -2,7 +2,7 @@ import type { AIDiagnostic } from "../ai/diagnostics";
 import type { JobInput } from "../ai-jobs/schema";
 import type { ParsedQuestion } from "../ai/types";
 import type { GeometryEvidence } from "./geometry-schema";
-export type Transcript = { geometry?:GeometryEvidence; text: string; facts: { detail: string; source?: "text" | "image" }[]; uncertainties: string[]; missingInformation: string[] };
+export type Transcript = { geometry?:GeometryEvidence; geometryUncertainties?: string[]; text: string; facts: { detail: string; source?: "text" | "image" }[]; uncertainties: string[]; missingInformation: string[] };
 export type DialogueMessage = { id: string; kind: "question" | "clarification" | "answer" | "notice"; text: string; at: string; round: number };
 export type DialoguePayload = {
     input: JobInput;

@@ -5,7 +5,7 @@ import {Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Dia
 import {Button} from "@/components/ui/button";
 import { diagnosticMessage } from "@/lib/ai/diagnostics";
 import {DrawingResultPreview} from "@/components/auxiliary-drawing";
-import { apiClient } from "@/lib/api-client";
+import { ApiError, apiClient } from "@/lib/api-client";
 import { dialogueLabels } from "@/components/ai-conversation";
 type ConversationSummary={id:string;state:string;roundsUsed:number;roundLimit:number;updatedAt:string};
 type JobDetail = {
@@ -15,7 +15,7 @@ type JobDetail = {
     attemptsLog?: unknown;
     result?: unknown;
     errorCode?: string;
-    input?: { subjectId?: string; questionText?: string; imageBase64?: string; originalImageBase64?: string; mimeType?: string };
+    input?: { subjectId?: string; questionText?: string; drawingCorrection?: string; imageBase64?: string; originalImageBase64?: string; mimeType?: string };
 };
 type Job = {
     id: string;
@@ -39,6 +39,18 @@ function originalImage(input: JobDetail["input"]) {
     return /^image\/(png|jpeg|webp)$/.test(input?.mimeType || "")
         ? "data:" + input!.mimeType + ";base64," + image : undefined;
 }
+function readFailureMessage(error: unknown) {
+    const code = error instanceof ApiError && error.data && typeof error.data === "object" && "message" in error.data ? error.data.message : undefined;
+    const reason = error instanceof ApiError ? (
+        error.status === 401 ? "登录状态已失效，请重新登录后读取。" :
+        error.status === 403 ? code === "AI_MODEL_ACCESS_REVOKED" ? "本任务涉及的模型使用权限已变更，请联系管理员核对授权。" : "账号或会话权限已变更，请重新登录或联系管理员。" :
+        error.status === 404 ? "任务不存在或已过期；临时绘图结果保留24小时，解题记录不受此期限影响。" :
+        error.status === 408 ? "读取超时，尚不能判定任务不存在或已过期。请稍后重试。" :
+        error.status >= 500 ? "服务暂时不可用，请稍后重试；持续失败时请管理员检查服务日志。" :
+        "任务数据或服务配置异常，请联系管理员核对；不要重复生成。"
+    ) : "网络读取中断，请检查连接后重试。";
+    return "暂时无法读取任务：" + reason + " 可重新读取本次任务；不会重新提交AI。";
+}
 export default function AITasks() {
     const [conversations,setConversations]=useState<ConversationSummary[]>([]);
     const [jobs, setJobs] = useState<Job[]>([]),
@@ -50,6 +62,7 @@ export default function AITasks() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [detailRevision, setDetailRevision] = useState(0);
     const requestedId = useRef<string | null>(null);
+    const listLoading = useRef(false);
     const selectJob = useCallback((id: string | null) => {
         requestedId.current = id;
         setSelectedId(id);
@@ -73,35 +86,42 @@ export default function AITasks() {
         const controller = new AbortController();
         const load = async () => {
             try {
-                const job = await apiClient.get<JobDetail>(`/api/ai/jobs/${selectedId}?restore=1`, { signal: controller.signal });
+                const job = await apiClient.get<JobDetail>(`/api/ai/jobs/${selectedId}?restore=1`, { signal: controller.signal, timeout: 20000 });
                 if (cancelled || requestedId.current !== selectedId) return;
                 setDetail(job);
                 setMessage("");
                 if (["pending", "running"].includes(job.state)) timer = setTimeout(() => void load(), 3000);
-            } catch {
-                if (!cancelled && requestedId.current === selectedId) setMessage("暂时无法读取任务，可能未登录、任务已过期或网络中断。可点击详情重试；不会重新提交AI。");
+            } catch (error) {
+                if (!cancelled && requestedId.current === selectedId) setMessage(readFailureMessage(error));
             }
         };
         void load();
         return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
     }, [selectedId, detailRevision]);
-    const reload = useCallback(async () => {
+    const reload = useCallback(async (signal?: AbortSignal) => {
+        if (listLoading.current || signal?.aborted) return;
+        listLoading.current = true;
         try {
-            setConversations((await apiClient.get<{conversations:ConversationSummary[]}>("/api/ai/conversations")).conversations);
-            setJobs(
-                (await apiClient.get<{ jobs: Job[] }>("/api/ai/jobs")).jobs,
-            );
-        } catch {
-            setListMessage("无法加载，请先登录。");
-        }
+            const conversations = await apiClient.get<{conversations:ConversationSummary[]}>("/api/ai/conversations", {signal, timeout:20000});
+            if (signal?.aborted) return;
+            setConversations(conversations.conversations);
+            const jobs = await apiClient.get<{jobs:Job[]}>("/api/ai/jobs", {signal, timeout:20000});
+            if (signal?.aborted) return;
+            setJobs(jobs.jobs);
+            setListMessage("");
+        } catch (error) {
+            if (!signal?.aborted) setListMessage(readFailureMessage(error));
+        } finally { listLoading.current = false; }
     }, []);
     useEffect(() => {
-        const start = setTimeout(() => void reload(), 0);
-        const timer = setInterval(reload, 3000);
-        return () => {
-            clearTimeout(start);
-            clearInterval(timer);
+        const controller = new AbortController();
+        let timer: ReturnType<typeof setTimeout>;
+        const poll = async () => {
+            await reload(controller.signal);
+            if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 3000);
         };
+        timer = setTimeout(() => void poll(), 0);
+        return () => { controller.abort(); clearTimeout(timer); };
     }, [reload]);
     const closeDetail = () => {
         const url = new URL(window.location.href);
@@ -179,14 +199,14 @@ export default function AITasks() {
                             {
                                 state: detail.state,
                                 attempts: detail.attemptsLog,
-                                result: ["construction","image_edit"].includes(detail.kind)?"见下方作图预览":detail.result,
+                                result: detail.state === "success" && detail.result && ["construction","image_edit"].includes(detail.kind)?"见下方作图预览":detail.result,
                                 error: detail.errorCode,
                             },
                             null,
                             2,
                         )}
                     </pre>
-                    {detail.state === "success" && ["construction","image_edit"].includes(detail.kind) && <DrawingResultPreview key={detail.id} result={detail.result} originalImage={originalImage(detail.input)}/>}
+                    {detail.state === "success" && ["construction","image_edit"].includes(detail.kind) && <DrawingResultPreview key={detail.id} result={detail.result} originalImage={originalImage(detail.input)} input={detail.input}/>}
                     {detail.state === "success" &&
                         detail.kind === "analyze" && (
                             <Link

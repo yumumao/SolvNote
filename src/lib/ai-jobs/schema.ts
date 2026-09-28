@@ -10,6 +10,7 @@ export const JobInputSchema = z
             .max(12 * 1024 * 1024)
             .optional(),
         questionText: z.string().max(50000).default(""),
+        drawingCorrection: z.string().max(10000).default(""),
         imageBase64: z
             .string()
             .max(12 * 1024 * 1024)

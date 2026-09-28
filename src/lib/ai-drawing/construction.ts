@@ -6,6 +6,7 @@ const operation = z.discriminatedUnion("kind", [
     z.object({kind:z.literal("segment"),a:id,b:id}).strict(),
     z.object({kind:z.literal("midpoint"),id,a:id,b:id}).strict(),
     z.object({kind:z.literal("foot"),id,point:id,a:id,b:id}).strict(),
+    z.object({kind:z.literal("reflect"),id,point:id,a:id,b:id}).strict(),
     z.object({kind:z.literal("rotate"),id,point:id,center:id,degrees:z.number().finite().min(-360).max(360)}).strict(),
     z.object({kind:z.literal("intersection"),id,a:id,b:id,c:id,d:id}).strict(),
 ]);
@@ -16,7 +17,7 @@ export const ConstructionSchema = z.object({
     // Optional for old stored plans; circles belong to the original diagram.
     circles:z.array(z.object({center:id,through:id}).strict()).max(16).optional(),
     arcs:z.array(z.object({center:id,start:id,end:id,direction:z.enum(["ccw","cw"]),sector:z.boolean().optional()}).strict()).max(24).optional(),
-    steps:z.array(z.object({description:z.string().trim().min(1).max(1000),operation}).strict()).min(1).max(16),
+    steps:z.array(z.object({description:z.string().trim().min(1).max(1000),operation}).strict()).min(0).max(16),
 }).strict();
 export type ConstructionPlan=z.infer<typeof ConstructionSchema>;
 type Point={x:number;y:number};
@@ -28,7 +29,9 @@ export function compileConstruction(raw:ConstructionPlan){
     const define=(id:string,p:Point)=>{if(points.has(id)||!Number.isFinite(p.x)||!Number.isFinite(p.y)||Math.abs(p.x)>1e6||Math.abs(p.y)>1e6)bad();points.set(id,p);};
     const line=(a:string,b:string)=>{const p=get(a),q=get(b);const x=q.x-p.x,y=q.y-p.y;if(x*x+y*y<1e-12)bad();return {p,x,y,n:x*x+y*y};};
     // Reuse validated coordinates for a local preview; never evaluate model-supplied code.
-    const geometry:{points:Array<Point & {id:string;step:number}>;segments:Array<{a:string;b:string;step:number}>;circles:Array<Point & {radius:number;step:number}>;arcs:Arc[]}={points:plan.points.map(p=>({...p,step:0})),segments:plan.segments.map(([a,b])=>({a,b,step:0})),circles:[],arcs:[]};
+    const basePoints=plan.points.map(p=>({...p,step:0 as const}));
+    const baseSegments=plan.segments.map(([a,b])=>({a,b,step:0 as const}));
+    const geometry:{basePoints:Array<Point & {id:string;step:0}>;derivedPoints:Array<Point & {id:string;step:number}>;baseSegments:Array<{a:string;b:string;step:0}>;derivedSegments:Array<{a:string;b:string;step:number}>;points:Array<Point & {id:string;step:number}>;segments:Array<{a:string;b:string;step:number}>;circles:Array<Point & {radius:number;step:0}>;arcs:Arc[]}={basePoints,derivedPoints:[],baseSegments,derivedSegments:[],points:[...basePoints],segments:[...baseSegments],circles:[],arcs:[]};
     const base:string[]=[];
     for(const p of plan.points){define(p.id,p);base.push(`${p.id}=(${p.x},${p.y})`);}
     for(const [i,[a,b]] of plan.segments.entries()){line(a,b);base.push(`base${i}=Segment(${a},${b})`);}
@@ -44,25 +47,50 @@ export function compileConstruction(raw:ConstructionPlan){
         geometry.arcs.push({...l.p,radius,start,end,span,direction:a.direction,step:0});
         const ends=a.direction==="ccw"?[a.start,a.end]:[a.end,a.start];
         base.push(`baseArc${i}=${a.sector?"CircularSector":"CircularArc"}(${a.center},${ends.join(",")})`);
-        if(a.sector){base.push(`SetFilling(baseArc${i},0)`);geometry.segments.push({a:a.center,b:a.start,step:0},{a:a.center,b:a.end,step:0});}
+        if(a.sector){const boundary=[{a:a.center,b:a.start,step:0 as const},{a:a.center,b:a.end,step:0 as const}];base.push(`SetFilling(baseArc${i},0)`);geometry.baseSegments.push(...boundary);geometry.segments.push(...boundary);}
+    }
+    // GeoGebra receives the same frozen originals; auxiliary operations may only add objects.
+    for(const command of [...base]){
+        const name=command.match(/^([A-Za-z][A-Za-z0-9]*)=/)?.[1];
+        if(name)base.push(`setFixed(${name},true,false)`);
     }
     const steps=plan.steps.map(({description,operation:o},index)=>{
         let command:string;
-        if(o.kind==="segment"){line(o.a,o.b);geometry.segments.push({a:o.a,b:o.b,step:index+1});command=`aux${index}=Segment(${o.a},${o.b})`;}
+        if(o.kind==="segment"){line(o.a,o.b);const segment={a:o.a,b:o.b,step:index+1};geometry.derivedSegments.push(segment);geometry.segments.push(segment);command=`aux${index}=Segment(${o.a},${o.b})`;}
         else {
             let p:Point;
             if(o.kind==="midpoint") {line(o.a,o.b);const a=get(o.a),b=get(o.b);p={x:(a.x+b.x)/2,y:(a.y+b.y)/2};command=`${o.id}=Midpoint(${o.a},${o.b})`;}
             else if(o.kind==="foot"){const l=line(o.a,o.b),q=get(o.point),t=((q.x-l.p.x)*l.x+(q.y-l.p.y)*l.y)/l.n;p={x:l.p.x+t*l.x,y:l.p.y+t*l.y};command=`${o.id}=ClosestPoint(Line(${o.a},${o.b}),${o.point})`;}
+            else if(o.kind==="reflect"){const l=line(o.a,o.b),q=get(o.point),t=((q.x-l.p.x)*l.x+(q.y-l.p.y)*l.y)/l.n;p={x:2*(l.p.x+t*l.x)-q.x,y:2*(l.p.y+t*l.y)-q.y};command=`${o.id}=Reflect(${o.point},Line(${o.a},${o.b}))`;}
             else if(o.kind==="rotate"){const q=get(o.point),c=get(o.center),r=o.degrees*Math.PI/180,x=q.x-c.x,y=q.y-c.y;p={x:c.x+x*Math.cos(r)-y*Math.sin(r),y:c.y+x*Math.sin(r)+y*Math.cos(r)};command=`${o.id}=Rotate(${o.point},${o.degrees}°,${o.center})`;}
             else {const l=line(o.a,o.b),m=line(o.c,o.d),cross=l.x*m.y-l.y*m.x;if(Math.abs(cross)/Math.sqrt(l.n*m.n)<1e-8)bad();const t=((m.p.x-l.p.x)*m.y-(m.p.y-l.p.y)*m.x)/cross;p={x:l.p.x+t*l.x,y:l.p.y+t*l.y};command=`${o.id}=Intersect(Line(${o.a},${o.b}),Line(${o.c},${o.d}))`;}
-            define(o.id,p);geometry.points.push({id:o.id,...p,step:index+1});
+            define(o.id,p);const derived={id:o.id,...p,step:index+1};geometry.derivedPoints.push(derived);geometry.points.push(derived);
         }
         const object=o.kind==="segment"?`aux${index}`:o.id;
         return {description,commands:[command,`SetColor(${object},220,60,60)`,...(o.kind==="segment"?[`SetLineStyle(${object},1)`]:[])]};
     });
     return {base,steps,geometry};
 }
-export const CONSTRUCTION_PROMPT=`你是几何辅助线构造助手。依据用户当前编辑的题设、答案和解析，先完整重建原题底图，再提炼解题中实际需要的辅助线；若附原图，校对点名与底图是否完整，不增加未经证实的题设。不要重新求解，不输出任意GeoGebra代码。只返回JSON：
-{"title":"圆的底图与半径示意","points":[{"id":"O","x":0,"y":0},{"id":"A","x":4,"y":0}],"segments":[],"circles":[{"center":"O","through":"A"}],"steps":[{"description":"连接圆心与圆上已知点，显示解法所用半径","operation":{"kind":"segment","a":"O","b":"A"}}]}
-points、segments、circles、arcs表示原题底图，在第0步就必须完整可见，steps才是新增辅助构造。原题已有边、圆、直径等不得省略，也不得放到辅助步骤冒充新增关系。circles通过已定义圆心center及圆上点through确定；两点必须不同，through不能只是圆内任意点。没有圆时给空数组。缺少圆心点名时可选用未占用的合法点名，但必须在描述中说明是为绘图命名的原有圆心，不新增几何假设。
-points为示意底图坐标，必须满足已知关系，不可从像素外观断定等长/垂直；不能满足时不要编造。点名仅单个大写字母及可选数字，最多24点、36底图线段、16个底图圆、24段底图圆弧、16步；每步只一种操作，依赖必须先定义。操作白名单：segment(a,b)；midpoint(id,a,b)；foot(id,point,a,b)为点到直线的垂足；rotate(id,point,center,degrees)逆时针旋转；intersection(id,a,b,c,d)为两直线交点。不得重定义点或使用退化直线/平行交点。底图支持完整圆、圆弧与扇形边界。圆弧不能用完整圆替代：arcs示例为"arcs":[{"center":"O","start":"A","end":"B","direction":"ccw","sector":true}]，center是圆心，start/end为同一圆上的不同端点（与圆心等距），direction在数学坐标系中ccw为逆时针、cw为顺时针，允许优弧。sector为true同时绘制两条半径边界，false或省略只画弧；半圆、四分之一圆必须选正确端点与方向，完整圆请用circles。所有引用点先在points定义；坐标给足精度，勿使两端半径不一致。阴影题保留参与面积计算的圆、弧和线段边界，不要求重建复杂交并差阴影填色，不因无法精确涂色而拒绝整张构图；说明阴影位置以原图为准。确实无法用此白名单表达必要几何结构、或题设不足以构造时，只返回{"unsupported":true}，不要伪造图形。`;
+// These examples are compiled by regression tests; none predeclare step-created points.
+export const constructionExamples: ConstructionPlan[] = [
+    {title:"反射复制而非凭空指定角度",points:[{id:"A",x:0,y:4},{id:"B",x:0,y:0},{id:"C",x:4,y:0}],segments:[["A","B"],["B","C"],["C","A"]],steps:[{description:"作B关于直线AC的对称点P，原点B不变；可用垂线及等距截取实现",operation:{kind:"reflect",id:"P",point:"B",a:"A",b:"C"}},{description:"连接AP",operation:{kind:"segment",a:"A",b:"P"}}]},
+    {"title":"圆的底图与半径示意","points":[{"id":"O","x":0,"y":0},{"id":"A","x":4,"y":0}],"segments":[],"circles":[{"center":"O","through":"A"}],"arcs":[],"steps":[{"description":"连接圆心与已知圆上点","operation":{"kind":"segment","a":"O","b":"A"}}]},
+    {"title":"新建中点再连接顶点","points":[{"id":"A","x":0,"y":0},{"id":"B","x":6,"y":0},{"id":"C","x":2,"y":4}],"segments":[["A","B"],["B","C"],["C","A"]],"circles":[],"arcs":[],"steps":[{"description":"在AB上构造新中点M","operation":{"kind":"midpoint","id":"M","a":"A","b":"B"}},{"description":"连接原有顶点C与新点M","operation":{"kind":"segment","a":"C","b":"M"}}]},
+    {"title":"新建垂足再画垂线段","points":[{"id":"A","x":0,"y":0},{"id":"B","x":6,"y":0},{"id":"C","x":2,"y":4}],"segments":[["A","B"],["B","C"],["C","A"]],"circles":[],"arcs":[],"steps":[{"description":"作C到直线AB的垂足H","operation":{"kind":"foot","id":"H","point":"C","a":"A","b":"B"}},{"description":"连接C与新垂足H","operation":{"kind":"segment","a":"C","b":"H"}}]},
+    {"title":"旋转复制但保留原图","points":[{"id":"A","x":0,"y":0},{"id":"B","x":0,"y":6},{"id":"C","x":4,"y":3}],"segments":[["A","B"],["B","C"],["C","A"]],"circles":[],"arcs":[],"steps":[{"description":"利用等边三角形可作60度角，将B绕A逆时针旋转60度得到辅助点R，原点B保持不动","operation":{"kind":"rotate","id":"R","point":"B","center":"A","degrees":60}},{"description":"复制同一60度角，将C绕A逆时针旋转60度得到辅助点S，原点C保持不动","operation":{"kind":"rotate","id":"S","point":"C","center":"A","degrees":60}},{"description":"连接旋转后的辅助三角形","operation":{"kind":"segment","a":"A","b":"R"}},{"description":"连接旋转后的辅助三角形","operation":{"kind":"segment","a":"R","b":"S"}},{"description":"连接旋转后的辅助三角形","operation":{"kind":"segment","a":"S","b":"A"}}]},
+    {"title":"由两条直线构造交点","points":[{"id":"A","x":0,"y":0},{"id":"B","x":6,"y":0},{"id":"C","x":6,"y":4},{"id":"D","x":0,"y":4}],"segments":[["A","B"],["B","C"],["C","D"],["D","A"]],"circles":[],"arcs":[],"steps":[{"description":"连接对角线AC","operation":{"kind":"segment","a":"A","b":"C"}},{"description":"连接对角线BD","operation":{"kind":"segment","a":"B","b":"D"}},{"description":"作直线AC与BD的交点E","operation":{"kind":"intersection","id":"E","a":"A","b":"C","c":"B","d":"D"}}]}
+];
+const DRAWING_LAYOUT_RULES = "原题底图是不可变的源图层，不得整体旋转、镜像或翻转原题底图，也不能平移、缩放或改写原有点的坐标。坐标轴固定为x向右、y向上。按原图保持点的上下左右位置、边的朝向与图形的整体布局，不能把斜边摆平或把旋转后的副本冒充原图。原图只用于布局对照，不从外观推断未经题设确认的等长、垂直或其他几何关系。阴影位置以原图为准，不要求精确涂色。";
+export const BASE_CONSTRUCTION_PROMPT = `你是原题底图重建助手。这是独立的第一阶段，只读取原题与原图，不读取答案或解法，不设计辅助线。${DRAWING_LAYOUT_RULES}
+只返回严格JSON，不套type/plan/result外壳，不加额外说明字段。请求JSON包含question和correction；correction是用户针对原题底图的视觉/结构纠正说明（例如方向、点位、标签或已有边），优先按其修订底图，但不要把它当作新增题设、答案或辅助线指令。若correction与原图冲突，以用户明确纠正为优先；仍无法确认时只返回{"unsupported":true}，不能猜测。示例：
+{"title":"原题底图","points":[{"id":"A","x":0,"y":4},{"id":"B","x":0,"y":0},{"id":"C","x":4,"y":0},{"id":"D","x":4,"y":4}],"segments":[["A","B"],["B","C"],["C","D"],["D","A"]],"circles":[],"arcs":[],"steps":[]}
+steps必须为空数组。points只能包含原题已有点，不得提前放入解法新增点。必须保留原题全部边、线段、圆和弧。坐标须满足题设且保持原图方向，不能编造条件。点名为一个大写字母加0到3位数字；最多24点、36线段、16圆、24弧。坐标为-10000到10000之间的有限数值，不写表达式或数字字符串；title为1到160字。segments每项恰为两个点名的数组。
+circles格式为{"center":"O","through":"A"}，through须为圆上点而非圆内点。arcs格式为{"center":"O","start":"A","end":"B","direction":"ccw","sector":true}，start/end为半径等长的不同端点；ccw逆时针、cw顺时针，sector=true绘制两条半径边界。圆弧不能用完整圆替代。缺圆心名时允许给原有圆心命名，不增加几何假设。线段、圆、弧只能引用points中已定义的点，禁止退化关系。空数组写[]，不写null。无法可靠表达原题结构或保持题设与布局时，只返回{"unsupported":true}，不能伪造。`;
+
+export const CONSTRUCTION_PROMPT = `你是几何辅助线构造助手。这是第二阶段：用户已核对并锁定lockedBase。只提炼当前解答实际需要的辅助构造，不重新求解、不重建原图。${DRAWING_LAYOUT_RULES}
+只返回{"steps":[...]}，不得返回title、points、segments、circles、arcs或任何底图字段；底图由程序原样保留。不要输出GeoGebra代码。新点不得提前放入points，也不得与lockedBase或先前步骤中任何点重名。新增点只能通过下列白名单操作定义，依赖必须先定义。步骤最少1步、最多16步；description为1到1000字。操作中点名严格匹配一个大写字母加0到3位数字。
+操作格式：segment(a,b)只连接已存在的点，不加id；midpoint(id,a,b)新建中点；foot(id,point,a,b)作点到直线的垂足；reflect(id,point,a,b)作点关于直线ab的对称副本；rotate(id,point,center,degrees)逆时针旋转副本，degrees为-360到360的有限数值；intersection(id,a,b,c,d)为两条不平行直线交点。每步只使用对应操作的字段。新点不自动画连线，需要另加segment步骤。旋转只产生旋转后的副本，原点原边原圆弧均保持不动。
+尺规教学须先构造，再证明性质：使用已知线段与圆的交点、作垂线、取中点、轴对称、复制已知角等合法依据，不得把指定一个任意数值角当作尺规步骤。rotate的degrees仅是程序绘图参数，描述必须交代题设中可复制的角或合法构造依据；优先用reflect表达轴对称，不要把从对称关系推导出的角度反过来当作构造前提。若解答只写按某角度放一个点而没有合法依据，不能自行伪造证明，应返回unsupported。白名单确实无法表达、底图有误或不需要辅助线时只返回{"unsupported":true}。
+以下是独立格式示例，每组先给已锁定的输入底图，下一行才是模型应返回的steps；这些不是当前题设，不得照抄输入底图到输出：
+${constructionExamples.map(({steps,...base})=>"锁定输入示例："+JSON.stringify({...base,steps:[]})+"\n"+JSON.stringify({steps})).join("\n")}
+最终仅返回steps对象或unsupported对象，不加未知字段、理由字段、说明文字、代码围栏或推理草稿。`;
