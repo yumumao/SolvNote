@@ -35,7 +35,7 @@ export function safeError(e: unknown) {
         );
     if (status === 401 || status === 403)
         return NextResponse.json(
-            { message: status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },
+            { message: status === 401 ? "UNAUTHORIZED" : code === "AI_MODEL_ACCESS_REVOKED" ? code : "FORBIDDEN" },
             { status },
         );
     if (code === "CONFIG_CONFLICT" || code === "REQUEST_CONFLICT")

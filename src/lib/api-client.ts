@@ -1,3 +1,4 @@
+import { diagnosticMessage } from "./ai/diagnostics";
 type RequestOptions=RequestInit&{params?:Record<string,string>;timeout?:number;onJobAccepted?:(jobId:string)=>void};
 export class ApiError extends Error{constructor(public status:number,public statusText:string,public data:unknown){super(`API Error: ${status} ${statusText}`);this.name='ApiError'}}
 export async function waitForAIJob<T>(id:string,signal?:AbortSignal):Promise<T>{
@@ -5,10 +6,16 @@ export async function waitForAIJob<T>(id:string,signal?:AbortSignal):Promise<T>{
  const deadline=Date.now()+24*60*60*1000;
  while(Date.now()<deadline){
  if(signal?.aborted)throw new ApiError(499,'Polling stopped',{message:'AI_POLLING_STOPPED_JOB_CONTINUES',jobId:id});
- const job=await request<{state:string;result:T;errorCode?:string}>(`/api/ai/jobs/${id}`,{signal,timeout:30000});
+ const job=await request<{state:string;result:T;errorCode?:string;attemptsLog?:Array<{state?:string;errorCode?:string;diagnostic?:string}>}>(`/api/ai/jobs/${id}`,{signal,timeout:30000});
  if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('ai-job-progress',{detail:{id,state:job.state}}));
  if(job.state==='success')return job.result;
- if(['failed','cancelled','unknown'].includes(job.state))throw new ApiError(422,'AI task stopped',{message:job.errorCode||`AI_${job.state.toUpperCase()}`,jobId:id});
+ if(['failed','cancelled','unknown'].includes(job.state)){
+ // Carry only the final matching terminal diagnostic (or final parse failure wrapped by budget exhaustion).
+ // Never reuse an earlier failure after access revocation/cancellation or echo upstream text.
+ const last=Array.isArray(job.attemptsLog)?job.attemptsLog.at(-1):undefined;
+ const diagnostic=job.errorCode && last && ['failed','unknown'].includes(last.state||'') && (last.errorCode===job.errorCode || (job.errorCode==='AI_BUDGET_EXHAUSTED' && last.state==='failed' && ['AI_RESPONSE_ERROR','AI_DRAWING_INVALID'].includes(last.errorCode||''))) && diagnosticMessage(last.diagnostic)?last.diagnostic:undefined;
+ throw new ApiError(422,'AI task stopped',{message:job.errorCode||`AI_${job.state.toUpperCase()}`,jobId:id,...(diagnostic?{diagnostic}:{})});
+ }
  await new Promise(r=>setTimeout(r,2000));
  }
  throw new ApiError(408,'Task expired',{message:'AI_JOB_EXPIRED',jobId:id});

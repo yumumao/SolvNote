@@ -13,7 +13,7 @@ export function failureState(code: string, cancelled: boolean) {
           ? "unknown"
           : "failed";
 }
-export function publicJob(j: AiJob) {
+export function publicJob(j: Pick<AiJob, "id" | "kind" | "state" | "attempts" | "errorCode" | "createdAt" | "updatedAt">) {
     return {
         id: j.id,
         kind: j.kind,

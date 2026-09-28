@@ -12,7 +12,14 @@ import { listConfiguredSiteModels, siteModelFingerprint } from "./policy";
 /** Server-only. Never pass this result into a response or a client component. No process cache. */
 export async function loadEffectiveAIConfig(userId:string){
     await requireLiveAiUser(userId);
-    await loadAIConfig(); // legacy site migration + metadata reconciliation outside the read transaction
+    // Config saves reconcile metadata atomically. Only bootstrap a legacy installation
+    // here; polling an initialized task must not upsert config/policy on every GET.
+    // Do not cache: each read still observes the live account, policy and grants.
+    const [configuration, policy] = await Promise.all([
+        prisma.aiConfiguration.findUnique({where:{id:"site"},select:{id:true}}),
+        prisma.aiAccessPolicy.findUnique({where:{id:"site"},select:{id:true}}),
+    ]);
+    if (!configuration || !policy) await loadAIConfig();
     return prisma.$transaction(tx=>loadEffectiveAIConfigInTx(tx,userId));
 }
 export async function loadEffectiveAIConfigInTx(tx:AiAccessTx,userId:string){

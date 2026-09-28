@@ -311,3 +311,16 @@ describe.sequential("site configuration pending-body authorization",()=>{
   }
  }
 });
+
+
+describe.sequential('stable history reads do not reconcile by writing on each poll',()=>{
+ it('keeps initialized task reads read-only and still checks live grants',async()=>{
+  await grant();const job=await resultJob();await readJob('alice',job.id);
+  const writes:string[]=[];let observe=true;
+  s.db.$use(async(params,next)=>{if(observe && /^(create|update|upsert|delete)/.test(params.action))writes.push(params.model+':'+params.action);return next(params);});
+  try { await readJob('alice',job.id,true);await readJob('alice',job.id); } finally {observe=false;}
+  expect(writes).toEqual([]);
+  await s.db.aiUserModelGrant.deleteMany({where:{userId:'alice'}});
+  await expect(readJob('alice',job.id)).rejects.toThrow('AI_MODEL_ACCESS_REVOKED');
+ });
+});

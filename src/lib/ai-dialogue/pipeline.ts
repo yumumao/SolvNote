@@ -1,7 +1,7 @@
 import { callChain } from "../ai/chain";
 import { aiRun } from "../ai-jobs/context";
 import { AIError } from "../ai/transport";
-import { DecisionSchema, parseJSON, RECOGNIZE_PROMPT, solvePrompt, parseTranscript } from "./protocol";
+import { angleLabelKey, DecisionSchema, parseGeometryCheck, parseJSON, RECOGNIZE_PROMPT, solvePrompt, parseTranscript } from "./protocol";
 import type { DialoguePayload } from "./types";
 
 import { detailCrops } from "./crops";
@@ -46,15 +46,67 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
             if(p.geometryCheckStarted || p.rereads>=1)return wait(["关键角标尚未核对完成，请补充具体角标说明或修订题设后继续，避免重复发送同一核对请求。"]);
             p.geometryCheckStarted=true;p.rereads++;
             await checkpoint();
-            const checked=await callChain(GEOMETRY_CHECK_PROMPT,JSON.stringify({question:p.input.questionText,labelsToLocate:geometry.angles.map(a=>a.label),humanMessages:p.messages.filter(m=>m.kind==="question" || m.kind==="clarification").map(m=>m.text)}),rereadImage,
-                parseTranscript,{role:"recognize",stage:"geometry_check",detailImages,question:["核对编号角的顶点与两条射线，不沿用初次角名猜测"]});
-            const missing=geometry.angles.filter(a=>!checked.geometry?.angles.some(b=>b.label===a.label));
-            if(missing.length || checked.uncertainties.length || checked.missingInformation.length){
-                p.transcript={...checked,uncertainties:[...checked.uncertainties,...missing.map(a=>`编号角${a.label}的射线仍未确认`)].slice(0,8)};
+            const current = p.transcript!;
+            const checkContext = JSON.stringify({
+                question: p.input.questionText,
+                transcription: {
+                    text: current.text,
+                    facts: current.facts,
+                    uncertainties: current.uncertainties,
+                    missingInformation: current.missingInformation,
+                    geometryHypotheses: geometry,
+                },
+                labelsToLocate: geometry.angles.map(a => a.label),
+                humanMessages: p.messages
+                    .filter(m => m.kind === "question" || m.kind === "clarification")
+                    .map(m => m.text),
+                imageOrder: { first: "complete_original", following: "same_original_detail_crops" },
+            });
+            const checked = await callChain(
+                GEOMETRY_CHECK_PROMPT,
+                checkContext,
+                rereadImage,
+                parseGeometryCheck,
+                { role: "recognize", stage: "geometry_check", detailImages, question: ["核对编号角的顶点与两条射线，不沿用初次角名猜测"] },
+            );
+            const requestedLabels = new Set(geometry.angles.map(a => angleLabelKey(a.label)));
+            const verifiedByLabel = new Map(checked.angles.map(angle => [angleLabelKey(angle.label), angle]));
+            const missing = geometry.angles.filter(a => !verifiedByLabel.has(angleLabelKey(a.label)));
+            const unexpected = checked.angles.filter(angle => !requestedLabels.has(angleLabelKey(angle.label)));
+            const mergedAngles = geometry.angles.map(original => {
+                const verified = requestedLabels.size === geometry.angles.length
+                    ? verifiedByLabel.get(angleLabelKey(original.label))
+                    : undefined; // Ambiguous original labels must retain their original hypotheses.
+                return verified
+                    ? { ...original, ...verified, label: original.label, region: verified.region ?? original.region }
+                    : original;
+            });
+            const mergedTranscript = {
+                ...current,
+                geometry: { regions: geometry.regions, angles: mergedAngles },
+                geometryUncertainties: checked.geometryUncertainties,
+            };
+            const criticalDoubts = [
+                ...(requestedLabels.size !== geometry.angles.length ? ["原转录中存在重复编号角，无法与核对结果安全对应，请补充具体编号说明"] : []),
+                ...checked.geometryUncertainties,
+                ...unexpected.map(angle => `模型返回了未请求的编号角${angle.label}，无法与当前题图安全对应`),
+            ];
+            if (missing.length || criticalDoubts.length) {
+                p.transcript = {
+                    ...mergedTranscript,
+                    uncertainties: [
+                        ...current.uncertainties,
+                        ...missing.map(a => `编号角${a.label}的顶点或两条射线仍未确认`),
+                    ].slice(0, 8),
+                };
                 await checkpoint();
-                return wait([...p.transcript.uncertainties,...checked.missingInformation].slice(0,8));
+                return wait([
+                    ...missing.map(a => `编号角${a.label}的顶点或两条射线仍未确认`),
+                    ...criticalDoubts,
+                ].slice(0, 8));
             }
-            p.transcript=checked;p.geometryChecked=true;
+            p.transcript = mergedTranscript;
+            p.geometryChecked = true;
             await checkpoint();
         }
     }
@@ -95,14 +147,33 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
     };
     const decision = await checkVisualDoubts(await solve("solve", p.solverId));
     if (decision.status !== "solved") return wait(decision.questions);
-    p.result = decision.result;
+    const sourceBackedResult = (result: typeof decision.result) => {
+        let questionText = result.questionText.trim();
+        if (!questionText) {
+            const transcribed = p.transcript?.text.trim();
+            const initialText = p.input.questionText.trim();
+            questionText = transcribed || initialText;
+            if (transcribed && initialText && transcribed !== initialText) {
+                questionText += "\n\n### 原始文字说明（与后续人工核对冲突时，以人工核对为准）\n" + initialText;
+            }
+            const facts = p.transcript?.facts.map(f => f.detail) ?? [];
+            if (facts.length) questionText += "\n\n### 转录条件\n" + facts.join("\n");
+            if (p.geometryChecked && p.transcript?.geometry?.angles.length) {
+                questionText += "\n\n### 已核对编号角\n" + p.transcript.geometry.angles
+                    .map(a => a.label + "：顶点" + a.vertex + "，两条射线经过点" + a.arms.join("、")).join("\n");
+            }
+            if (p.transcriptClarifications?.length) questionText += "\n\n### 人工补充（按时间顺序，较新说明优先）\n" + p.transcriptClarifications.join("\n");
+        }
+        return { ...result, questionText, requiresImage: Boolean(image) || result.requiresImage };
+    };
+    p.result = sourceBackedResult(decision.result);
     // Optional independent review shares the same budget and single reread allowance.
     if (p.input.review && !p.reviewDone) {
         run.excludeModel = p.solverId;
         try {
             const reviewed = await checkVisualDoubts(await solve("review"), true);
             if (reviewed.status !== "solved") return wait(reviewed.questions);
-            p.result = reviewed.result;
+            p.result = sourceBackedResult(reviewed.result);
             p.reviewDone = true;
         } finally { run.excludeModel = undefined; }
     }

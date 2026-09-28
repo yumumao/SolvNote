@@ -246,7 +246,7 @@ describe("preview-first notebook editing",()=>{
  it("keeps main markdown fields folded but mistake evidence immediately editable",async()=>{
   await render();const details=[...host.querySelectorAll("details[data-markdown-source]")];
   expect(details).toHaveLength(3);expect(details.every(d=>!d.hasAttribute("open"))).toBe(true);
-  expect(host.querySelectorAll("textarea")).toHaveLength(5);
+  expect(host.querySelectorAll("textarea:not([data-drawing-correction])")).toHaveLength(5);
   expect(host.querySelector('[aria-label="错误解答原文"]')?.closest("details")).toBeNull();
   expect(host.querySelector('[aria-label="错因分析"]')?.closest("details")).toBeNull();
   expect(button("生成演示")).toBeDefined();
@@ -263,7 +263,7 @@ describe("restored notebook result persistence", () => {
             initialData, imagePreview: image, initialSubjectId: "owned-notebook", onSave, onCancel: vi.fn(),
         })));
         const values = [String.raw`合成题：$x\neq 0$`, String.raw`$x=\frac{1}{2}$`, "### 分步解答\n\n1. 合成步骤", "$x=3$", "合成改法"];
-        const fields = [...host.querySelectorAll("textarea")];
+        const fields = [...host.querySelectorAll("textarea:not([data-drawing-correction])")];
         expect(fields).toHaveLength(values.length);
         for (const [i, field] of fields.entries()) {
             if(field.closest("details"))field.closest("details")!.open = true;

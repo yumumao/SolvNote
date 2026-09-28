@@ -11,6 +11,8 @@ export async function GET(req: Request) {
             where: { userId: u.id, conversationId: null, ...readableJobWhere() },
             orderBy: { createdAt: "desc" },
             take: 50,
+            // List refreshes need metadata, never encrypted multi-megabyte images/results.
+            select: { id:true, kind:true, state:true, attempts:true, errorCode:true, createdAt:true, updatedAt:true },
         });
         return NextResponse.json(
             { jobs: jobs.map(publicJob) },

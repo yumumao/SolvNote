@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { parseJSON, parseTranscript, TranscriptSchema } from "@/lib/ai-dialogue/protocol";
+import { parseGeometryCheck, parseJSON, parseTranscript, TranscriptSchema } from "@/lib/ai-dialogue/protocol";
 const plain = {text:"synthetic $x$",facts:[],uncertainties:[],missingInformation:[]};
 const region = {x:0.1,y:0.1,width:0.5,height:0.5};
 const angle = {label:"1",vertex:"E",arms:["A","B"],region};
@@ -45,5 +45,41 @@ describe("bounded AI JSON compatibility without changing geometric evidence",()=
  it("does not return schema issue details or the original response in errors",()=>{
   try {parseJSON(JSON.stringify({...plain,facts:[{detail:"PRIVATE-FIXTURE",source:"PRIVATE-SOURCE"}]}),TranscriptSchema);throw Error("expected");}
   catch(error){expect(JSON.stringify(error)).not.toContain("PRIVATE");expect(String(error)).toBe("Error: AI_RESPONSE_ERROR");}
+ });
+});
+
+
+describe("geometry-check ingress preserves evidence while accepting harmless format differences",()=>{
+ const parse=(value:unknown)=>parseGeometryCheck(JSON.stringify(value));
+ it.each(["1","∠1","角1","angle 1"])("accepts label %s and extra fields",label=>{
+  expect(parse({angles:[{label,vertex:"B",arms:["A","C"],note:"synthetic extra field"}],note:"extra"}).angles[0]).toMatchObject({vertex:"B",arms:["A","C"]});
+ });
+ it("accepts an unambiguous three-letter angle without endpoint fields",()=>{
+  expect(parse({angles:[{label:"1",angle:"∠ABC"}]})).toEqual({angles:[{label:"1",vertex:"B",arms:["A","C"]}],geometryUncertainties:[]});
+ });
+ it("accepts explicit whole-ray notation without inventing endpoints",()=>{
+  expect(parse({angles:[{label:"1",vertex:"B",rays:["BA","BC"]}]}).angles[0]).toMatchObject({vertex:"B",arms:["A","C"]});
+  expect(parse({angles:[{label:"1",vertex:"B",arms:["BA","BC"],angle:"∠ABC"}]}).angles[0]).toMatchObject({vertex:"B",arms:["A","C"]});
+ });
+ it("never shortens canonical multi-letter point names based only on a shared prefix",()=>{
+  for(const arms of [["AA","AB"],["A1","A2"],["A_B","A_C"]]){
+   expect(parse({angles:[{label:"1",vertex:"A",arms}]}).angles[0].arms).toEqual(arms);
+  }
+ });
+ it("ignores optional invalid crop hints and unrelated legacy doubts, not missing angles",()=>{
+  const value=parse({...plain,uncertainties:["unrelated note"],geometry:{angles:[{...angle,region:{...region,x:99}}]}});
+  expect(value).toEqual({angles:[{label:"1",vertex:"E",arms:["A","B"]}],geometryUncertainties:[]});
+  expect(parse({geometryUncertainties:["synthetic missing angle"]})).toEqual({angles:[],geometryUncertainties:["synthetic missing angle"]});
+ });
+ it.each([
+  {angles:"invalid"},
+  {angles:[angle],geometryUncertainties:{blocked:true}},
+  {angles:[{label:"1",vertex:"D",angle:"∠ABC"}]},
+  {angles:[{label:"1",vertex:"B",arms:["A"],angle:"∠ABC"}]},
+  {angles:[{label:"1",vertex:"B",arms:["A","D"],angle:"∠ABC"}]},
+  {angles:[{label:"1",vertex:"B",arms:["B","C"]}]},
+  {angles:[{label:"1",vertex:"B",arms:["A","C"]},{label:"∠1",vertex:"B",arms:["A","D"]}]},
+ ])("rejects malformed or conflicting evidence instead of silently repairing it %#",value=>{
+  expect(()=>parse(value)).toThrow(expect.objectContaining({code:"AI_RESPONSE_ERROR"}));
  });
 });

@@ -282,12 +282,25 @@ describe.sequential("bounded drawing routes and jobs",()=>{
   expect((await DRAWSET(req("/api/ai/drawing-settings",{modelId:null,revision:0},{origin:"https://foreign.example.invalid"}))).status).toBe(403);
   shared.authId="alice";const v=await (await DRAWGET(req())).json();expect(v.enabled).toBe(false);expect(v).not.toHaveProperty("models");expect(JSON.stringify(v)).not.toContain("synthetic-only");
  });
- it("queues a construction with current edited fields, no redundant OCR, and owner-only recovery",async()=>{
-  shared.send.mockResolvedValue(JSON.stringify(construction));
-  const response=await DRAW(req("/api/ai/drawing/construction",{questionText:"current edited question",answerText:"edited answer",analysis:"edited analysis",imageBase64:image,mode:"transcribe"}),{params:Promise.resolve({kind:"construction"})});
+ it("persists two owner-only construction jobs, routes the base to vision and only passes locked points to the solver",async()=>{
+  const base={...construction,steps:[]};
+  shared.send.mockResolvedValueOnce(JSON.stringify(base)).mockResolvedValueOnce(JSON.stringify({steps:construction.steps}));
+  const fields={questionText:"current edited question",answerText:"edited answer",analysis:"edited analysis",drawingCorrection:"Keep A at the top-left and AB vertical"};
+  const response=await DRAW(req("/api/ai/drawing/construction",{...fields,imageBase64:image,mode:"transcribe"}),{params:Promise.resolve({kind:"construction"})});
   expect(response.status).toBe(202);const {jobId}=await response.json();await processOne();
-  const job=await readJob("alice",jobId);expect(job?.state).toBe("success");expect(job?.result).toMatchObject({type:"construction",plan:construction});expect(shared.send).toHaveBeenCalledTimes(1);expect(shared.send.mock.calls[0][3]).toContain("current edited question");expect(await readJob("bob",jobId)).toBeNull();
+  const job=await readJob("alice",jobId,true);expect(job?.state).toBe("success");expect(job?.result).toMatchObject({type:"construction",plan:base});
+  expect(job?.input).toMatchObject(fields);expect(await readJob("bob",jobId)).toBeNull();
+  expect(shared.send).toHaveBeenCalledTimes(1);expect(shared.send.mock.calls[0][1].id).toBe("v");
+  expect(JSON.parse(shared.send.mock.calls[0][3])).toEqual({question:fields.questionText,correction:fields.drawingCorrection});
+  expect(shared.send.mock.calls[0][4]).toBeTruthy();
+  const second=await DRAW(req("/api/ai/drawing/construction",{...fields,drawingPlan:base}),{params:Promise.resolve({kind:"construction"})});
+  expect(second.status).toBe(202);const {jobId:secondId}=await second.json();await processOne();
+  const secondJob=await readJob("alice",secondId);expect(secondJob?.state).toBe("success");expect(secondJob?.result).toMatchObject({type:"construction",plan:construction});
+  expect(await readJob("bob",secondId)).toBeNull();expect(shared.send).toHaveBeenCalledTimes(2);expect(shared.send.mock.calls[1][1].id).toBe("t");
+  expect(JSON.parse(shared.send.mock.calls[1][3])).toEqual({question:fields.questionText,answer:fields.answerText,analysis:fields.analysis,lockedBase:base});
+  expect(shared.send.mock.calls[1][4]).toBeUndefined();
   expect((job?.attemptsLog[0] as unknown as {stage:string}).stage).toBe("construction");
+  expect((secondJob?.attemptsLog[0] as unknown as {stage:string}).stage).toBe("construction");
  });
  it("stops unsupported drawings once without spending the fallback model budget",async()=>{
   shared.send.mockResolvedValue(JSON.stringify({unsupported:true}));
@@ -334,7 +347,7 @@ describe.sequential("supplemental text completes human evidence review",()=>{
  async function awaitingGeometry(){
   const geometry={regions:[],angles:[{label:"1",vertex:"Q",arms:["P","R"]}]};
   shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,geometry}))
-   .mockResolvedValueOnce(JSON.stringify({...transcript,geometry,uncertainties:["confirm the ray"]}));
+   .mockResolvedValueOnce(JSON.stringify({angles:geometry.angles,geometryUncertainties:["编号角1的射线仍需核对"]}));
   const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
   const id=await createConversation("alice",{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());
   await processOne();expect((await view(id)).state).toBe("awaiting_user");return id;
