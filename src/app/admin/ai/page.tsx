@@ -207,7 +207,8 @@ export default function AIManagement() {
                         <fieldset disabled={busy} className="space-y-3 min-w-0">
                             <p className="text-sm">合并时同ID使用导入值；替换会移除现有AI配置，不影响题目和账户。未保存的编辑不参与导入。</p>
                             <p className="text-sm">模板不含真实密钥。在本地填写HTTPS地址、模型和密钥后导入；明文模板填写后含敏感信息，请勿公开分享，仅向可信的HTTPS本站提交。示例连接和模型默认停用，确认设置后再启用。</p>
-                            <input aria-label="加密配置文件" type="file" accept=".json" className="w-full" onChange={async (e) => {
+                            <p className="text-sm">注意：ScanDex导入的vision仅表示文字＋读图多模态能力，不代表图片输出或图片编辑。导入或替换不会自动转移本站专用图片编辑授权；如需图片编辑，请在下方独立设置中重新确认受支持的Gemini图片输出模型。</p>
+                            <input aria-label="加密配置文件" type="file" accept=".json" className="w-full rounded-md border border-sky-200 bg-sky-50/70 p-1 text-sm text-slate-700 shadow-sm file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-sky-200 file:bg-sky-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-sky-700 hover:file:bg-sky-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200" onChange={async (e) => {
                                 const sequence = ++fileSequence.current;
                                 setPreview(null); setEnvelope(undefined); setPassword("");
                                 const f = e.target.files?.[0]; if (!f) return;
@@ -244,7 +245,7 @@ export default function AIManagement() {
                             <DialogTrigger asChild><button className="font-semibold text-left break-words hover:underline">{p.name}</button></DialogTrigger>
                             <p className="text-sm text-muted-foreground">{config.models.filter((m) => m.providerId === p.id).length}个模型 · {p.enabled ? "已启用" : "已停用"} · {p.protocol}</p>
                         </div>
-                        <DialogTrigger asChild><button className={buttonStyle} aria-label={`设置连接：${p.name}`} title="设置连接与模型"><Settings2 className="size-4" /></button></DialogTrigger>
+                        <DialogTrigger asChild><button className={buttonStyle} aria-label={`设置连接：${p.name}`} title="设置连接与模型"><Settings2 className="size-5 text-sky-600" strokeWidth={1.8} /></button></DialogTrigger>
                     </div>
                     <DialogContent className="sm:max-w-3xl max-h-[90dvh] flex flex-col overflow-hidden p-0 gap-0">
                         <DialogHeader className="shrink-0 p-5 pr-12 border-b">

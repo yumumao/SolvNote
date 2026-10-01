@@ -66,3 +66,9 @@ it("still requires a passphrase for the encrypted format", async () => {
     await act(async()=>input.dispatchEvent(new Event("change",{bubbles:true})));
     expect(button("解密并预览（不写入）")!.disabled).toBe(true); expect(api.post).not.toHaveBeenCalled();
 });
+it("documents that vision import is not image output authorization", async () => {
+    await render(); await click("导入配置");
+    expect(document.body.textContent).toContain("ScanDex导入的vision仅表示文字＋读图多模态能力");
+    expect(document.body.textContent).toContain("不会自动转移本站专用图片编辑授权");
+    expect(document.body.textContent).toContain("Gemini图片输出模型");
+});

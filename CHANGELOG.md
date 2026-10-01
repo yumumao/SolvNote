@@ -1,4 +1,11 @@
 # Version notes / 版本说明
+## 维护更新 / Maintenance update · 2026-10-02
+- AI配置导入：文件选择按钮增加边框与浅蓝底色；补充vision为文字＋读图能力、不会自动授权图片编辑的提示与回归测试。
+- 弹窗：共享关闭按钮改为浅红圆形悬浮按钮，滚动时保持可点击，hover加深。
+- 网站图标：浅蓝背景、放大的书本、蓝色横线与橙红对勾，保留右上角四角星；同步SVG、PNG、ICO与主题色。
+- AI import: improve file-picker affordance and clarify that vision does not grant image-edit authorization; add compatibility regression coverage.
+- Dialogs and branding: keep the red-tinted close button accessible while scrolling, and refresh all site-icon formats with the approved larger-book design.
+
 ## 维护更新 / Maintenance update · 2026-09-29
 - 辅助线维护：固定底图视窗不变，新增在新标签页打开当前步骤完整图；下载SVG也包含越界辅助点，不提前展示后续步骤。
 - Drawing maintenance: keep the embedded source viewport fixed and open the complete current-step SVG in a new tab. Downloads include outlying auxiliary points without revealing future steps.
