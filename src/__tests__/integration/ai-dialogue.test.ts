@@ -30,6 +30,30 @@ const origin="https://notebook.example.invalid";
 function req(path="/api/ai/conversations",body:unknown={questionText:"fixture"},headers:Record<string,string>={}){return new Request(origin+path,{method:"POST",headers:{"content-type":"application/json",origin,"x-request-id":key(),...headers},body:JSON.stringify(body)});}
 let seq=0;
 const key=()=>`synthetic-${++seq}`;
+async function captureAiIsolation(){
+ return shared.db.$transaction(async tx=>({
+  siteConfig:await tx.aiConfiguration.findUnique({where:{id:"site"}}),
+  drawingConfig:await tx.aiConfiguration.findUnique({where:{id:"notebook-drawing"}}),
+  policy:await tx.aiAccessPolicy.findUnique({where:{id:"site"}}),
+  siteModels:await tx.aiSiteModelAccess.findMany(),
+  grants:await tx.aiUserModelGrant.findMany(),
+ }));
+}
+async function restoreAiIsolation(snapshot:Awaited<ReturnType<typeof captureAiIsolation>>){
+ await shared.db.$transaction(async tx=>{
+  // saveAIConfig reconciles site metadata and can add temporary model rows;
+  // restore the whole access snapshot so later dialogue tests keep their grants.
+  await tx.aiUserModelGrant.deleteMany();
+  await tx.aiSiteModelAccess.deleteMany();
+  await tx.aiAccessPolicy.deleteMany({where:{id:"site"}});
+  await tx.aiConfiguration.deleteMany({where:{id:{in:["site","notebook-drawing"]}}});
+  if(snapshot.siteConfig)await tx.aiConfiguration.create({data:snapshot.siteConfig});
+  if(snapshot.drawingConfig)await tx.aiConfiguration.create({data:snapshot.drawingConfig});
+  if(snapshot.policy)await tx.aiAccessPolicy.create({data:snapshot.policy});
+  for(const row of snapshot.siteModels)await tx.aiSiteModelAccess.create({data:row});
+  for(const row of snapshot.grants)await tx.aiUserModelGrant.create({data:row});
+ });
+}
 async function create(user="alice", withImage=true){return createConversation(user,{questionText:"synthetic q",...(withImage?{imageBase64:image}:{})},key());}
 async function view(id:string,user="alice"){return (await readConversation(user,id))!;}
 async function act(id:string,kind:string,extra:Record<string,unknown>={},user="alice",requestKey=key()) { const c=await view(id,user);return actConversation(user,id,{kind,revision:c.revision,...extra},requestKey); }
@@ -281,6 +305,51 @@ describe.sequential("bounded drawing routes and jobs",()=>{
   expect((await DRAWSET(req("/api/ai/drawing-settings",{modelId:"v",revision:0}))).status).toBe(400);
   expect((await DRAWSET(req("/api/ai/drawing-settings",{modelId:null,revision:0},{origin:"https://foreign.example.invalid"}))).status).toBe(403);
   shared.authId="alice";const v=await (await DRAWGET(req())).json();expect(v.enabled).toBe(false);expect(v).not.toHaveProperty("models");expect(JSON.stringify(v)).not.toContain("synthetic-only");
+ });
+ it("exposes only enabled Gemini vision models for image-edit settings",async()=>{
+  shared.authId="admin";
+  const isolation=await captureAiIsolation();
+  const previous=await loadAIConfig({persist:false});
+  const mixed={version:1,providers:[
+   {id:"chat-provider",name:"Chat fixture",protocol:"chat",baseUrl:"https://chat.example.invalid/v1",apiKey:"synthetic-chat",enabled:true},
+   {id:"responses-provider",name:"Responses fixture",protocol:"responses",baseUrl:"https://responses.example.invalid/v1",apiKey:"synthetic-responses",enabled:true},
+   {id:"codex-provider",name:"Codex fixture",protocol:"responses_codex",baseUrl:"https://codex.example.invalid/v1",apiKey:"synthetic-codex",enabled:true},
+   {id:"gemini-provider",name:"Gemini fixture",protocol:"gemini",baseUrl:"https://gemini.example.invalid/v1beta",apiKey:"synthetic-gemini",enabled:true},
+   {id:"azure-provider",name:"Azure fixture",protocol:"azure",baseUrl:"https://azure.example.invalid/openai",apiKey:"synthetic-azure",apiVersion:"2024-10-21",enabled:true},
+  ],models:[
+   {id:"chat-vision",providerId:"chat-provider",name:"Chat vision",model:"chat-vision",capabilities:["text","vision"],enabled:true},
+   {id:"responses-vision",providerId:"responses-provider",name:"Responses vision",model:"responses-vision",capabilities:["text","vision"],enabled:true},
+   {id:"codex-vision",providerId:"codex-provider",name:"Codex vision",model:"codex-vision",capabilities:["text","vision"],enabled:true},
+   {id:"gemini-vision",providerId:"gemini-provider",name:"Gemini image editor",model:"gemini-image-editor",capabilities:["text","vision"],enabled:true},
+   {id:"azure-vision",providerId:"azure-provider",name:"Azure vision",model:"azure-vision",capabilities:["text","vision"],enabled:true},
+  ],chains:{text:["chat-vision","responses-vision","codex-vision","gemini-vision","azure-vision"],vision:["chat-vision","responses-vision","codex-vision","gemini-vision","azure-vision"]}} as Parameters<typeof saveAIConfig>[0];
+  try{
+   await saveAIConfig(mixed,previous.revision);
+   const response=await DRAWGET(req());expect(response.status).toBe(200);
+   const body=await response.json() as {models:{id:string}[]};
+   expect(body.models.map(m=>m.id)).toEqual(["gemini-vision"]);
+   const rejected=await DRAWSET(req("/api/ai/drawing-settings",{modelId:"responses-vision",revision:0,configRevision:previous.revision+1}));
+   expect(rejected.status).toBe(400);expect(await rejected.json()).toEqual({message:"AI_IMAGE_EDIT_UNSUPPORTED"});
+  }finally{
+   await restoreAiIsolation(isolation);
+  }
+ });
+ it("does not transfer site-specific image-edit authorization to an imported connection",async()=>{
+  shared.authId="admin";
+  const isolation=await captureAiIsolation();
+  const previous=await loadAIConfig({persist:false});
+  const source={version:1,providers:[{id:"source-gemini",name:"Source Gemini",protocol:"gemini",baseUrl:"https://source.example.invalid/v1beta",apiKey:"synthetic-source",enabled:true}],models:[{id:"source-image",providerId:"source-gemini",name:"Source image editor",model:"source-image",capabilities:["text","vision"],enabled:true}],chains:{text:["source-image"],vision:["source-image"]}} as Parameters<typeof saveAIConfig>[0];
+  const imported={version:1,providers:[{id:"imported-gemini",name:"Imported Gemini",protocol:"gemini",baseUrl:"https://imported.example.invalid/v1beta",apiKey:"synthetic-imported",enabled:true}],models:[{id:"imported-image",providerId:"imported-gemini",name:"Imported image editor",model:"imported-image",capabilities:["text","vision"],enabled:true}],chains:{text:["imported-image"],vision:["imported-image"]}} as Parameters<typeof saveAIConfig>[0];
+  try{
+   await saveAIConfig(source,previous.revision);
+   const before=await (await DRAWGET(req())).json() as {revision:number;configRevision:number};
+   const selected=await DRAWSET(req("/api/ai/drawing-settings",{modelId:"source-image",revision:before.revision,configRevision:before.configRevision}));expect(selected.status).toBe(200);
+   const current=await loadAIConfig({persist:false});await saveAIConfig(imported,current.revision);
+   const after=await (await DRAWGET(req())).json() as {enabled:boolean;modelId:string;models:{id:string}[]};
+   expect(after.enabled).toBe(false);expect(after.modelId).toBe("source-image");expect(after.models.map(m=>m.id)).toEqual(["imported-image"]);
+  }finally{
+   await restoreAiIsolation(isolation);
+  }
  });
  it("persists two owner-only construction jobs, routes the base to vision and only passes locked points to the solver",async()=>{
   const base={...construction,steps:[]};
