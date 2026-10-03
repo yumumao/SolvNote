@@ -5,6 +5,7 @@ import type { AIModel, AIProvider } from "../ai-config/schema";
 import { createHash } from "node:crypto";
 import { runtimeConfig, assertRunContributors } from "../ai-access/runtime";
 import { loadEffectiveAIConfigInTx } from "../ai-access/effective-config";
+import { requireTxAiUser } from "../ai-access/account";
 import { prisma } from "../prisma";
 import { sendAI, AIError } from "./transport";
 import { sendImageEdit } from "../ai-drawing/image-edit";
@@ -13,7 +14,8 @@ import { aiRun, ATTEMPT_MS, TOTAL_MS, type AIRun } from "../ai-jobs/context";
 /** Register dispatch under the durable lease, not merely a delayed heartbeat. */
 export type ChainOptions = {
     role?: "solve" | "recognize";
-    stage?: "recognize" | "solve" | "reread" | "review" | "geometry_check" | "construction" | "image_edit";
+    singleAttempt?: boolean;
+    stage?: "illustration_describe" | "recognize" | "solve" | "reread" | "review" | "geometry_check" | "construction" | "image_edit";
     detailImages?: string[];
     imageEdit?: boolean;
     modelId?: string;
@@ -35,6 +37,7 @@ async function registerAttempt(run: AIRun, model: AIModel, provider: AIProvider,
         if (job?.cancelRequested) throw new AIError("AI_CANCELLED");
         if (!job || !run.userId || job.userId !== run.userId) throw new AIError("AI_ACCESS_REVOKED");
         try {
+            if(job.kind==="illustration_describe")await requireTxAiUser(tx,run.userId,true);
             const live = await loadEffectiveAIConfigInTx(tx, run.userId);
             if ((job.conversationId || undefined) !== run.conversationId) throw Error();
             await assertRunContributors(run, live.config, tx);
@@ -191,7 +194,7 @@ export async function callChain<T>(
                     },
                     update: { until: new Date(Date.now() + e.retryAfterMs) },
                 });
-            if (options.imageEdit || !e.fallback) throw e;
+            if (options.imageEdit || options.singleAttempt || !e.fallback) throw e;
             continue;
         }
         await runtimeConfig(run);

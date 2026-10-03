@@ -2,6 +2,13 @@ import { diagnosticMessage } from "../ai/diagnostics";
 
 /** Public fixed messages only: never display raw upstream errors, URLs or config values. */
 const drawingErrors: Record<string, string> = {
+    AI_DESCRIPTION_INVALID: "识图模型未返回合法的描述与待核对项，未自动换模型、解题或生图。可手动填写描述，或检查本次任务。",
+    AI_NO_ALLOWED_MODEL: "当前账号没有可用的识图模型，请检查上方识图调用顺序、vision能力与授权；MiniMax生图模型不能代替识图模型。",
+    AI_ILLUSTRATION_SETTINGS_CHANGED: "创作配图授权已失效，请回AI设置刷新并重新确认连接与模型。",
+    AI_ILLUSTRATION_ENDPOINT: "请选择已保存的官方MiniMax HTTPS连接，第三方地址不会被自动转发。",
+    AI_ILLUSTRATION_UPSTREAM: "MiniMax业务接口未成功，请核对图片服务权限和额度；文字订阅不一定包含图片API。",
+    AI_ILLUSTRATION_NO_IMAGE: "MiniMax未返回要求的单张base64图片，未抓取远程URL。请查看任务，不要连续重发。",
+    AI_ILLUSTRATION_INVALID_IMAGE: "返回图片未通过格式、大小或像素数检查，未展示。可能已计费，不要连续重发。",
     AI_DRAWING_UNSUPPORTED: diagnosticMessage("DRAWING_UNSUPPORTED")!,
     AI_DRAWING_INVALID: diagnosticMessage("DRAWING_INVALID")!,
     AI_RESPONSE_ERROR: "模型未返回可用的构造结果，请到本次任务查看格式或输出诊断。",

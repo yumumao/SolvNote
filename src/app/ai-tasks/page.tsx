@@ -4,7 +4,9 @@ import Link from "next/link";
 import {Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose} from "@/components/ui/dialog";
 import {Button} from "@/components/ui/button";
 import { diagnosticMessage } from "@/lib/ai/diagnostics";
+import {IllustrationDescriptionPreview} from "@/components/illustration-composer";
 import {DrawingResultPreview} from "@/components/auxiliary-drawing";
+import {AIWorkProgress} from "@/components/ai-work-progress";
 import { ApiError, apiClient } from "@/lib/api-client";
 import { dialogueLabels } from "@/components/ai-conversation";
 type ConversationSummary={id:string;state:string;roundsUsed:number;roundLimit:number;updatedAt:string};
@@ -147,7 +149,7 @@ export default function AITasks() {
             </p>
             <p role="status">{listMessage}</p>
             <section className="space-y-3"><h2 className="text-lg font-semibold">解题会话</h2>{conversations.map(c=><article key={c.id} className="border rounded p-4"><Link className="underline" href={`/ai-dialogue/${c.id}`}>{dialogueLabels[c.state] || c.state} · 已完成{c.roundsUsed}/{c.roundLimit}轮</Link><p className="text-sm text-muted-foreground">更新于{new Date(c.updatedAt).toLocaleString()}</p></article>)}{!conversations.length && <p>还没有解题会话，从错题本添加题目即可开始。</p>}</section>
-            <h2 className="text-lg font-semibold">短任务（含辅助线作图）</h2>
+            <h2 className="text-lg font-semibold">短任务（含辅助线与创作配图）</h2>
             {jobs.map((j) => (
                 <article key={j.id} className="border p-4 rounded space-y-2">
                     <div>
@@ -194,19 +196,21 @@ export default function AITasks() {
                         {detail?.errorCode === "AI_DRAWING_UNSUPPORTED" && <p role="alert">{diagnosticMessage("DRAWING_UNSUPPORTED")}</p>}
                         {detail && <>
                     <p className="font-medium">{detail.kind} · {labels[detail.state] || detail.state}</p>
+                    <AIWorkProgress active={!message && ["pending","running"].includes(detail.state) && ["construction","image_edit","illustration","illustration_describe"].includes(detail.kind)} label={detail.kind==="illustration_describe"?"原图识别":detail.kind==="image_edit"?"整图编辑":detail.kind==="illustration"?"创作配图":"作图"}/>
                     <pre className="whitespace-pre-wrap break-words text-sm overflow-auto">
                         {JSON.stringify(
                             {
                                 state: detail.state,
                                 attempts: detail.attemptsLog,
-                                result: detail.state === "success" && detail.result && ["construction","image_edit"].includes(detail.kind)?"见下方作图预览":detail.result,
+                                result: detail.state === "success" && detail.result && ["construction","image_edit","illustration"].includes(detail.kind)?"见下方作图预览":detail.result,
                                 error: detail.errorCode,
                             },
                             null,
                             2,
                         )}
                     </pre>
-                    {detail.state === "success" && ["construction","image_edit"].includes(detail.kind) && <DrawingResultPreview key={detail.id} result={detail.result} originalImage={originalImage(detail.input)} input={detail.input}/>}
+                    {detail.state==="success" && detail.kind==="illustration_describe" && <IllustrationDescriptionPreview result={detail.result}/>}
+                    {detail.state === "success" && ["construction","image_edit","illustration"].includes(detail.kind) && <DrawingResultPreview key={detail.id} result={detail.result} originalImage={originalImage(detail.input)} input={detail.input}/>}
                     {detail.state === "success" &&
                         detail.kind === "analyze" && (
                             <Link

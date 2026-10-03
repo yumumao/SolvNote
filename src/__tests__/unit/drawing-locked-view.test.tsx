@@ -36,6 +36,7 @@ describe("source-to-auxiliary pixel invariants",()=>{
    const exported=new DOMParser().parseFromString(serialized,"image/svg+xml").documentElement;
    expect(exported.localName,exported.textContent ?? "").toBe("svg");
    expect(exported.getAttribute("style")).not.toContain("max-height");
+   expect(exported.getAttribute("style")).not.toContain("max-width");
    expect(exported.getAttribute("width")).toBe("100%");expect(exported.getAttribute("height")).toBe("100%");
    expect(host.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 800 500");
   }finally{await act(async()=>root.unmount());open.mockRestore();anchorClick.mockRestore();vi.unstubAllGlobals();}

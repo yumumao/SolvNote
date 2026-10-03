@@ -1,0 +1,18 @@
+.indicator {
+  display: block;
+  height: 100%;
+  width: 40%;
+  animation: activity 1.6s ease-in-out infinite;
+}
+
+@keyframes activity {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indicator {
+    animation: none;
+    transform: translateX(75%);
+  }
+}

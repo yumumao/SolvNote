@@ -112,3 +112,15 @@ it("explains supplemental confirmation and sends just the added text",async()=>{
  expect(mocks.post.mock.calls.at(-1)?.[1]).toMatchObject({kind:"continue",text:"synthetic added condition",revision:2});
  expect(mocks.post.mock.calls.at(-1)?.[1]).not.toHaveProperty("correctedTranscript");
 });
+
+describe("current process step activity",()=>{
+ it("shows the current running step and stops after polling fails, then resumes after a successful read",async()=>{
+  c.state="active";c.steps[0].state="running";c.steps[0].finishedAt=null;await render();expect(host.querySelector('[role=progressbar]')).not.toBeNull();
+  mocks.get.mockRejectedValueOnce(Error('synthetic poll failure'));await act(async()=>{await vi.advanceTimersByTimeAsync(2100)});expect(host.querySelector('[role=progressbar]')).toBeNull();
+  await click("刷新状态");expect(host.querySelector('[role=progressbar]')).not.toBeNull();
+ });
+ it.each(['answered','cancelling','cancelled','unknown'] as const)("stops the step indicator when parent state becomes %s despite a stale running step",async(state)=>{
+  c.state="active";c.steps[0].state="running";c.steps[0].finishedAt=null;await render();expect(host.querySelector('[role=progressbar]')).not.toBeNull();
+  c.state=state;c.revision++;await act(async()=>{await vi.advanceTimersByTimeAsync(2100)});expect(host.querySelector('[role=progressbar]')).toBeNull();
+ });
+});

@@ -73,4 +73,78 @@ describe("separate base confirmation and auxiliary requests",()=>{
   await act(async()=>root.render(<DrawingResultPreview result={{type:"construction",plan:base}} originalImage={source} input={props}/>));
   expect(host.querySelector('[data-layer="base"]')).not.toBeNull();expect(button("第二步：在锁定底图上添加辅助线")).toBeDefined();expect(post).not.toHaveBeenCalled();
  });
+
+ it("keeps correction editable before the first diagram without submitting a request",async()=>{
+  const post=vi.spyOn(apiClient,"post");await render();
+  const textarea=host.querySelector('textarea[data-drawing-correction]') as HTMLTextAreaElement;
+  expect(textarea).not.toBeNull();expect(textarea.disabled).toBe(false);
+  expect(host.querySelector('svg[role="img"]')).toBeNull();expect(post).not.toHaveBeenCalled();
+ });
+ it("keeps both diagrams in a top-to-bottom workflow with correction between the stages",async()=>{
+  const post=vi.spyOn(apiClient,"post").mockResolvedValueOnce({type:"construction",plan:base}).mockResolvedValueOnce({type:"construction",plan:{...base,steps}});
+  await render();await click("第一步：生成原题底图");
+  const before=(a:Element,b:Element)=>expect(a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const baseStage=host.querySelector('[data-drawing-stage="base"]')!;
+  expect(baseStage).not.toBeNull();
+  const diagram=baseStage.querySelector('svg[role="img"]')!;
+  const note=host.querySelector('textarea[data-drawing-correction]')!;
+  const original=diagram.outerHTML;
+  const assertPosition=()=>{
+   before(button("第一步：生成原题底图"),diagram);before(diagram,note);
+   before(note,host.querySelector('[data-confirm-base]')!);
+   before(host.querySelector('[data-confirm-base]')!,button("第二步：在锁定底图上添加辅助线"));
+  };
+  assertPosition();await confirmBase();await click("第二步：在锁定底图上添加辅助线");assertPosition();
+  const auxiliary=host.querySelector('[data-drawing-stage="auxiliary"]')!;
+  const result=auxiliary.querySelector('svg[role="img"]')!;
+  expect(host.querySelectorAll('svg[role="img"]')).toHaveLength(2);
+  expect(baseStage.querySelector('svg[role="img"]')).toBe(diagram);
+  expect(diagram.outerHTML).toBe(original);expect(baseStage.querySelector('[data-aux-point="P"]')).toBeNull();
+  expect(auxiliary.querySelector('[data-aux-point="P"]')).not.toBeNull();
+  before(button("第二步：在锁定底图上添加辅助线"),result);
+  before(result,button("打开实验性AI重新配图 / 整图编辑"));
+  const previous=[...auxiliary.querySelectorAll('button')].find(b=>b.textContent==="上一步")!;
+  await act(async()=>previous.click());
+  expect(auxiliary.querySelector('[data-aux-point="P"]')).toBeNull();expect(diagram.outerHTML).toBe(original);
+  expect(post).toHaveBeenCalledTimes(2);
+ });
+ it("places a recovered base correction below its diagram without regenerating it",async()=>{
+  const post=vi.spyOn(apiClient,"post");
+  await act(async()=>root.render(<DrawingResultPreview result={{type:"construction",plan:base}} originalImage={source} input={{...props,drawingCorrection:"Keep A above B"}}/>));
+  const diagram=host.querySelector('svg[role="img"]')!;
+  const note=host.querySelector('textarea[data-drawing-correction]') as HTMLTextAreaElement;
+  expect(note.value).toBe("Keep A above B");
+  expect(note.compareDocumentPosition(button("第二步：在锁定底图上添加辅助线"))&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(diagram.compareDocumentPosition(note)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(post).not.toHaveBeenCalled();
+ });
+
+ it("keeps waiting feedback under the active stage button and retains the base while waiting",async()=>{
+  let finish!:(value:unknown)=>void;
+  const post=vi.spyOn(apiClient,"post").mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+  await render();await click("第一步：生成原题底图");
+  const baseStage=host.querySelector('[data-drawing-stage="base"]')!;
+  expect(baseStage).not.toBeNull();
+  expect(baseStage.querySelector('[role="progressbar"]')).not.toBeNull();
+  await act(async()=>finish({type:"construction",plan:base}));
+  expect(host.querySelector('[role="progressbar"]')).toBeNull();await confirmBase();
+  const original=baseStage.querySelector('svg[role="img"]')!.outerHTML;
+  await click("第二步：在锁定底图上添加辅助线");
+  const auxiliary=host.querySelector('[data-drawing-stage="auxiliary"]')!;
+  expect(auxiliary.querySelector('[role="progressbar"]')).not.toBeNull();
+  expect(baseStage.querySelector('[role="progressbar"]')).toBeNull();
+  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+  expect(baseStage.querySelector('svg[role="img"]')!.outerHTML).toBe(original);
+  await act(async()=>finish({type:"construction",plan:{...base,steps}}));
+  expect(host.querySelector('[role="progressbar"]')).toBeNull();expect(post).toHaveBeenCalledTimes(2);
+ });
+ it("hides only the lower result when the answer changes and keeps the upper source diagram",async()=>{
+  vi.spyOn(apiClient,"post").mockResolvedValueOnce({type:"construction",plan:base}).mockResolvedValueOnce({type:"construction",plan:{...base,steps}});
+  await render();await click("第一步：生成原题底图");await confirmBase();await click("第二步：在锁定底图上添加辅助线");
+  const diagram=host.querySelector('[data-drawing-stage="base"] svg[role="img"]');
+  expect(diagram).not.toBeNull();await render({answerText:"New answer"});
+  expect(host.querySelector('[data-drawing-stage="base"] svg[role="img"]')).toBe(diagram);
+  expect(host.querySelector('[data-drawing-stage="auxiliary"] svg[role="img"]')).toBeNull();
+  expect(button("第二步：在锁定底图上添加辅助线").disabled).toBe(false);
+ });
 });

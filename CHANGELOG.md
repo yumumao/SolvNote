@@ -1,4 +1,12 @@
 # Version notes / 版本说明
+
+## 功能与维护更新 / Features and maintenance · 2026-10-04
+- 新增MiniMax文生图与参考图识别描述，复用已保存的官方连接，并保持图片输出单独授权；实验性重新配图独立弹窗使用，不保证底图或几何精度不变。
+- AI处理与图片生成增加等待进度提示；几何作图按底图、纠正说明、辅助步骤从上到下展示，原图对照按需展开。
+- 图形统一左对齐，宽屏公式缩进左对齐、小屏居中；解题可在独立标签页阅读并在本机分享文字或长图，按需附带题干、原图、原题重绘、参考答案及辅助线图，不创建公开链接。
+- 修复分享弹窗关闭按钮随滚动偏移，独立阅读页移除重复的新标签入口，保留分享操作。
+- Add separately authorized MiniMax illustration generation, reference-image descriptions, progress indicators, sequential drawing UI, responsive reading, and local text/image sharing. Fix scrolling close controls and redundant reader links; no public sharing endpoint is introduced.
+
 ## 维护更新 / Maintenance update · 2026-10-02
 - AI配置导入：文件选择按钮增加边框与浅蓝底色；补充vision为文字＋读图能力、不会自动授权图片编辑的提示与回归测试。
 - 弹窗：共享关闭按钮改为浅红圆形悬浮按钮，滚动时保持可点击，hover加深。
