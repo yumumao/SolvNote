@@ -1,9 +1,12 @@
 "use client";
+import { AIWorkProgress } from "./ai-work-progress";
 import { diagnosticMessage } from "@/lib/ai/diagnostics";
 import type { DialogueMessage, ProcessStep } from "@/lib/ai-dialogue/types";
-const stages:Record<string,string>={geometry_check:"关键角标局部核对",construction:"辅助线构造",image_edit:"AI辅助线改图",recognize:"识图转录",solve:"解题",reread:"定向补读/核图",review:"独立复核"};
+const stages:Record<string,string>={illustration_describe:"原图配图描述（不解题）",illustration:"MiniMax创作配图",geometry_check:"关键角标局部核对",construction:"辅助线构造",image_edit:"AI辅助线改图",recognize:"识图转录",solve:"解题",reread:"定向补读/核图",review:"独立复核"};
 const states:Record<string,string>={running:"进行中",success:"完成",failed:"失败",unknown:"状态不确定，未自动重发",cancelled:"已取消"};
-export function AIProcess({steps,messages}:{steps:ProcessStep[];messages:DialogueMessage[]}){
+export function AIProcess({steps,messages,active=false}:{steps:ProcessStep[];messages:DialogueMessage[];active?:boolean}){
+    // Never animate an older running snapshot after a newer attempt has ended.
+    const latest=steps.reduce<ProcessStep|undefined>((last,step)=>!last||new Date(step.startedAt).getTime()>=new Date(last.startedAt).getTime()?step:last,undefined);
     const events=[...steps.map((s,i)=>({key:s.id || `step-${i}`,at:s.startedAt,step:s,message:null})),
         ...messages.filter(m=>m.kind!=="answer").map(m=>({key:m.id,at:m.at,step:null,message:m}))]
         .sort((a,b)=>new Date(a.at).getTime()-new Date(b.at).getTime());
@@ -18,6 +21,7 @@ export function AIProcess({steps,messages}:{steps:ProcessStep[];messages:Dialogu
                 {diagnosticMessage(e.step.diagnostic) ? <p className="text-amber-700">{diagnosticMessage(e.step.diagnostic)}</p>
                     : e.step.errorCode === "AI_RESPONSE_ERROR" ? <p className="text-amber-700">本次记录未记录细分原因，不能仅凭此错误码判断是模型不可用、空回复还是格式问题。</p>
                     : e.step.errorCode === "AI_ACCEPTANCE_UNKNOWN" ? <p className="text-amber-700">本次记录未记录细分原因，无法确认服务端是否完成，系统不会自动重发。</p> : null}
+                <AIWorkProgress compact active={active&&e.step===latest&&e.step.state==="running"&&!e.step.finishedAt} label={stages[e.step.stage || ""] || "AI处理"}/>
                 {!!e.step.detailImageCount && <p>附加原图局部：{e.step.detailImageCount}张</p>}
                 {!!e.step.questions?.length && <p>本次核对：{e.step.questions.join("；")}</p>}
             </>:<p>{e.message?.kind==="notice"?"系统提示":"人工输入"} · 第{e.message?.round}轮：{e.message?.text}</p>}

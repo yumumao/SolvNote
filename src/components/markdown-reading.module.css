@@ -1,0 +1,7 @@
+.reading { container-type: inline-size; container-name: markdown-reading; }
+.reading :global(.katex-display) { overflow-x: auto; overflow-y: hidden; padding-block: .25rem; }
+.reading :global(.katex-display > .katex) { display: block; width: max-content; min-width: 100%; text-align: center; }
+@container markdown-reading (min-width: 640px) {
+  .reading :global(.katex-display) { padding-inline-start: 2.5rem; }
+  .reading :global(.katex-display > .katex) { text-align: left; }
+}

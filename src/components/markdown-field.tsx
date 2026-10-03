@@ -1,20 +1,24 @@
 "use client";
 import { useId } from "react";
 import { MarkdownRenderer } from "./markdown-renderer";
+import { SolutionShare } from "./solution-share";
+import type { SolutionContext } from "./solution-document";
 import { Textarea } from "./ui/textarea";
 
 /** One canonical string: preview first, source on demand. Editing never calls AI. */
-export function MarkdownField({ label, value, onChange, placeholder, emptyText = "暂无内容", minHeight = "min-h-32" }: {
+export function MarkdownField({ label, value, onChange, placeholder, emptyText = "暂无内容", minHeight = "min-h-32", shareContext }: {
     label: string;
     value: string;
     onChange?: (value: string) => void;
     placeholder?: string;
     emptyText?: string;
     minHeight?: string;
+    shareContext?: SolutionContext;
 }) {
     const id = useId();
     return <section className="min-w-0 rounded-xl border bg-card p-4 space-y-3" aria-labelledby={id}>
         <h4 id={id} className="font-semibold text-base border-l-4 border-primary pl-3">{label}</h4>
+        {shareContext && <SolutionShare analysis={value} {...shareContext}/>}
         {value.trim() ? <MarkdownRenderer content={value}/> : <p className="text-sm text-muted-foreground">{emptyText}</p>}
         <details data-markdown-source className="rounded-lg border bg-muted/20 p-3">
             <summary className="cursor-pointer text-sm text-muted-foreground focus-visible:outline focus-visible:outline-primary">

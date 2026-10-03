@@ -1,4 +1,5 @@
 import React from 'react';
+import readingStyles from './markdown-reading.module.css';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -9,17 +10,23 @@ import { normalizeMathMarkdown } from '@/lib/markdown-math';
 interface MarkdownRendererProps {
     content: string;
     className?: string;
+    localShare?: boolean;
 }
 
-export function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, className = '', localShare = false }: MarkdownRendererProps) {
     const processedContent = normalizeMathMarkdown(content);
 
     return (
-        <div className={`markdown-content overflow-x-auto min-w-0 ${className}`}>
+        <div className={`markdown-content ${readingStyles.reading} overflow-x-auto min-w-0 ${className}`}>
             <ReactMarkdown
                 remarkPlugins={[remarkMath, remarkGfm]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
+                    // Sharing never fetches Markdown images or enables external links.
+                    ...(localShare ? {
+                        img: ({ alt }: { alt?: string }) => <span>[图片未包含{alt ? '：' + alt : ''}]</span>,
+                        a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
+                    } : {}),
                     // 自定义样式
                     h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mt-6 mb-4" {...props} />,
                     h2: ({ node, ...props }) => <h2 className="text-xl font-bold mt-5 mb-3" {...props} />,

@@ -1,3 +1,5 @@
+import { requireIllustrationAccess } from "../ai-drawing/illustration-settings";
+import { AIRequestError } from "../ai-access";
 import { SOLVING_JOB_KINDS } from "../solving-records/retention";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../prisma";
@@ -12,7 +14,7 @@ import { aiRun, TOTAL_MS } from "./context";
 import { type JobInput } from "./schema";
 import { failureState } from "./store";
 import { executeDialogueJob, recoverDialogue } from "../ai-dialogue/execution";
-import { requireLiveAiUser } from "../ai-access/account";
+import { requireLiveAiUser, requireTxAiUser } from "../ai-access/account";
 import { loadEffectiveAIConfigInTx } from "../ai-access/effective-config";
 import { assertJobModelAccess, assertConversationModelAccess } from "../ai-access/runtime";
 const LEASE_MS = 60000;
@@ -85,6 +87,8 @@ export async function claimJob(owner: string) {
     });
 }
 async function execute(kind: string, input: JobInput) {
+    if(kind==="illustration_describe"){const {executeDescription}=await import("../ai-drawing/illustration-description");return executeDescription(input);}
+    if(kind==="illustration"){const {executeIllustration}=await import("../ai-drawing/illustration-service");return executeIllustration(input);}
     if(kind === "construction" || kind === "image_edit"){
         const { executeDrawing } = await import("../ai-drawing/service");
         return executeDrawing(kind,input);
@@ -193,7 +197,9 @@ export async function processOne(owner: string = randomUUID()) {
     const total = setTimeout(() => controller.abort(), job.kind === "dialogue" ? 1800000 : TOTAL_MS);
     const heartbeat = setInterval(() => {
         void (async () => {
+            if(job.kind==="illustration_describe")await prisma.$transaction(tx=>requireTxAiUser(tx,job.userId,true));
             if (job.conversationId) await assertConversationModelAccess(job.userId,job.conversationId);
+            else if(job.kind==="illustration")await requireIllustrationAccess(job.userId,unprotect<JobInput>(job.input).illustrationRevision);
             else await assertJobModelAccess(job.userId,job.id);
             const now = new Date(Date.now() + LEASE_MS);
             const updated = await prisma.aiWorkerLease.updateMany({
@@ -245,7 +251,8 @@ export async function processOne(owner: string = randomUUID()) {
             () => execute(job.kind, input),
         );
         executionCompleted = true;
-        try { await assertJobModelAccess(job.userId,job.id); } catch { throw new AIError("AI_ACCESS_REVOKED"); }
+        if(job.kind==="illustration_describe")await prisma.$transaction(tx=>requireTxAiUser(tx,job.userId,true));
+        try { if(job.kind==="illustration")await requireIllustrationAccess(job.userId,input.illustrationRevision);else await assertJobModelAccess(job.userId,job.id); } catch { throw new AIError("AI_ACCESS_REVOKED"); }
         const current = await prisma.aiJob.findUnique({
             where: { id: job.id },
         });
@@ -255,9 +262,13 @@ export async function processOne(owner: string = randomUUID()) {
             current?.leaseOwner === owner
         ) {
             await prisma.$transaction(async (tx) => {
-                const effective = await loadEffectiveAIConfigInTx(tx,job.userId);
-                const contributors = await tx.aiAttempt.findMany({where:{jobId:job.id},select:{modelId:true}});
-                if(contributors.some(a=>!effective.config.models.some(m=>m.id===a.modelId))) throw new AIError("AI_ACCESS_REVOKED");
+                if(job.kind==="illustration_describe")await requireTxAiUser(tx,job.userId,true);
+                if(job.kind==="illustration")await requireIllustrationAccess(job.userId,input.illustrationRevision,tx);
+                else {
+                    const effective = await loadEffectiveAIConfigInTx(tx,job.userId);
+                    const contributors = await tx.aiAttempt.findMany({where:{jobId:job.id},select:{modelId:true}});
+                    if(contributors.some(a=>!effective.config.models.some(m=>m.id===a.modelId))) throw new AIError("AI_ACCESS_REVOKED");
+                }
                 const committed = await tx.aiJob.updateMany({
                     where: {
                         id: job.id,
@@ -299,6 +310,8 @@ export async function processOne(owner: string = randomUUID()) {
         const code =
             e instanceof AIError
                 ? e.code
+                : e instanceof AIRequestError && ["AI_ACCESS_REVOKED","AI_ILLUSTRATION_SETTINGS_CHANGED"].includes(e.message)
+                  ? e.message
                 : executionCompleted
                   ? "AI_ACCEPTANCE_UNKNOWN"
                   : "AI_INTERNAL_ERROR";

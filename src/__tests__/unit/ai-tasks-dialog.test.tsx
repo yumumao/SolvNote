@@ -56,3 +56,17 @@ describe('task history read failures are actionable and bounded',()=>{
   expect(dialog()?.textContent).not.toContain('见下方作图预览');
  });
 });
+
+it('restores a MiniMax image in the task dialog without POST or dumping base64 as text',async()=>{
+ const f=fixture(()=>response({id:'owned',kind:'illustration',state:'success',result:{type:'illustration',imageDataUrl:'data:image/png;base64,YQ==',modelName:'image-01'},attemptsLog:[]}));
+ await mount();await click('详情/取回结果');expect(dialog()?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,YQ==');expect(dialog()?.querySelector('a[download]')).not.toBeNull();expect(dialog()?.textContent).not.toContain('data:image/png');expect(f.mock.calls.every(([,o])=>o.method==='GET')).toBe(true);
+});
+
+
+it.each(['illustration','image_edit','construction','illustration_describe'])('shows indeterminate progress in restored %s tasks and stops on cancellation',async(kind)=>{
+ let state='running';const f=fixture(()=>response({id:'owned',kind,state}));await mount();await click('详情/取回结果');const progress=dialog()?.querySelector('[role="progressbar"]');expect(progress).not.toBeNull();expect(progress?.hasAttribute('aria-valuenow')).toBe(false);
+ state='cancelled';await act(async()=>{await vi.advanceTimersByTimeAsync(3000);});expect(dialog()?.querySelector('[role="progressbar"]')).toBeNull();expect(f.mock.calls.every(([,o])=>o.method==='GET')).toBe(true);
+});
+it('stops the task animation when status polling fails rather than claiming it is still processing',async()=>{
+ let failed=false;fixture(()=>failed?response({},503):response({id:'owned',kind:'illustration',state:'running'}));await mount();await click('详情/取回结果');expect(dialog()?.querySelector('[role="progressbar"]')).not.toBeNull();failed=true;await act(async()=>{await vi.advanceTimersByTimeAsync(3000);});expect(dialog()?.querySelector('[role="progressbar"]')).toBeNull();expect(dialog()?.textContent).toContain('暂时无法读取任务');
+});

@@ -1,0 +1,39 @@
+import {act} from 'react';
+import {createRoot,type Root} from 'react-dom/client';
+import {beforeEach,afterEach,it,expect,vi} from 'vitest';
+vi.mock('@/lib/solution-reader',()=>({openSolutionReader:vi.fn(),receiveSolutionReader:(_id:string,receive:(v:unknown)=>void)=>{receive({analysis:'合成题解',includeQuestion:false,includeAnswer:false});return ()=>{}}}));
+import SolutionReader from '@/app/solution-reader/page';
+import {SolutionShare} from '@/components/solution-share';
+import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
+let host:HTMLDivElement,root:Root;
+beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);host=document.createElement('div');document.body.append(host);root=createRoot(host)});
+afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()});
+const click=async(label:string)=>{const button=[...host.querySelectorAll('button')].find(b=>b.textContent===label);expect(button).toBeDefined();await act(async()=>button!.click())};
+it('reader exposes sharing without another reader entry, including inside its share dialog',async()=>{
+ await act(async()=>root.render(<SolutionReader/>));await act(async()=>{await new Promise(r=>setTimeout(r,20))});
+ expect(host.querySelector('[data-solution-document]')).not.toBeNull();
+ expect([...host.querySelectorAll('button')].some(b=>b.textContent==='新标签阅读')).toBe(false);
+ await click('分享解题过程');
+ expect([...host.querySelectorAll('button')].some(b=>b.textContent==='在新标签预览')).toBe(false);
+ await click('准备分享文字');expect(host.querySelector('textarea')?.value).toContain('合成题解');
+ expect([...host.querySelectorAll('button')].some(b=>b.textContent==='生成分享长图')).toBe(true);
+});
+it('source retains both reader entries while share close lives outside scrolling content',async()=>{
+ await act(async()=>root.render(<SolutionShare analysis="合成题解"/>));
+ expect([...host.querySelectorAll('button')].some(b=>b.textContent==='新标签阅读')).toBe(true);
+ await click('分享解题过程');
+ expect([...host.querySelectorAll('button')].some(b=>b.textContent==='在新标签预览')).toBe(true);
+ const modal=host.querySelector('dialog')!,scroll=modal.querySelector('[data-solution-dialog-scroll]');
+ expect(scroll).not.toBeNull();const close=modal.querySelector('[aria-label="关闭解题分享"]');
+ expect(scroll?.contains(close)).toBe(false);expect(close?.className).toContain('absolute');
+ expect(modal.className).toContain('overflow-hidden');
+ await click('✕');expect(modal.hasAttribute('open')).toBe(false);
+});
+it('shared dialog retains its named close control and existing red hover affordance',async()=>{
+ const onOpenChange=vi.fn();
+ await act(async()=>root.render(<Dialog open onOpenChange={onOpenChange}><DialogContent><DialogTitle>合成标题</DialogTitle><DialogDescription>合成说明</DialogDescription><p>可滚动内容</p></DialogContent></Dialog>));
+ const modal=document.querySelector('[role="dialog"]')!;
+ const close=[...modal.querySelectorAll('button')].find(b=>b.textContent==='关闭弹窗');
+ expect(close).toBeDefined();expect(close?.className).toContain('bg-red-50');expect(close?.className).toContain('hover:bg-red-200');
+ await act(async()=>close!.click());expect(onOpenChange).toHaveBeenCalledWith(false);
+});

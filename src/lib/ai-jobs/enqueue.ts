@@ -1,6 +1,6 @@
 import { validateDrawingInput } from "../ai-drawing/service";
 import { NextResponse } from "next/server";
-import { requireUser, assertSameOrigin } from "../ai-access";
+import { requireUser, requireAdmin, assertSameOrigin } from "../ai-access";
 import { readJSON, safeError } from "../ai-http";
 import { prisma } from "../prisma";
 import { calculateGrade } from "../grade-calculator";
@@ -12,10 +12,11 @@ export async function enqueue(
     errorItemId?: string,
 ) {
     try {
-        const user = await requireUser(req);
+        const media = kind==="illustration" || kind==="illustration_describe";
+        const user = media?await requireAdmin(req):await requireUser(req);
         assertSameOrigin(req);
-        let body = await readJSON(req, 25 * 1024 * 1024);
-        if (kind === "practice" || errorItemId) {
+        let body = await readJSON(req, kind==="illustration"?16 * 1024:kind==="illustration_describe"?9 * 1024 * 1024:25 * 1024 * 1024);
+        if (!media && (kind === "practice" || errorItemId)) {
             const id = errorItemId || body.errorItemId;
             if (typeof id !== "string") throw Error("INVALID_REQUEST");
             const item = await prisma.errorItem.findFirst({
@@ -47,7 +48,7 @@ export async function enqueue(
                         : undefined),
             };
         }
-        if (body.subjectId) {
+        if (!media && body.subjectId) {
             const subject = await prisma.subject.findFirst({
                 where: { id: body.subjectId, userId: user.id },
             });
@@ -58,7 +59,7 @@ export async function enqueue(
                 );
             body.subject = subject.name;
         }
-        if (!body.gradeSemester) {
+        if (!media && !body.gradeSemester) {
             const profile = await prisma.user.findUnique({
                 where: { id: user.id },
                 select: { educationStage: true, enrollmentYear: true },

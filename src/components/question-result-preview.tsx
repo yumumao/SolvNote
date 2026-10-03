@@ -21,7 +21,7 @@ export function QuestionResultPreview({ result }: { result: ParsedQuestion }) {
         </div>
         <MarkdownField label="题目内容" value={result.questionText}/>
         <MarkdownField label="参考答案" value={result.answerText}/>
-        <MarkdownField label="解题思路与步骤" value={result.analysis}/>
+        <MarkdownField label="解题思路与步骤" value={result.analysis} shareContext={{questionText:result.questionText,answerText:result.answerText}}/>
         <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/30 p-4 dark:border-amber-900 dark:bg-amber-950/10" aria-label="错因分析">
             <h4 className="font-semibold">错因分析</h4>
             <p className="text-sm text-muted-foreground">作答状态：{status}</p>

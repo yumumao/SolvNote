@@ -114,6 +114,6 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
                 {view.roundOpen && view.attemptLimit<=14 && view.timeLimitMs<=1200000 && <Button variant="outline" disabled={busy} onClick={()=>void act("extend_budget")}>管理员：本轮增加调用预算</Button>}
             </>}
         </div>
-        <AIProcess steps={view.steps} messages={view.messages}/>
+        <AIProcess steps={view.steps} messages={view.messages} active={view.state==="active"&&!error}/>
     </section>;
 }

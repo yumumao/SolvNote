@@ -1,0 +1,4 @@
+.document { --foreground: #172554; --muted-foreground: #475569; --muted: #f1f5f9; --border: #e2e8f0; --primary: #2563eb; }
+
+/* Room for multi-digit list markers, including raster export clones. */
+.document :global(ol), .document :global(ul) { padding-inline-start: 3.5em; }

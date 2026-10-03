@@ -23,6 +23,7 @@ import { inferSubjectFromName } from "@/lib/knowledge-tags";
 import { normalizeMistakeStatusForSave, type MistakeStatus } from "@/lib/mistake-status";
 import type { ReanswerQuestionResult, GeogebraAnalysisResult } from "@/lib/ai/types";
 import { buildReanswerRequestBody } from "@/lib/reanswer-request";
+import {currentDrawingAttachments,type DrawingShareState} from "@/lib/solution-snapshot";
 import { AuxiliaryDrawing } from "@/components/auxiliary-drawing";
 import { GeogebraDemo } from "@/components/geogebra-demo";
 
@@ -59,6 +60,8 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
         gradeSemester: "",
         paperLevel: "a"
     });
+    const [shareDrawings,setShareDrawings]=useState<DrawingShareState|null>(null);
+    const drawingAttachments=currentDrawingAttachments(shareDrawings,data.questionText,data.answerText,data.analysis,imagePreview);
     const { t, language } = useLanguage();
     const [isReanswering, setIsReanswering] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -376,7 +379,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </div>
 
                     <div className="space-y-2">
-                        <MarkdownField label={t.editor.analysis || "解题思路与步骤"} value={data.analysis || ""}
+                        <MarkdownField label={t.editor.analysis || "解题思路与步骤"} value={data.analysis || ""} shareContext={{questionText:data.questionText,answerText:data.answerText,originalImage:imagePreview,...drawingAttachments}}
                             onChange={value => setData(prev => ({ ...prev, analysis: value }))} emptyText={"暂无解析"}/>
                     </div>
 
@@ -419,7 +422,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </Card>
                 </div>
 
-                {!!data.answerText.trim() && <AuxiliaryDrawing questionText={data.questionText} answerText={data.answerText} analysis={data.analysis} image={imagePreview} disabled={isReanswering||isAnalyzingGeogebra} onUseCommands={commands=>setData(prev=>({...prev,geogebraCommands:commands}))}/>}
+                {!!data.answerText.trim() && <AuxiliaryDrawing onShareDrawings={setShareDrawings} questionText={data.questionText} answerText={data.answerText} analysis={data.analysis} image={imagePreview} disabled={isReanswering||isAnalyzingGeogebra} onUseCommands={commands=>setData(prev=>({...prev,geogebraCommands:commands}))}/>}
                 {/* The preview and source now share each field; keep the existing durable GeoGebra action. */}
                 <div id="geogebra-demo" className="space-y-6">
                     {/* GeoGebra Dynamic Demo */}

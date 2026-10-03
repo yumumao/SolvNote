@@ -1,3 +1,4 @@
+import { validateIllustrationInput } from "../ai-drawing/illustration-service";
 import { jobExpiry, readableJobWhere } from "../solving-records/retention";
 import { diagnosticMessage } from "../ai/diagnostics";
 import type { AiJob } from "@prisma/client";
@@ -31,10 +32,14 @@ export async function submitJob(
     requestKey: string,
 ) {
     const input = JobInputSchema.parse(raw);
-    await assertAiInputAllowed(userId,input);
+    if(kind==="illustration_describe"){
+        if((await requireLiveAiUser(userId)).role!=="admin")throw Error("AI_ACCESS_REVOKED");
+        const {validateDescriptionInput}=await import("../ai-drawing/illustration-description");await validateDescriptionInput(input);
+    }
+    if(kind!=="illustration")await assertAiInputAllowed(userId,input);
     const payload = protect(input);
     return prisma.$transaction(async (tx) => {
-        await requireTxAiUser(tx,userId);
+        await requireTxAiUser(tx,userId,kind==="illustration"||kind==="illustration_describe");
         const prior = await tx.aiJob.findUnique({
             where: { userId_requestKey: { userId, requestKey } },
         });
@@ -46,6 +51,7 @@ export async function submitJob(
                 throw Error("REQUEST_CONFLICT");
             return prior;
         }
+        if(kind==="illustration")await validateIllustrationInput(input,userId,tx);
         const count = await tx.aiJob.count({
             where: { userId, state: { in: ["pending", "running"] } },
         });
@@ -85,7 +91,9 @@ export async function readJob(userId: string, id: string, restore = false) {
         },
         orderBy: { startedAt: "asc" },
     });
-    await assertModelsAllowedForUser(userId,attempts.map(a=>a.modelId));
+    if(j.kind==="illustration_describe")await prisma.$transaction(tx=>requireTxAiUser(tx,userId,true));
+    if(j.kind==="illustration")await prisma.$transaction(tx=>requireTxAiUser(tx,userId,true));
+    else await assertModelsAllowedForUser(userId,attempts.map(a=>a.modelId));
     return {
         ...publicJob(j),
         attemptsLog: attempts.map(({metadata,...a})=>{const m=metadata?unprotect<import("../ai-dialogue/types").StepMetadata>(metadata):undefined;return {...a,...(m?{stage:m.stage,modelName:m.modelName,providerName:m.providerName,withImage:m.withImage,...(diagnosticMessage(m.diagnostic)?{diagnostic:m.diagnostic}:{})}: {})};}),
