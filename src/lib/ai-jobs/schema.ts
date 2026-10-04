@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {DrawingEvidenceSchema} from "../ai-drawing/evidence";
 import { ConstructionSchema } from "../ai-drawing/construction";
 export const JobInputSchema = z
     .object({
@@ -7,6 +8,7 @@ export const JobInputSchema = z
         confirmIllustration: z.literal(true).optional(),
         illustrationRatio: z.enum(["1:1","16:9","4:3","3:2","2:3","3:4","9:16"]).optional(),
         drawingPlan: ConstructionSchema.optional(),
+        drawingEvidence: DrawingEvidenceSchema.optional(),
         drawingRevision: z.number().int().min(1).optional(),
         confirmImageEdit: z.literal(true).optional(),
         originalImageBase64: z

@@ -148,3 +148,11 @@ describe("separate base confirmation and auxiliary requests",()=>{
   expect(button("第二步：在锁定底图上添加辅助线").disabled).toBe(false);
  });
 });
+
+it('passes evidence into a base job and invalidates confirmation/sharing when that evidence changes',async()=>{
+ const evidence={authority:'verified',transcription:'fixture',angles:[{label:'1',vertex:'B',arms:['A','C']}],uncertainties:[],clarifications:[]};
+ const onShareDrawings=vi.fn();const post=vi.spyOn(apiClient,'post').mockResolvedValue({type:'construction',plan:base});
+ await render({drawingEvidence:evidence,onShareDrawings});await click('第一步：生成原题底图');expect(post.mock.calls[0][1]).toHaveProperty('drawingEvidence',evidence);await confirmBase();
+ await render({drawingEvidence:{...evidence,angles:[{label:'1',vertex:'A',arms:['B','C']}]},onShareDrawings});
+ expect(button('第二步：在锁定底图上添加辅助线').disabled).toBe(true);expect(onShareDrawings.mock.lastCall?.[0].basePlan).toBeUndefined();
+});

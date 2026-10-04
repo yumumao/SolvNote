@@ -5,9 +5,10 @@ import {apiClient} from "@/lib/api-client";
 import type {DialogueView} from "@/lib/ai-dialogue/types";
 import type {ParsedQuestion} from "@/lib/ai";
 import {CorrectionEditor} from "./correction-editor";
+import {drawingEvidenceFromDialogue} from "@/lib/ai-drawing/evidence";
 import {Button} from "./ui/button";
-export type AnswerSnapshot = Pick<DialogueView,"revision"|"input"> & {result:ParsedQuestion};
-function fingerprint(s:AnswerSnapshot) { return JSON.stringify([s.result,s.input.originalImageBase64 || s.input.imageBase64,s.input.subjectId]); }
+export type AnswerSnapshot = Pick<DialogueView,"revision"|"input"|"transcript"|"geometryChecked"|"userCorrectedTranscript"|"transcriptClarifications"> & {result:ParsedQuestion};
+function fingerprint(s:AnswerSnapshot) { return JSON.stringify([s.result,s.input.originalImageBase64 || s.input.imageBase64,s.input.subjectId,drawingEvidenceFromDialogue(s)]); }
 
 /** A paired result/image snapshot: polling and later AI rounds must not replace a human draft. */
 export function ConversationAnswerEditor({id,snapshot,expectedSubjectId}:{id:string;snapshot:AnswerSnapshot;expectedSubjectId?:string}) {
@@ -27,7 +28,7 @@ export function ConversationAnswerEditor({id,snapshot,expectedSubjectId}:{id:str
             if(fresh.id!==id || fresh.state!=="answered" || !fresh.result || fresh.revision!==snapshot.revision || (expectedSubjectId && fresh.input.subjectId && fresh.input.subjectId!==expectedSubjectId)) {
                 setMessage("会话状态已变化，请刷新核对；未覆盖编辑内容。");return;
             }
-            setDraft({result:fresh.result,input:fresh.input,revision:fresh.revision});setVersion(v=>v+1);saved.current=false;
+            setDraft({result:fresh.result,input:fresh.input,revision:fresh.revision,transcript:fresh.transcript,geometryChecked:fresh.geometryChecked,userCorrectedTranscript:fresh.userCorrectedTranscript,transcriptClarifications:fresh.transcriptClarifications});setVersion(v=>v+1);saved.current=false;
         } catch {setMessage("无法确认新回复，未覆盖编辑内容。请刷新核对。");}
         finally {operation.current=false;setBusy(false);}
     }
@@ -48,7 +49,7 @@ export function ConversationAnswerEditor({id,snapshot,expectedSubjectId}:{id:str
         {hasNewAnswer && <aside className="border rounded p-3 space-y-2"><p>已有新的AI回复，当前人工编辑保留不变。可先查看历史回复，再决定是否替换。</p><Button variant="outline" disabled={busy} onClick={()=>void replace()}>采用新回复替换编辑内容</Button></aside>}
         {message && <p role="alert">{message}</p>}
         <fieldset disabled={busy} className="min-w-0">
-            <CorrectionEditor key={version} initialData={draft.result} initialSubjectId={expectedSubjectId || draft.input.subjectId}
+            <CorrectionEditor drawingEvidence={drawingEvidenceFromDialogue(draft)} key={version} initialData={draft.result} initialSubjectId={expectedSubjectId || draft.input.subjectId}
                 imagePreview={draft.input.originalImageBase64 || draft.input.imageBase64 || null} onSave={save}
                 onCancel={()=>{if(window.confirm("会话历史已保存；尚未添加到错题本的编辑将丢失，确认返回首页吗？"))router.push("/");}}/>
         </fieldset>

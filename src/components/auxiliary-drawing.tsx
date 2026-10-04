@@ -1,4 +1,5 @@
 "use client";
+import {DrawingEvidenceSchema,type DrawingEvidence} from "@/lib/ai-drawing/evidence";
 import type {DrawingShareState} from "@/lib/solution-snapshot";
 import {QuestionIllustration} from "./question-illustration";
 import {IllustrationPreview} from "./illustration-settings";
@@ -46,7 +47,8 @@ export function DrawingResultPreview({result,originalImage,input}:{result:unknow
             const answerText="answerText" in input && typeof input.answerText==="string"?input.answerText:"";
             const analysis="analysis" in input && typeof input.analysis==="string"?input.analysis:"";
             const drawingCorrection="drawingCorrection" in input && typeof input.drawingCorrection==="string"?input.drawingCorrection:"";
-            return <AuxiliaryDrawing questionText={input.questionText} answerText={answerText} analysis={analysis} drawingCorrection={drawingCorrection} image={originalImage} initialBase={plan.data}/>;
+            const checked=DrawingEvidenceSchema.safeParse("drawingEvidence" in input?input.drawingEvidence:undefined);
+            return <AuxiliaryDrawing drawingEvidence={checked.success?checked.data:undefined} questionText={input.questionText} answerText={answerText} analysis={analysis} drawingCorrection={drawingCorrection} image={originalImage} initialBase={plan.data}/>;
         }
         return <ConstructionPreview plan={plan.data} originalImage={originalImage}/>;
     }
@@ -65,9 +67,9 @@ function EditedImagePreview({result:r}:{result:Extract<DrawingResult,{type:"imag
         <a className="underline" href={r.imageDataUrl} download="auxiliary-diagram.png">下载辅助线示意图</a>
     </div>;
 }
-export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrection="",image,onUseCommands,disabled,initialBase,onShareDrawings}:{questionText:string;answerText:string;analysis:string;drawingCorrection?:string;image?:string|null;onUseCommands?:(commands:string)=>void;disabled?:boolean;initialBase?:ConstructionPlan;onShareDrawings?:(state:DrawingShareState|null)=>void}){
+export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrection="",drawingEvidence,image,onUseCommands,disabled,initialBase,onShareDrawings}:{questionText:string;answerText:string;analysis:string;drawingCorrection?:string;drawingEvidence?:DrawingEvidence;image?:string|null;onUseCommands?:(commands:string)=>void;disabled?:boolean;initialBase?:ConstructionPlan;onShareDrawings?:(state:DrawingShareState|null)=>void}){
     const [correction,setCorrection]=useState(drawingCorrection);
-    const source=JSON.stringify({questionText,image,drawingCorrection:correction}),solution=JSON.stringify({questionText,answerText,analysis,image});
+    const source=JSON.stringify({questionText,image,drawingCorrection:correction,drawingEvidence}),solution=JSON.stringify({questionText,answerText,analysis,image});
     const [base,setBase]=useState<ConstructionPlan|undefined>(initialBase),[baseSource,setBaseSource]=useState(initialBase?source:""),[baseImage,setBaseImage]=useState(image);
     const [baseConfirmed,setBaseConfirmed]=useState(false),[plan,setPlan]=useState<ConstructionPlan>(),[planSource,setPlanSource]=useState("");
     const [settings,setSettings]=useState<EditorSettings>(),[confirmed,setConfirmed]=useState(false),[edited,setEdited]=useState<Extract<DrawingResult,{type:"image_edit"}>>();
@@ -107,7 +109,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         pending.current=true;setBusy(true);setProgressLabel(phase==="base"?"原题底图生成":phase==="auxiliary"?"辅助线方案生成":"整图编辑");setJobId("");setMessage("正在提交作图请求，尚未确认受理。请暂勿离开或重复点击；取得任务编号后才可到任务页取回。");
         try{
             const body=phase==="base"
-                ? {questionText,answerText,analysis,drawingCorrection:correction,...(image?{imageBase64:image}:{})}
+                ? {questionText,answerText,analysis,drawingCorrection:correction,...(drawingEvidence?{drawingEvidence}:{}),...(image?{imageBase64:image}:{})}
                 : {questionText,answerText,analysis,...(image?{imageBase64:image}:{}),drawingPlan:phase==="auxiliary"?base:plan,...(phase==="image_edit"?{drawingRevision:settings!.revision,confirmImageEdit:true}:{})};
             const r=await apiClient.post<DrawingResult>(`/api/ai/drawing/${phase==="image_edit"?"image_edit":"construction"}`,body,{onJobAccepted:id=>{setJobId(id);setMessage("作图任务已受理，离开页面不会取消后台处理。可通过下方本次任务链接查看进度和取回图形；未保存草稿不会自动恢复。");}});
             if(r.type==="construction"){
@@ -128,11 +130,12 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         }catch(error){const data=error instanceof ApiError && error.data && typeof error.data==="object"?error.data:undefined;setMessage(drawingFailureMessage(data && "message" in data?data.message:undefined,data && "diagnostic" in data?data.diagnostic:undefined));}finally{pending.current=false;setBusy(false);}
     }
     const workFeedback=<>
+        {drawingEvidence && <p data-drawing-evidence className="text-sm text-muted-foreground">本次重绘复用当前识图题设与角标核对记录{drawingEvidence.authority==="verified"?"（独立AI核对，非人工确认）":drawingEvidence.authority.startsWith("user_")?"（人工修订/补充优先）":"（机器识读，仍需核对）"}；无法可靠定位的标记保留在图下注释。</p>}
         <AIWorkProgress active={busy&&(!editingOpen||progressLabel!=="整图编辑")} label={progressLabel}/>
         {jobId && <p className="text-sm"><Link className="underline" href={`/ai-tasks?job=${encodeURIComponent(jobId)}`}>查看/取回本次作图任务</Link>（可复制此链接，24小时内登录同一账号打开）</p>}
         {message && <p role="status" className="text-sm">{message} <Link className="underline" href="/ai-tasks">我的AI任务/调用记录</Link></p>}
     </>;
-    return <section className="border rounded-lg p-4 space-y-3"><h3 className="font-semibold">几何辅助线（可选）</h3><p className="text-sm text-muted-foreground">无需Gemini或生图API，复用现有文字/识图模型。分两次调用AI（均可能收费）：先重建原题底图，人工核对后锁定，再只添加辅助点和辅助线。浏览器免费绘制本地示意图，不是在原图像素上叠线；第二步不能修改、旋转或重新缩放底图。</p>
+    return <section className="border rounded-lg p-4 space-y-3"><h3 className="font-semibold">几何辅助线（可选）</h3><p className="text-sm text-muted-foreground">无需Gemini或生图API，复用现有文字/识图模型。分两次调用AI（均可能收费）：先重建原题底图，人工核对后锁定，再只添加辅助点和辅助线。浏览器免费绘制本地示意图，不是在原图像素上叠线；第二步不能修改、旋转或重新缩放底图。原图角号、数值等会尽量保留，复杂或待核对的标记见图下图注；请先核对标记与图注，再生成第二步。旧图需重新生成第一步才能补充此前未保存的标记。</p>
         <div data-drawing-stage="base" className="space-y-3">
             <Button variant="outline" disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base")}>第一步：生成原题底图</Button>
             {progressLabel==="原题底图生成" && workFeedback}

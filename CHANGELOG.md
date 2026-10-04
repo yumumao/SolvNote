@@ -1,5 +1,11 @@
 # Version notes / 版本说明
 
+## 原图标记与角标核对复用 / Diagram markings and evidence · 2026-10-05
+- 两阶段几何重绘保留原图角号、明确角值、边长及图下注释；复杂或不确定标记使用图注兜底，不把猜测作为题设。
+- 会话重绘复用已有识图题设与角标核对，区分机器记录、独立AI核对和人工修订/补充；不增加识图调用，不凭射线猜角区。
+- 标记与图注随锁定底图、SVG导出、独立阅读和文字/PNG分享保留；旧图不自动重跑。
+- Preserve explicit diagram markings and captions across locked construction stages and exports; reuse answer-paired angle evidence with human corrections taking precedence. No extra recognition call or automatic redraw of old diagrams.
+
 ## 阅读与分享维护 / Reading and sharing · 2026-10-05
 - 参考答案与解题思路增加适宽阅读模式；独立阅读页直接使用当前附件勾选状态分享，文字面板可重复展开与收起。
 - 文字分享默认保留LaTeX，可关闭并提示公式可能不准确；图片位置提供使用图片分享的提示。

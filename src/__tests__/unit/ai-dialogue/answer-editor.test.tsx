@@ -35,3 +35,9 @@ describe("inline notebook draft",()=>{
   m.post.mockRejectedValueOnce(new Error("private upstream"));await render();await click("save fixture");expect(m.push).not.toHaveBeenCalled();expect(host.textContent).toContain("未确认保存成功");expect(host.textContent).not.toContain("private upstream");
  });
 });
+
+it('pairs checked geometry with the answer draft and detects evidence-only updates',async()=>{
+ const checked={...snapshot,geometryChecked:true,transcript:{text:'source',facts:[],uncertainties:[],missingInformation:[],geometry:{regions:[],angles:[{label:'1',vertex:'B',arms:['A','C'] as [string,string]}]}}};
+ await render(checked);expect(m.editor).toHaveProperty('drawingEvidence.authority','verified');expect(m.editor).toHaveProperty('drawingEvidence.angles',checked.transcript.geometry.angles);
+ await render({...checked,revision:5,transcriptClarifications:['角1改为顶点A']});expect(host.textContent).toContain('采用新回复替换编辑内容');
+});
