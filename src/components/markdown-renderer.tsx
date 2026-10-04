@@ -1,4 +1,6 @@
-import React from 'react';
+"use client";
+import React, {useEffect, useRef} from 'react';
+import {fitMarkdownWidth} from '@/lib/markdown-fit';
 import readingStyles from './markdown-reading.module.css';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -11,20 +13,38 @@ interface MarkdownRendererProps {
     content: string;
     className?: string;
     localShare?: boolean;
+    fitWidth?: boolean;
 }
 
-export function MarkdownRenderer({ content, className = '', localShare = false }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, className = '', localShare = false, fitWidth = false }: MarkdownRendererProps) {
     const processedContent = normalizeMathMarkdown(content);
 
+    const container = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const node = container.current;
+        if (!node) return;
+        let disposed = false, frame = 0, lastWidth = -1;
+        const measure = () => { if (!disposed) fitMarkdownWidth(node); };
+        const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
+        measure();
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => {
+            const width = entries[0]?.contentRect.width;
+            if (width !== lastWidth) { lastWidth = width; schedule(); }
+        });
+        observer?.observe(node);
+        window.addEventListener('resize', schedule);
+        void document.fonts?.ready.then(() => { if (!disposed) schedule(); });
+        return () => { disposed = true; observer?.disconnect(); cancelAnimationFrame(frame); window.removeEventListener('resize', schedule); };
+    }, [content, fitWidth]);
     return (
-        <div className={`markdown-content ${readingStyles.reading} overflow-x-auto min-w-0 ${className}`}>
+        <div ref={container} data-markdown-fit={fitWidth} className={`markdown-content ${readingStyles.reading} ${fitWidth ? readingStyles.fit : ""} overflow-x-auto min-w-0 ${className}`}>
             <ReactMarkdown
                 remarkPlugins={[remarkMath, remarkGfm]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
                     // Sharing never fetches Markdown images or enables external links.
                     ...(localShare ? {
-                        img: ({ alt }: { alt?: string }) => <span>[图片未包含{alt ? '：' + alt : ''}]</span>,
+                        img: ({ alt }: { alt?: string }) => <span>[图片未包含{alt ? '：' + alt : ''}]（图片需通过图片分享）</span>,
                         a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
                     } : {}),
                     // 自定义样式

@@ -1,5 +1,13 @@
 # Version notes / 版本说明
 
+## 阅读与分享维护 / Reading and sharing · 2026-10-05
+- 参考答案与解题思路增加适宽阅读模式；独立阅读页直接使用当前附件勾选状态分享，文字面板可重复展开与收起。
+- 文字分享默认保留LaTeX，可关闭并提示公式可能不准确；图片位置提供使用图片分享的提示。
+- 默认附带参考答案及有效第二步辅助线图，不附带题干；手动勾选题干时优先联动原题重绘，否则联动原图，图片可独立取消。
+- 收紧普通作图与分享图片留白，固定两阶段底图位置和比例，补全长标签导出边界；多张长图集中下载并连续预览，手工裁切原图不改。
+- 丰富中英文README与合成数据界面截图，明确模型能力、生成效果和本地分享边界。
+- Add fit-to-width reading and inline reader sharing, optional LaTeX text export, independent attachments with event-only question/image selection, compact diagrams, grouped PNG downloads, and refreshed bilingual documentation.
+
 ## 功能与维护更新 / Features and maintenance · 2026-10-04
 - 新增MiniMax文生图与参考图识别描述，复用已保存的官方连接，并保持图片输出单独授权；实验性重新配图独立弹窗使用，不保证底图或几何精度不变。
 - AI处理与图片生成增加等待进度提示；几何作图按底图、纠正说明、辅助步骤从上到下展示，原图对照按需展开。

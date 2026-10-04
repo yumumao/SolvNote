@@ -8,7 +8,7 @@ const SVG_HEIGHT=500;
 const VIEW_PADDING=30;
 
 // All coordinates come from the whitelist compiler, never from arbitrary SVG or JS returned by AI.
-export function ConstructionDiagram({geometry,visible,title,readOnly=false}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean}){
+export function ConstructionDiagram({geometry,visible,title,readOnly=false,compact=false}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean;compact?:boolean}){
     const svg=useRef<SVGSVGElement>(null);
     const rounds=[...geometry.circles,...geometry.arcs];
     // The viewport depends ONLY on the locked source, including across separate jobs.
@@ -32,12 +32,10 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false}:{geo
             <text x={q.x+8} y={q.y-9} fontSize={18} fontFamily="sans-serif" fill={auxiliary?"#b91c1c":"#0f172a"} stroke="white" strokeWidth={3} paintOrder="stroke">{p.id}</text>
         </g>;
     }
-    const mappedAuxiliary=visibleDerivedPoints.map(map);
-    const outside=mappedAuxiliary.some(p=>p.x<VIEW_PADDING||p.x>SVG_WIDTH-VIEW_PADDING||p.y<VIEW_PADDING||p.y>SVG_HEIGHT-VIEW_PADDING);
     function expandedViewBox(){
         const bounds=[
             {x:0,y:0},{x:SVG_WIDTH,y:SVG_HEIGHT},
-            ...mappedAuxiliary,
+            ...allPoints.flatMap(pointBounds),
             ...geometry.circles.flatMap(c=>{const p=map(c);const r=c.radius*scale;return [{x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r}];}),
             ...geometry.arcs.flatMap(a=>{const start=map(a.start),end=map(a.end),r=a.radius*scale;return [{x:start.x-r,y:start.y-r},{x:start.x+r,y:start.y+r},{x:end.x-r,y:end.y-r},{x:end.x+r,y:end.y+r}];}),
         ];
@@ -45,6 +43,33 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false}:{geo
         const top=Math.min(...bounds.map(p=>p.y))-VIEW_PADDING;
         const right=Math.max(...bounds.map(p=>p.x))+VIEW_PADDING;
         const bottom=Math.max(...bounds.map(p=>p.y))+VIEW_PADDING;
+        return {left,top,width:right-left,height:bottom-top};
+    }
+    // Crop empty canvas, never refit coordinates. Ordinary previews use only the locked
+    // base bounds, so separate jobs and visible-step changes keep identical placement.
+    // Conservative text bounds include the full allowed point ID (up to four glyphs).
+    function pointBounds(p:Geometry["points"][number]){
+        const q=map(p);return [{x:q.x-4,y:q.y-30},{x:q.x+8+p.id.length*18+3,y:q.y+4}];
+    }
+    function compactViewBox(cropPoints=allPoints){
+        const bounds=cropPoints.flatMap(pointBounds);
+        for(const c of geometry.circles){
+            const p=map(c),r=c.radius*scale;
+            bounds.push({x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r});
+        }
+        for(const a of geometry.arcs){
+            bounds.push(map(a.start),map(a.end));
+            const start=Math.atan2(a.start.y-a.y,a.start.x-a.x),tau=2*Math.PI;
+            for(const angle of [0,Math.PI/2,Math.PI,3*Math.PI/2]){
+                const delta=a.direction==="ccw"?angle-start:start-angle;
+                const swept=((delta%tau)+tau)%tau;
+                if(swept<=a.span+1e-9)bounds.push(map({x:a.x+a.radius*Math.cos(angle),y:a.y+a.radius*Math.sin(angle)}));
+            }
+        }
+        // Safety inset for strokes and label antialiasing; share crops include all visible points.
+        const inset=12;
+        const left=Math.min(...bounds.map(p=>p.x))-inset,top=Math.min(...bounds.map(p=>p.y))-inset;
+        const right=Math.max(...bounds.map(p=>p.x))+inset,bottom=Math.max(...bounds.map(p=>p.y))+inset;
         return {left,top,width:right-left,height:bottom-top};
     }
     function serialize(expand:boolean){
@@ -85,10 +110,14 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false}:{geo
             window.open(url,"_blank","noopener,noreferrer");
         }finally{setTimeout(()=>URL.revokeObjectURL(url),60000);}
     }
-    const bounds=readOnly?expandedViewBox():{left:0,top:0,width:SVG_WIDTH,height:SVG_HEIGHT};
-    return <div className="space-y-2">
-        <p className="text-sm text-muted-foreground">本地重建示意图（绘制无需联网，方案生成仍调用AI），不是在原图片上叠线。深色为原题底图，红色点和虚线为新增构造。旋转只添加辅助副本，原题底图保持原方向；阴影填色以原题图为准，请与原图核对，不覆盖原图。</p>
-        <svg ref={svg} xmlns="http://www.w3.org/2000/svg" viewBox={[bounds.left,bounds.top,bounds.width,bounds.height].join(" ")} preserveAspectRatio="xMinYMin meet" role="img" aria-label={`${title}：辅助线示意图，第${visible}步`} className="block w-full border rounded-md" style={{background:"#fff",maxHeight:readOnly?undefined:500,maxWidth:800,marginRight:"auto"}}>
+    const shareCompact=readOnly&&compact;
+    const bounds=readOnly?(shareCompact?compactViewBox():expandedViewBox()):compactViewBox(geometry.basePoints);
+    const outside=visibleDerivedPoints.flatMap(pointBounds).some(p=>p.x<bounds.left||p.x>bounds.left+bounds.width||p.y<bounds.top||p.y>bounds.top+bounds.height);
+    // Cap width along with height: a tall SVG must not leave a wide empty CSS box.
+    const maxWidth=readOnly?(shareCompact?Math.min(800,bounds.width):800):Math.min(800,bounds.width,500*bounds.width/bounds.height);
+    return <div className={shareCompact?"space-y-1":"space-y-2"} data-compact-drawing={shareCompact||undefined}>
+        {shareCompact?<p className="text-xs text-muted-foreground" style={{margin:0}}>重建示意图，红色为辅助构造；请与原图核对，不作为证明。</p>:<p className="text-sm text-muted-foreground">本地重建示意图（绘制无需联网，方案生成仍调用AI），不是在原图片上叠线。深色为原题底图，红色点和虚线为新增构造。旋转只添加辅助副本，原题底图保持原方向；阴影填色以原题图为准，请与原图核对，不覆盖原图。</p>}
+        <svg ref={svg} xmlns="http://www.w3.org/2000/svg" viewBox={[bounds.left,bounds.top,bounds.width,bounds.height].join(" ")} preserveAspectRatio="xMinYMin meet" role="img" aria-label={`${title}：辅助线示意图，第${visible}步`} className="block w-full border rounded-md" style={{background:"#fff",maxHeight:readOnly?undefined:500,maxWidth,marginRight:"auto"}}>
             <title>{title}（示意图，不作为证明）</title>
             <rect x={bounds.left} y={bounds.top} width={bounds.width} height={bounds.height} fill="white"/>
             <g data-layer="base">
@@ -102,7 +131,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false}:{geo
             {visibleDerivedPoints.map(p=>renderPoint(p,true))}
             </g>
         </svg>
-        {outside && !readOnly && <p role="note" data-outside-note className="text-sm">部分辅助点超出固定视窗，原题底图不会自动移动或缩放。可下载或在新标签页打开当前步骤的完整图查看全部辅助点。</p>}
+        {outside && !readOnly && <p role="note" data-outside-note className="text-sm">部分辅助点或标签超出固定视窗，原题底图不会自动移动或缩放。可下载或在新标签页打开当前步骤的完整图查看全部辅助点。</p>}
         {!readOnly && <div className="flex flex-wrap gap-2">
             <Button variant="outline" data-open-full-image onClick={openFullImage}>在新标签页打开完整图</Button>
             <Button variant="outline" onClick={download}>下载当前步骤示意图</Button>

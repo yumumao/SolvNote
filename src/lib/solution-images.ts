@@ -1,3 +1,4 @@
+import {fitMarkdownWidth,solutionImageWidth} from "./markdown-fit";
 import { toBlob } from "html-to-image";
 import {localSolutionImage} from "./solution-snapshot";
 import { localStyleText, solutionUnits } from "./solution-share";
@@ -31,9 +32,10 @@ export async function waitForSolutionImages(element:HTMLElement):Promise<void>{
  }));
 }
 export async function renderSolutionImages(source:HTMLElement):Promise<SolutionImage[]>{
- const host=document.createElement('div');host.style.cssText='position:fixed;left:-100000px;top:0;width:760px;pointer-events:none;';document.body.append(host);
+ const fit=source.dataset.fitWidth==='true',initialWidth=solutionImageWidth(source);
+ const host=document.createElement('div');host.style.cssText=`position:fixed;left:-100000px;top:0;width:${initialWidth}px;pointer-events:none;`;document.body.append(host);
  try{
-  const page=source.cloneNode(false) as HTMLElement;page.style.width='760px';page.style.maxWidth='none';page.style.boxSizing='border-box';host.append(page);
+  const page=source.cloneNode(false) as HTMLElement;page.style.width=initialWidth+'px';page.style.maxWidth='none';page.style.boxSizing='border-box';host.append(page);
   await document.fonts.ready;
   const units=solutionUnits(source),groups:HTMLElement[][]=[];let group:HTMLElement[]=[];
   for(let i=0;i<units.length;i++){
@@ -41,6 +43,7 @@ export async function renderSolutionImages(source:HTMLElement):Promise<SolutionI
    const chunk=[units[i]];while(heading(units[i])&&i+1<units.length)chunk.push(units[++i]);
    page.append(...chunk);
    await waitForSolutionImages(page);
+   if(fit)fitMarkdownWidth(page);
    if(page.scrollHeight>1800&&group.length){groups.push(group);page.replaceChildren(...chunk);group=[]}
    group.push(...chunk);
   }
@@ -53,10 +56,11 @@ export async function renderSolutionImages(source:HTMLElement):Promise<SolutionI
   await waitForSolutionImages(page);
   const fontEmbedCSS=await embedFonts(page);
   for(let i=0;i<groups.length;i++){
-   page.replaceChildren(...groups[i]);page.style.width='760px';
+   page.replaceChildren(...groups[i]);page.style.width=initialWidth+'px';
    await waitForSolutionImages(page);
-   let width=760;
-   page.querySelectorAll<HTMLElement>('.katex-display,pre,table').forEach(n=>{width=Math.max(width,n.scrollWidth+100)});
+   if(fit)fitMarkdownWidth(page);
+   let width=initialWidth;
+   if(!fit)page.querySelectorAll<HTMLElement>('.katex-display,pre,table').forEach(n=>{width=Math.max(width,n.scrollWidth+100)});
    if(width>2048)throw Error('某条公式或表格过宽，请分行后导出，或使用文字分享。');
    page.style.width=width+'px';
    const height=page.scrollHeight;

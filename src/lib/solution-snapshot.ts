@@ -1,6 +1,6 @@
 import {ConstructionSchema,compileConstruction,type ConstructionPlan} from "./ai-drawing/construction";
 export interface SolutionContext {questionText?:string;answerText?:string;originalImage?:string|null;basePlan?:ConstructionPlan;auxiliaryPlan?:ConstructionPlan}
-export interface SolutionSnapshot extends SolutionContext {analysis:string;includeQuestion:boolean;includeAnswer:boolean;includeOriginal?:boolean;includeBase?:boolean;includeAuxiliary?:boolean}
+export interface SolutionSnapshot extends SolutionContext {analysis:string;includeQuestion:boolean;includeAnswer:boolean;includeOriginal?:boolean;includeBase?:boolean;includeAuxiliary?:boolean;fitWidth?:boolean;includeLatex?:boolean}
 export interface DrawingShareState {questionText:string;answerText:string;analysis:string;image?:string|null;basePlan?:ConstructionPlan;auxiliaryPlan?:ConstructionPlan}
 export function currentDrawingAttachments(state:DrawingShareState|null,questionText:string,answerText:string,analysis:string,image?:string|null):Pick<SolutionContext,'basePlan'|'auxiliaryPlan'>{
  if(!state||state.questionText!==questionText||state.image!==image||!answerText.trim())return {};
@@ -20,5 +20,5 @@ export function parseSolutionSnapshot(value:unknown):SolutionSnapshot|null {
  const analysis=text(v.analysis);if(!analysis?.trim())return null;
  const questionText=text(v.questionText),answerText=text(v.answerText),originalImage=localSolutionImage(v.originalImage)?v.originalImage:undefined;
  const basePlan=plan(v.basePlan,true),auxiliaryPlan=plan(v.auxiliaryPlan,false);
- return {analysis,questionText,answerText,originalImage,basePlan,auxiliaryPlan,includeQuestion:v.includeQuestion===true&&!!questionText?.trim(),includeAnswer:v.includeAnswer===true&&!!answerText?.trim(),includeOriginal:v.includeOriginal===true&&!!originalImage,includeBase:v.includeBase===true&&!!basePlan,includeAuxiliary:v.includeAuxiliary===true&&!!auxiliaryPlan};
+ return {analysis,questionText,answerText,originalImage,basePlan,auxiliaryPlan,fitWidth:v.fitWidth===true,includeLatex:v.includeLatex!==false,includeQuestion:v.includeQuestion===true&&!!questionText?.trim(),includeAnswer:v.includeAnswer===true&&!!answerText?.trim(),includeOriginal:v.includeOriginal===true&&!!originalImage,includeBase:v.includeBase===true&&!!basePlan,includeAuxiliary:v.includeAuxiliary===true&&!!auxiliaryPlan};
 }
