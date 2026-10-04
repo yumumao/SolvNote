@@ -62,6 +62,10 @@ Ordinary source and auxiliary previews also trim empty canvas while keeping the 
 
 Rebuilding the base and generating auxiliary steps are two separate, potentially billable AI calls. A plausible diagram does not prove the assumptions or solution. This is a reconstructed schematic, not a pixel overlay; use the original image to check complex shading.
 
+**Original markings and checked angles**: stage one can retain explicit angle labels, angle values and lengths inside the schematic. Crowded, complex or directionally ambiguous markings fall back to captions; unreadable conditions remain uncertain rather than becoming assumptions. The conversation editor reuses the transcription and angle evidence paired with the current answer without an extra recognition call. An independent AI check is not human confirmation. Human corrections and clarifications take priority over obsolete machine mappings; two rays alone do not determine the marked sector.
+
+Annotations and captions stay with the locked base through stage two, standalone SVG, downloads, and text/PNG sharing when the corresponding drawing is selected. Editing the problem text stops applying old evidence. New replies do not silently replace an unsaved draft. Old drawings remain compatible but require an explicit stage-one redraw to gain missing markings. Saved notebook items without a paired conversation snapshot still use the current text and image; they are not presented as independently checked.
+
 ### MiniMax illustrations and experimental whole-image editing
 
 - **Illustrations without Gemini**: separately authorize a saved official MiniMax connection under the optional image-generation/drawing settings, choosing `image-01` or `image-01-live`. Manual generation is currently administrator-only. This integration covers images, not video or speech generation.

@@ -35,6 +35,7 @@ interface ParsedQuestionWithSubject extends ParsedQuestion {
 }
 
 interface CorrectionEditorProps {
+    drawingEvidence?: import("@/lib/ai-drawing/evidence").DrawingEvidence;
     initialData: ParsedQuestion;
     onSave: (data: ParsedQuestionWithSubject) => Promise<void>;
     onCancel: () => void;
@@ -50,7 +51,7 @@ type ReanswerErrorMessages = {
     responseError?: string;
 };
 
-export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, initialSubjectId, aiTimeout }: CorrectionEditorProps) {
+export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, initialSubjectId, aiTimeout, drawingEvidence }: CorrectionEditorProps) {
     const [data, setData] = useState<ParsedQuestionWithSubject>({
         ...initialData,
         wrongAnswerText: initialData.wrongAnswerText || "",
@@ -422,7 +423,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </Card>
                 </div>
 
-                {!!data.answerText.trim() && <AuxiliaryDrawing onShareDrawings={setShareDrawings} questionText={data.questionText} answerText={data.answerText} analysis={data.analysis} image={imagePreview} disabled={isReanswering||isAnalyzingGeogebra} onUseCommands={commands=>setData(prev=>({...prev,geogebraCommands:commands}))}/>}
+                {!!data.answerText.trim() && <AuxiliaryDrawing drawingEvidence={data.questionText===initialData.questionText?drawingEvidence:undefined} onShareDrawings={setShareDrawings} questionText={data.questionText} answerText={data.answerText} analysis={data.analysis} image={imagePreview} disabled={isReanswering||isAnalyzingGeogebra} onUseCommands={commands=>setData(prev=>({...prev,geogebraCommands:commands}))}/>}
                 {/* The preview and source now share each field; keep the existing durable GeoGebra action. */}
                 <div id="geogebra-demo" className="space-y-6">
                     {/* GeoGebra Dynamic Demo */}

@@ -81,7 +81,8 @@ describe("original diagram orientation and auxiliary copies", () => {
     it("explicitly separates source orientation from solution rotations in generation instructions", () => {
         expect(CONSTRUCTION_PROMPT).toContain("不得整体旋转、镜像或翻转原题底图");
         expect(CONSTRUCTION_PROMPT).toContain("x向右、y向上");
-        expect(CONSTRUCTION_PROMPT).toContain("原图只用于布局对照，不从外观推断");
+        expect(CONSTRUCTION_PROMPT).toContain("原图同时提供布局和明确标出的题目条件");
+        expect(CONSTRUCTION_PROMPT).toContain("不得从外观推断未经明确标记或题设确认");
         expect(CONSTRUCTION_PROMPT).toContain("旋转后的副本");
     });
 

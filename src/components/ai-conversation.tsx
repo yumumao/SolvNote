@@ -33,7 +33,7 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
             if(gen!==generation.current)return;
             if(viewRef.current?.id===c.id && viewRef.current.revision>c.revision)return;
             first.current=false;
-            if(c.state==="answered" && c.result && c.id===id)setAnswerSnapshot({result:c.result,input:c.input,revision:c.revision});
+            if(c.state==="answered" && c.result && c.id===id)setAnswerSnapshot({result:c.result,input:c.input,revision:c.revision,transcript:c.transcript,geometryChecked:c.geometryChecked,userCorrectedTranscript:c.userCorrectedTranscript,transcriptClarifications:c.transcriptClarifications});
             setView(old=>{if(old && old.id===c.id && old.revision>c.revision)return old;
                 const merged={...c,input:{...old?.input,...c.input}};viewRef.current=merged;return merged;});setError("");
         }catch(e){if(gen===generation.current)setError(errorText(e));}finally{inFlight.current=false;}

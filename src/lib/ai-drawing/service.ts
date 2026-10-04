@@ -1,3 +1,5 @@
+import {prepareDrawingEvidence} from "./evidence";
+import {preserveDrawingEvidence,DRAWING_EVIDENCE_RULES} from "./evidence-server";
 import type {JobInput} from "../ai-jobs/schema";
 import {aiRun} from "../ai-jobs/context";
 import {loadEffectiveAIConfig} from "../ai-access/effective-config";
@@ -19,9 +21,10 @@ export async function executeDrawing(kind:"construction"|"image_edit",input:JobI
     const text=JSON.stringify({question:input.questionText,answer:input.answerText,analysis:input.analysis});
     if(kind==="construction"){
         const base=input.drawingPlan?validateConstructionBase(input.drawingPlan):undefined;
+        const evidence=input.drawingEvidence?prepareDrawingEvidence(input.drawingCorrection.trim()?{...input.drawingEvidence,authority:"user_clarified",clarifications:[...input.drawingEvidence.clarifications,input.drawingCorrection]}:input.drawingEvidence):undefined;
         const plan=base
             ? await callChain(CONSTRUCTION_PROMPT,JSON.stringify({question:input.questionText,answer:input.answerText,analysis:input.analysis,lockedBase:base}),undefined,raw=>parseConstructionSteps(raw,base),{role:"solve",stage:"construction"})
-            : await callChain(BASE_CONSTRUCTION_PROMPT,JSON.stringify({question:input.questionText,correction:input.drawingCorrection}),image,parseConstructionBase,{role:image?"recognize":"solve",stage:"construction"});
+            : await callChain(BASE_CONSTRUCTION_PROMPT+"\n"+DRAWING_EVIDENCE_RULES,JSON.stringify({question:input.questionText,correction:input.drawingCorrection,...(evidence?{drawingEvidence:evidence}:{})}),image,raw=>preserveDrawingEvidence(parseConstructionBase(raw),evidence),{role:image?"recognize":"solve",stage:"construction"});
         return {type:"construction" as const,plan};
     }
     if(!image||!input.drawingPlan||!input.confirmImageEdit)throw new AIError("AI_IMAGE_EDIT_INVALID_INPUT");

@@ -84,3 +84,39 @@ it("constructs the reported 24-degree auxiliary point by reflection, not arbitra
  expect(Math.acos(1-p.y)*180/Math.PI).toBeCloseTo(24);
  expect(JSON.stringify(source)).toBe(copy);expect(geometry.basePoints.map(({id,x,y})=>({id,x,y}))).toEqual(source.points);
 });
+it('extracts markings with the existing image call and sends them unchanged to the second stage',async()=>{
+ const marked={...base,annotations:[{kind:'angle',a:'C',vertex:'B',b:'A',direction:'ccw',text:'1'}],notes:[{text:'AB与BC有相同刻痕',status:'confirmed'},{text:'D处数字不清，请核对',status:'uncertain'}]};
+ mocks.callChain.mockImplementationOnce(async(_p,t,i,parse)=>{expect(i).toBe(input.imageBase64);expect(Object.keys(JSON.parse(t)).sort()).toEqual(['correction','question']);return parse(JSON.stringify(marked));});
+ const first=await executeDrawing('construction',input);expect(first).toEqual({type:'construction',plan:marked});expect(mocks.callChain).toHaveBeenCalledTimes(1);
+ const saved=ConstructionSchema.parse(JSON.parse(JSON.stringify(marked)));
+ mocks.callChain.mockImplementationOnce(async(p,t,i,parse)=>{expect(JSON.parse(t).lockedBase).toEqual(saved);expect(i).toBeUndefined();expect(p).toContain('uncertain仅为待核对内容，不能作为已知条件');return parse(JSON.stringify(extra));});
+ expect(await executeDrawing('construction',{...input,drawingPlan:saved})).toEqual({type:'construction',plan:{...marked,...extra}});expect(mocks.callChain).toHaveBeenCalledTimes(2);
+});
+
+const evidence={authority:'verified',transcription:'原题转录',angles:[{label:'1',vertex:'B',arms:['A','C']}],uncertainties:[],clarifications:[]};
+it('persists bounded drawing evidence in the job input and rejects unrecognized metadata',()=>{
+ expect(JobInputSchema.parse({...input,drawingEvidence:evidence})).toHaveProperty('drawingEvidence',evidence);
+ expect(JobInputSchema.safeParse({...input,drawingEvidence:{...evidence,token:'not allowed'}}).success).toBe(false);
+});
+it('uses existing verified angles in the single first-stage call and preserves a caption if the model omits them',async()=>{
+ const withEvidence=JobInputSchema.parse({...input,drawingEvidence:evidence});
+ mocks.callChain.mockImplementationOnce(async(p,t,_i,parse)=>{expect(JSON.parse(t).drawingEvidence).toEqual(evidence);expect(p).toContain('独立AI核对不等于人工确认');expect(t).not.toContain(input.analysis);return parse(JSON.stringify(base));});
+ const result=await executeDrawing('construction',withEvidence);
+ expect(result.type==='construction'&&result.plan.notes).toEqual(expect.arrayContaining([expect.objectContaining({text:expect.stringContaining('射线BA、BC'),status:'confirmed'})]));
+ expect(result.type==='construction'&&result.plan.annotations).toBeUndefined();expect(mocks.callChain).toHaveBeenCalledTimes(1);
+});
+it('does not force obsolete structured angles back after a human clarification',async()=>{
+ const clarified={...evidence,authority:'user_clarified',clarifications:['角1顶点为A，射线AB与AD']};
+ mocks.callChain.mockImplementationOnce(async(p,t,_i,parse)=>{expect(JSON.parse(t).drawingEvidence.angles).toEqual([]);expect(p).toContain('人工补充');return parse(JSON.stringify(base));});
+ const result=await executeDrawing('construction',JobInputSchema.parse({...input,drawingEvidence:clarified}));
+ expect(JSON.stringify(result)).not.toContain('射线BA、BC');expect(JSON.stringify(result)).toContain('角1顶点为A');
+});
+it('marks unverified angle evidence as uncertain rather than a known condition',async()=>{
+ mocks.callChain.mockImplementationOnce(async(_p,_t,_i,parse)=>parse(JSON.stringify(base)));
+ const result=await executeDrawing('construction',JobInputSchema.parse({...input,drawingEvidence:{...evidence,authority:'machine'}}));
+ expect(result.type==='construction'&&result.plan.notes).toEqual(expect.arrayContaining([expect.objectContaining({status:'uncertain'})]));
+});
+it('rejects a model angle mapping that contradicts the independently checked rays',async()=>{
+ mocks.callChain.mockImplementationOnce(async(_p,_t,_i,parse)=>parse(JSON.stringify({...base,annotations:[{kind:'angle',a:'B',vertex:'A',b:'D',direction:'ccw',text:'角1'}]})));
+ await expect(executeDrawing('construction',JobInputSchema.parse({...input,drawingEvidence:evidence}))).rejects.toThrow();
+});
