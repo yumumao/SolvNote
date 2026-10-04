@@ -5,3 +5,16 @@
   .reading :global(.katex-display) { padding-inline-start: 2.5rem; }
   .reading :global(.katex-display > .katex) { text-align: left; }
 }
+
+/* Fit only oversized content, never shrink the whole page or normal prose. */
+.fit { overflow-x: visible; overflow-wrap: anywhere; }
+.fit :global(.katex-display) { padding-inline: 0; overflow: visible; }
+.fit :global(.katex-display > .katex) { display: block; min-width: 0; width: max-content; margin-inline: auto; }
+.fit :global(p > .katex), .fit :global(li > .katex) { display: inline-block; max-width: 100%; }
+.fit :global(pre), .fit :global(code) { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.fit :global(table) { width: 100%; min-width: 0; table-layout: fixed; }
+.fit :global(th), .fit :global(td) { padding: .4rem; overflow-wrap: anywhere; }
+@container markdown-reading (min-width: 640px) {
+ .fit :global(.katex-display) { padding-inline-start: 2.5rem; }
+ .fit :global(.katex-display > .katex) { margin-inline: 0; }
+}

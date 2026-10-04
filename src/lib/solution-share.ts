@@ -1,8 +1,36 @@
 /** Local DOM utilities. No AI, persistence, public URL or upload API. */
-export function solutionPlainText(element: HTMLElement): string {
+export interface SolutionTextOptions { includeLatex?: boolean }
+/** KaTeX's semantic MathML is safer to approximate than stripping TeX commands. */
+function readableMath(node: Element): string {
+ const children = Array.from(node.children).filter(child => child.localName !== 'annotation');
+ const parts = children.map(readableMath);
+ switch (node.localName) {
+  case 'annotation': return '';
+  case 'semantics': return parts[0] || '';
+  case 'mfrac': return `(${parts[0] || '?'})/(${parts[1] || '?'})`;
+  case 'msqrt': return `√(${parts.join('')})`;
+  case 'mroot': return `root[${parts[1] || '?'}](${parts[0] || '?'})`;
+  case 'msup': return `${parts[0]}^(${parts[1]})`;
+  case 'msub': return `${parts[0]}_(${parts[1]})`;
+  case 'msubsup': return `${parts[0]}_(${parts[1]})^(${parts[2]})`;
+  case 'mover': return `${parts[0]}（上方：${parts[1]}）`;
+  case 'munder': return `${parts[0]}（下方：${parts[1]}）`;
+  case 'munderover': return `${parts[0]}（下方：${parts[1]}；上方：${parts[2]}）`;
+  case 'mtable': return parts.join('; ');
+  case 'mtr': return parts.join(', ');
+  default: return children.length ? parts.join('') : (node.textContent || '').replace(/[\u2061-\u2064]/g, ' ');
+ }
+}
+export function solutionPlainText(element: HTMLElement, options: SolutionTextOptions = {}): string {
  const clone=element.cloneNode(true) as HTMLElement;
- clone.querySelectorAll('.katex').forEach(math=>{const source=math.querySelector('annotation[encoding="application/x-tex"]')?.textContent;math.replaceWith(document.createTextNode(source||math.textContent||''))});
- clone.querySelectorAll('[data-solution-attachment]').forEach(node=>node.replaceWith(document.createTextNode('\n[图片：'+node.getAttribute('data-solution-attachment')+']\n')));
+ clone.querySelectorAll('.katex').forEach(math=>{
+  const source=math.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
+  const semantic=math.querySelector('math');
+  const text=options.includeLatex!==false ? (source||math.textContent||'') : `${semantic?readableMath(semantic):'（公式未能转换）'}（公式显示可能不准确，建议使用图片或LaTeX分享）`;
+  math.replaceWith(document.createTextNode(text));
+ });
+ if(options.includeLatex===false)clone.querySelectorAll('.katex-error').forEach(math=>math.replaceWith(document.createTextNode('（公式未能转换；公式显示可能不准确，建议使用图片或LaTeX分享）')));
+ clone.querySelectorAll('[data-solution-attachment]').forEach(node=>node.replaceWith(document.createTextNode('\n[图片：'+node.getAttribute('data-solution-attachment')+']（图片需通过图片分享）\n')));
  const prefixListItem=(li:Element,label:string)=>{
   // react-markdown loose lists start with formatting whitespace and a paragraph.
   // Put the marker inside that first paragraph, not on its own line before it.

@@ -20,7 +20,7 @@ export function QuestionResultPreview({ result }: { result: ParsedQuestion }) {
             {result.requiresImage && <span className="text-muted-foreground">本题依赖原图，请结合题图核对。</span>}
         </div>
         <MarkdownField label="题目内容" value={result.questionText}/>
-        <MarkdownField label="参考答案" value={result.answerText}/>
+        <MarkdownField readingControls label="参考答案" value={result.answerText}/>
         <MarkdownField label="解题思路与步骤" value={result.analysis} shareContext={{questionText:result.questionText,answerText:result.answerText}}/>
         <section className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/30 p-4 dark:border-amber-900 dark:bg-amber-950/10" aria-label="错因分析">
             <h4 className="font-semibold">错因分析</h4>

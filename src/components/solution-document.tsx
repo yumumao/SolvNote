@@ -7,13 +7,13 @@ import {localSolutionImage,type SolutionSnapshot} from "@/lib/solution-snapshot"
 export type {SolutionContext,SolutionSnapshot} from "@/lib/solution-snapshot";
 /** Only explicit snapshot fields are rendered. Never accept a question/account object. */
 export function SolutionDocument({snapshot}:{snapshot:SolutionSnapshot}){
- const heading=(title:string)=><h2 style={{fontSize:20,fontWeight:700,margin:'20px 0 12px'}}>{title}</h2>;
- const section=(title:string,content:string):ReactNode=><section data-solution-section>{heading(title)}<MarkdownRenderer content={content} localShare/></section>;
- const drawing=(title:string,plan:ConstructionPlan)=><section data-solution-section>{heading(title)}<div data-solution-attachment={title}><ConstructionDiagram geometry={compileConstruction(plan).geometry} visible={plan.steps.length} title={title} readOnly/></div></section>;
- return <article className={styles.document} data-solution-document lang="zh-CN" style={{background:'#fff',color:'#172554',padding:24,lineHeight:1.8,overflowWrap:'anywhere',fontSize:16,textAlign:'left',colorScheme:'light'}}>
+ const heading=(title:string)=><h2 style={{fontSize:20,fontWeight:700,margin:'14px 0 6px'}}>{title}</h2>;
+ const section=(title:string,content:string):ReactNode=><section data-solution-section>{heading(title)}<MarkdownRenderer content={content} fitWidth={snapshot.fitWidth} localShare/></section>;
+ const drawing=(title:string,plan:ConstructionPlan)=><section data-solution-section>{heading(title)}<div data-solution-attachment={title}><ConstructionDiagram geometry={compileConstruction(plan).geometry} visible={plan.steps.length} title={title} readOnly compact/></div></section>;
+ return <article className={styles.document} data-solution-document data-fit-width={!!snapshot.fitWidth} lang="zh-CN" style={{background:'#fff',color:'#172554',padding:16,lineHeight:1.8,overflowWrap:'anywhere',fontSize:16,textAlign:'left',colorScheme:'light'}}>
   <h1 style={{fontSize:24,fontWeight:700,margin:'0 0 16px'}}>解题思路与步骤</h1>
   {snapshot.includeQuestion&&snapshot.questionText?.trim()&&section('题目',snapshot.questionText)}
-  {snapshot.includeOriginal&&localSolutionImage(snapshot.originalImage)&&<section data-solution-section>{heading('原图')}<figure data-solution-attachment="原图">
+  {snapshot.includeOriginal&&localSolutionImage(snapshot.originalImage)&&<section data-solution-section>{heading('原图')}<figure data-solution-attachment="原图" style={{margin:0}}>
    {/* eslint-disable-next-line @next/next/no-img-element -- validated local raster attachment */}
    <img src={snapshot.originalImage} alt="原图" style={{display:'block',maxWidth:'100%',maxHeight:960,width:'auto',height:'auto',objectFit:'contain',objectPosition:'left top'}}/>
   </figure></section>}

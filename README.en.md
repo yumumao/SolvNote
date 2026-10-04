@@ -1,14 +1,16 @@
 # SolvNote · AI Problem Solving & Learning Notes
 
+<img src="public/icons/icon.svg" width="72" height="72" alt="SolvNote icon: an open book and orange-red check on a pale-blue background" />
+
 [简体中文](README.md) | **English**
 
-**Live demo**: [solvnote.n29.net](https://solvnote.n29.net/) (a public demo instance; availability and data persistence are not guaranteed.) Use only non-sensitive sample problems; do not configure your own AI keys or save sensitive material there.
+**Live demo**: [solvnote.n29.net](https://solvnote.n29.net/) (a public demo instance; availability and data persistence are not guaranteed.) Use only non-sensitive sample problems; do not configure your own AI keys or save sensitive material there. The demo may lag behind this repository or published images; the features below describe this source tree.
 
 **More than an answer from a photo: understand the method, why it works, and how to solve it yourself next time.**
 
-A continued-development fork of [wttwins/wrong-notebook](https://github.com/wttwins/wrong-notebook). It keeps accounts, subject notebooks, image cropping and uploads, topic tags, practice, and printing, while extending image-based explanations, follow-up Q&A, geometry diagrams, and portable AI settings.
+A continued-development fork of [wttwins/wrong-notebook](https://github.com/wttwins/wrong-notebook). It keeps accounts, subject notebooks, image cropping and uploads, topic tags, practice, and printing, while extending image-based explanations, follow-up Q&A, two-stage geometry constructions, MiniMax illustrations, local solution sharing, and portable AI settings.
 
-[Explanations](#explanations-not-just-answers) · [Get started](#get-started) · [Deploy](#deployment) · [Troubleshooting](#troubleshooting) · [Technical docs](#technical-docs-and-attribution)
+[Explanations](#explanations-not-just-answers) · [Drawing and sharing](#drawing-illustration-and-sharing) · [AI settings](#ai-settings-and-tasks) · [Get started](#get-started) · [Deploy](#deployment) · [Troubleshooting](#troubleshooting) · [Technical docs](#technical-docs-and-attribution)
 
 ![Conceptual workflow: read the problem, explain the method, ask and correct, then save for review](docs/images/learning-workflow.en.svg)
 
@@ -24,35 +26,97 @@ The goal is not another answer in a chat window. It is to bring together **check
 |What if I do not understand or disagree?|Ask follow-up questions, add images, or correct details within the same problem. The default is 10 rounds; administrators can change the default and explicitly add rounds after a limit warning.|
 |How can I learn from the mistake?|Distinguish between being unable to solve it, an incorrect attempt, and an unassessed attempt. Keep your original work and edit the mistake analysis and topic tags. Do not invent personal mistakes without evidence from your work.|
 
-![Explanation structure: explain the approach, justify the steps, check the result, and extract a reusable method](docs/images/explanation-guide.en.svg)
+**Problem, reference answer and explanation are separate editable sections, with Markdown and math previews and optional source editing.** Save results directly to a notebook. Display equations are indented and left-aligned in wide panels and centered in narrow panels.
 
-**The problem, reference answer, and explanation have separate sections, with Markdown and math previews shown by default. Expand the source only when needed.** Edit the result and add it directly to your notebook, without moving text between a chat window and a separate editor.
+![Current interface with synthetic content: worked steps, formulas, a method summary, and reading/sharing actions](docs/images/formula-result.webp)
 
 <details>
-<summary>See the interface: math formatting, step-by-step explanations, and mistake notes</summary>
+<summary>View the explanation structure</summary>
 
-![Actual interface with synthetic content: formatted problem, answer, explanation, and editable mistake analysis](docs/images/formula-result.webp)
+![Explanation structure: explain the approach, justify the steps, check the result, and extract a reusable method](docs/images/explanation-guide.en.svg)
 
 </details>
 
-> The two diagrams above illustrate the workflow and explanation structure; they are not screenshots. Interface screenshots use synthetic examples and show the Chinese UI. These explanation rules do not guarantee correctness: check the problem statement, derivation, and diagrams yourself.
+> Diagrams are conceptual. All screenshots show the current application with isolated, synthetic problems, answers, construction data and connections, not real user data or measured AI accuracy/image-generation quality. Screenshots use the Chinese interface; see [image provenance](docs/images/README.md). Check all assumptions, reasoning and diagrams yourself.
 
-## Two practical features
+## Drawing, illustration and sharing
 
-|Geometry diagrams: see the construction|AI settings: one connection, multiple models|
-|:---:|:---:|
-|![Step-by-step auxiliary lines with the original problem image for comparison](docs/images/auxiliary-lines.webp)|![AI connection dialog with models, capabilities, and save controls](docs/images/ai-connection.webp)|
-|Reveal added points and lines step by step, alongside the original image.|A website/API endpoint plus one API key defines a connection; its models sit underneath it.|
+### Two-stage geometry constructions
 
-- **Auxiliary lines and demonstrations**: after solving, choose to generate a step-by-step construction plan. AI creates the plan; the browser draws the base diagram and added lines, including circles, arcs, and sector boundaries. Download SVGs or open GeoGebra on demand. Viewing, changing steps, and downloading do not make additional AI calls. To add lines to a copy of the original image, an administrator can separately enable a supported Gemini image-editing model. The original is never overwritten; check the generated result.
+**No Gemini or image-generation API is required for geometry constructions.** Existing text/vision models generate a structured plan; the browser renders its SVG.
+
+1. **Rebuild the source diagram first**: use the original problem and image, display the result below the first button, and optionally enter corrections below the diagram before explicitly regenerating it.
+2. **Check, lock, then add auxiliary lines**: confirm the orientation, points and existing edges. The second stage only adds construction steps; it cannot rewrite, rotate or rescale the locked base. Its result appears below the second button.
+3. **Review and save**: expand the original image only when needed. Diagrams are left-aligned; open a complete diagram in a new tab, download SVGs, or open GeoGebra on demand. Viewing, changing steps and downloading make no further AI calls.
+
+Ordinary source and auxiliary previews also trim empty canvas while keeping the locked base aligned at the same scale across stages and steps. Manually cropped originals are unchanged. A notice points to the complete diagram when auxiliary points or labels extend outside the fixed viewport.
+
+![Current second stage: a locked base, midpoint and median construction, collapsed original-image comparison, and open/download actions](docs/images/auxiliary-lines.webp)
+
+<details>
+<summary>View stage one: source diagram and correction field</summary>
+
+![Stage one with its generation button, source diagram, download actions and correction field below the image](docs/images/geometry-base.webp)
+
+</details>
+
+Rebuilding the base and generating auxiliary steps are two separate, potentially billable AI calls. A plausible diagram does not prove the assumptions or solution. This is a reconstructed schematic, not a pixel overlay; use the original image to check complex shading.
+
+### MiniMax illustrations and experimental whole-image editing
+
+- **Illustrations without Gemini**: separately authorize a saved official MiniMax connection under the optional image-generation/drawing settings, choosing `image-01` or `image-01-live`. Manual generation is currently administrator-only. This integration covers images, not video or speech generation.
+- **Source text plus a reviewed image description**: open the separate experimental illustration dialog from the problem editor, load the problem, write a description or explicitly ask a vision model to produce one, add drawing requirements, then compose and review the final prompt. MiniMax receives that final text, not the original image. Recognition does not automatically trigger generation.
+- **Use the two-stage workflow for geometry**: prompt templates reduce ambiguity but cannot guarantee radii, angles, labels or auxiliary lines. MiniMax regenerates an illustration rather than preserving original pixels. Supported Gemini image-output models have a separate optional whole-image editing entry; they do not guarantee an unchanged base either.
+- **Separate authorization and cost confirmation**: vision capability is not image-output capability. Changing the endpoint, key, protocol or illustration model requires reconfirmation. These site-specific authorizations do not migrate with ScanDex files. Each generation requires explicit acknowledgement of possible charges.
+
+<details>
+<summary>View MiniMax connection selection and prompt preparation</summary>
+
+![MiniMax settings using a saved official connection with separate model selection and authorization](docs/images/illustration-settings.webp)
+
+![Illustration dialog with drawing requirements, geometry template, editable final prompt and cost confirmation; no real image-generation call was made](docs/images/illustration-composer.webp)
+
+</details>
+
+### Separate reading and local sharing
+
+Reference answers and explanations offer a **fit-to-width reading mode**: prose wraps normally, oversized formulas scale to the available space, and code and tables reflow without shrinking all body text. Open explanations in a **new reading tab** to read and share from the same view. Select included content directly on that page; there is no second sharing dialog or redundant new-tab action. Image exports follow the current reading width in fit mode, while long explanations still split at step boundaries. Shared images and construction diagrams use compact spacing; diagrams trim empty canvas without changing their construction. When multiple images are generated, all per-image download and view links appear together above the previews, which follow consecutively with minimal gaps.
+
+A fresh share or direct reading tab **omits the problem statement** by default, while still including the **reference answer and available stage-two auxiliary diagram**. Manually selecting the problem also selects a valid stage-one reconstruction when available, or otherwise the original image. Automatically selected images can be unchecked independently and are not reselected on rerender; unchecking the problem does not clear independent image choices. Opening a reading tab from the share preview preserves the current selection. The order is **problem → original image → reconstructed base (stage one) → reference answer → auxiliary diagram (stage two) → explanation**, omitting unselected or unavailable parts. Text exports use image descriptions as placeholders, not embedded image data. The text panel can be opened and closed repeatedly. **Keep LaTeX markup** is checked by default; unchecking it produces a best-effort readable approximation with an in-place warning to use images or LaTeX for accurate formulas. Each selected image is represented by a notice to share it as an image. Attachment changes update prepared text immediately; generated images must be regenerated.
+
+![Local sharing dialog with five optional attachments, a new-tab preview, tall-image generation and text preparation](docs/images/solution-share.webp)
+
+<details>
+<summary>View the separate reader and mobile sharing dialog</summary>
+
+![Integrated reader with inclusion checkboxes, fit-to-width reading and direct sharing controls](docs/images/solution-reader.webp)
+
+<img src="docs/images/solution-share-mobile.webp" width="374" alt="Mobile sharing dialog with wrapping attachment options and an accessible top-right close control" />
+
+</details>
+
+**Sharing boundary**: reading/export creates a local snapshot, not a public URL, and does not upload the problem. The reading tab is temporary; after refreshing, reopen it from the original problem. Send the downloaded images or text, not the reader URL. Native sharing depends on browser support; downloading images and copying text remain alternatives. Dialog content scrolls independently of the close control.
+
+## AI settings and tasks
+
 - **Mix and match models**: configure separate image-reading and solving/Q&A chains. Administrators manage site connections, select three defaults for new accounts (all eligible models when fewer than three exist), and grant additional models per user. Users can add, edit or import their own private connections in personal AI settings; site credentials are never returned to ordinary users. AI configuration export is disabled for every role by default. Only the explicit deployment setting `SOLVNOTE_ENABLE_AI_CONFIG_EXPORT=true` restores encrypted administrator export. Import, editing and a [credential-free template](docs/templates/solvnote-ai-config.template.json) remain available.
-- **Visible calls and recoverable tasks**: see the model, connection, image attachment, and elapsed time for each step, not private chain-of-thought. Once the backend accepts a task, you can leave the page. Retrieve short-task results, including auxiliary diagrams, in a dialog under My AI Tasks instead of paying to regenerate them.
+- **Separate text, vision and image output**: connections support `chat`, `responses`, `responses_codex`, `gemini` and `azure`; select according to the actual model and provider interface. Imported ScanDex `vision` means text plus image reading, not automatic image-generation/editing authorization.
+- **Visible work and recoverable tasks**: see the model, connection, image attachment and elapsed time per step, not private chain-of-thought. Recognition, solving, construction and illustration show an activity bar, **not a measured completion percentage or time estimate**. After backend acceptance, retrieve results in My AI Tasks rather than paying to regenerate them.
+
+<details>
+<summary>View current connection settings and ScanDex configuration import</summary>
+
+![Current connection dialog with text/vision models and the red-tinted floating close control](docs/images/ai-connection.webp)
+
+![Configuration import with a pale-blue file picker, separate passphrase, merge/replace modes and preview-before-confirmation](docs/images/ai-import.webp)
+
+</details>
 
 ## Get started
 
 1. **Configure AI**: as an administrator, open `/admin/ai`. Add connections and models manually, or import an encrypted ScanDex configuration. Enable image input only for models that actually support it, add models to the relevant call orders, and save. A connectivity test makes one short text request and may incur a charge; it does not verify image-reading quality.
 2. **Submit a problem**: upload and crop an image from the home page or a subject notebook's add page. You can also enter text or add instructions. The default reads the image before solving; text-only input skips image reading. Direct image-and-text solving remains available.
-3. **Check and ask**: review the transcription, angle names, and conditions, and correct errors yourself. Ask about any unclear step or supply your own attempt. Generate an auxiliary-line plan on demand for geometry demonstrations.
+3. **Check and ask**: review the transcription, angle names, and conditions, and correct errors yourself. Ask about any unclear step or supply your own attempt. For geometry demonstrations, generate and check the base diagram, then lock it before adding auxiliary steps.
 4. **Organize and save**: edit the problem, answer, and explanation; set the attempt status; record your incorrect work, mistake analysis, and topic tags. Save to a notebook, then organize by subject, practice, or print for review.
 
 **Default image workflow**: a vision model transcribes → a model is selected in solving order, with the original image attached if supported → uncertain image details are re-read first → genuinely missing information is requested from you → the explanation is completed. A text-only solver sends specific questions to a vision model; a multimodal solver can recheck the image itself. This does not call every configured model at once.
@@ -168,6 +232,9 @@ To roll back, stop the application and restore **the old image, the paired volum
 |A model immediately returns `AI_ENDPOINT_REJECTED`|Cloud deployments accept only public HTTPS endpoints. Check the URL and DNS. Do not use local proxies or private-network addresses as cloud AI endpoints, or disable the security checks.|
 |Analysis takes a long time, or acceptance is unknown|Open My AI Tasks to inspect the stage and error. Requests marked `unknown` are not automatically resent, to avoid duplicate charges. Check provider records before resubmitting. Image reading, solving, and any necessary re-reading are not equivalent to one chat request; faster completion is not guaranteed.|
 |An auxiliary diagram is missing or you left the page|Within 24 hours, retrieve the short task from My AI Tasks and view it in the dialog. Do not regenerate merely to fix a display issue. The SVG is a reconstructed schematic, not a pixel overlay on the original; use the original image for complex shading.|
+|Can I draw without Gemini?|Two-stage constructions use existing text/vision models, not an image-generation API. Administrators can separately enable MiniMax illustrations. Only the optional Gemini whole-image editor requires a compatible Gemini image-output model.|
+|MiniMax geometry or labels are inaccurate|Review the reference description, explicit values and final prompt. Templates do not guarantee precision. Use the locked two-stage construction workflow for structural geometry rather than treating an illustration as a proof.|
+|A reader URL does not work for someone else|It is an ephemeral local snapshot, not a public link. Share downloaded images or prepared text. After refreshing, reopen the reader from the original problem.|
 |You want to back up or transfer AI settings|AI export is disabled for every role by default in this branch. Back up the database, configuration directory, and environment together; a credential-free import template is available. Only an operator explicitly setting `SOLVNOTE_ENABLE_AI_CONFIG_EXPORT=true` can restore administrator-only encrypted export. Site import requires preview and confirmation.|
 
 ## Technical docs and attribution

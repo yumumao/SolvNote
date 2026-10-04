@@ -374,7 +374,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </div>
 
                     <div className="space-y-2">
-                        <MarkdownField label={t.editor.answer || "参考答案"} value={data.answerText || ""}
+                        <MarkdownField readingControls label={t.editor.answer || "参考答案"} value={data.answerText || ""}
                             onChange={value => setData(prev => ({ ...prev, answerText: value }))} emptyText={"暂无参考答案"}/>
                     </div>
 

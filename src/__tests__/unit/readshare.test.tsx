@@ -1,0 +1,64 @@
+import {act} from 'react';
+import {createRoot,type Root} from 'react-dom/client';
+import {afterEach,beforeEach,it,expect,vi} from 'vitest';
+import {SolutionShare} from '@/components/solution-share';
+import {MarkdownField} from '@/components/markdown-field';
+import {solutionPlainText} from '@/lib/solution-share';
+import {parseSolutionSnapshot} from '@/lib/solution-snapshot';
+let host:HTMLDivElement,root:Root;
+beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);host=document.createElement('div');document.body.append(host);root=createRoot(host)});
+afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals()});
+const click=async(label:string)=>{const button=[...host.querySelectorAll('button')].find(b=>b.textContent===label);expect(button).toBeDefined();await act(async()=>button!.click())};
+const check=(label:string)=>[...host.querySelectorAll('label')].find(l=>l.textContent===label)?.querySelector('input') as HTMLInputElement;
+it('defaults to LaTeX, can produce readable math with an in-place warning and explicit image placeholder',async()=>{
+ await act(async()=>root.render(<MarkdownField label="合成" value={'前面 $\\frac{x^2}{\\sqrt{y}}$ 后面'}/>));
+ const source=host.querySelector('.markdown-content') as HTMLElement;
+ const before=source.innerHTML;
+ expect(solutionPlainText(source)).toContain('\\frac');
+ const options={includeLatex:false};
+ const plain=solutionPlainText(source,options);
+ expect(plain).not.toContain('\\frac');expect(plain).not.toContain('\\sqrt');
+ expect(plain).toContain('(x^(2))/(√(y))');expect(plain).toContain('公式显示可能不准确，建议使用图片或LaTeX分享');
+ expect(plain.indexOf('公式显示')).toBeLessThan(plain.indexOf('后面'));
+ expect(source.innerHTML).toBe(before);
+ const image=document.createElement('figure');image.setAttribute('data-solution-attachment','原图');source.append(image);
+ expect(solutionPlainText(source)).toContain('[图片：原图]（图片需通过图片分享）');
+});
+it('strictly allowlists reading and text preferences across tabs',()=>{
+ const base={analysis:'合成',includeQuestion:false,includeAnswer:false};
+ expect(parseSolutionSnapshot(base)).toMatchObject({fitWidth:false,includeLatex:true});
+ expect(parseSolutionSnapshot({...base,fitWidth:true,includeLatex:false})).toMatchObject({fitWidth:true,includeLatex:false});
+ expect(parseSolutionSnapshot({...base,fitWidth:'true',includeLatex:0})).toMatchObject({fitWidth:false,includeLatex:true});
+});
+it('text preparation toggles repeatedly and the separate LaTeX checkbox updates without collapsing it',async()=>{
+ await act(async()=>root.render(<SolutionShare analysis={'解题 $x^2$'} questionText="合成题干"/>));
+ await click('分享解题过程');expect(check('保留LaTeX标记').checked).toBe(true);
+ await click('准备分享文字');expect(host.querySelector('textarea')?.value).toContain('x^2');
+ await act(async()=>check('保留LaTeX标记').click());
+ expect(host.querySelector('textarea')?.value).toContain('公式显示可能不准确');
+ expect(check('保留LaTeX标记').closest('button')).toBeNull();
+ await click('收起分享文字');expect(host.querySelector('textarea')).toBeNull();
+ await click('准备分享文字');expect(host.querySelector('textarea')).not.toBeNull();
+ expect(host.querySelector('textarea')?.value).not.toContain('合成题干');
+ await act(async()=>check('附带题干').click());expect(host.querySelector('textarea')?.value).toContain('合成题干');
+ await act(async()=>check('附带题干').click());expect(host.querySelector('textarea')?.value).not.toContain('合成题干');
+});
+it('inline reader uses one live document and current options without dialogs or another tab entry',async()=>{
+ const props={inline:true,allowNewReader:false};
+ await act(async()=>root.render(<SolutionShare analysis="合成解题" questionText="合成题干" answerText="合成答案" {...props}/>));
+ expect(host.querySelector('dialog')).toBeNull();expect(host.querySelectorAll('[data-solution-document]')).toHaveLength(1);
+ expect(check('附带题干').checked).toBe(false);
+ expect(host.querySelector('[data-solution-document]')?.textContent).not.toContain('合成题干');
+ await act(async()=>check('附带题干').click());
+ expect(host.querySelector('[data-solution-document]')?.textContent).toContain('合成题干');
+ await click('阅读模式：适合宽度');
+ expect(host.querySelector('[data-solution-document]')?.getAttribute('data-fit-width')).toBe('true');
+ await click('准备分享文字');expect(host.querySelector('textarea')?.value).toContain('合成题干');
+ expect([...host.querySelectorAll('button')].some(b=>b.textContent?.includes('新标签'))).toBe(false);
+});
+it('field reading preference is inherited by sharing without altering source',async()=>{
+ await act(async()=>root.render(<MarkdownField label="解题" value={'$x^2$'} shareContext={{answerText:'4'}}/>));
+ await click('阅读模式：适合宽度');await click('分享解题过程');
+ expect(host.querySelector('[data-solution-document]')?.getAttribute('data-fit-width')).toBe('true');
+ expect(host.querySelector('[data-markdown-source]')?.textContent).toContain('$x^2$');
+});
