@@ -11,7 +11,8 @@ import {parseConstructionBase,parseConstructionSteps,validateConstructionBase} f
 import {compileConstruction,CONSTRUCTION_PROMPT,BASE_CONSTRUCTION_PROMPT} from "./construction";
 import {approvedImageEditor} from "./settings";
 export async function validateDrawingInput(kind:string,input:JobInput,userId:string){
-    if(kind==="construction"){if(input.drawingPlan)validateConstructionBase(input.drawingPlan);return;}
+    if(kind==="construction"){if(input.drawingPlan && input.drawingPreviousBase)throw Error("INVALID_REQUEST");if(input.drawingPlan)validateConstructionBase(input.drawingPlan);if(input.drawingPreviousBase)validateConstructionBase(input.drawingPreviousBase);return;}
+    if(input.drawingPreviousBase)throw Error("INVALID_REQUEST");
     if(!input.confirmImageEdit || !input.drawingPlan || !input.imageBase64 || !input.drawingRevision)throw Error("INVALID_REQUEST");
     compileConstruction(input.drawingPlan);
     await approvedImageEditor((await loadEffectiveAIConfig(userId)).config,input.drawingRevision);
@@ -20,11 +21,13 @@ export async function executeDrawing(kind:"construction"|"image_edit",input:JobI
     const image=dataImage(input.originalImageBase64||input.imageBase64,input.mimeType);
     const text=JSON.stringify({question:input.questionText,answer:input.answerText,analysis:input.analysis});
     if(kind==="construction"){
+        if(input.drawingPlan && input.drawingPreviousBase)throw Error("INVALID_REQUEST");
+        const previousBase=input.drawingPreviousBase?validateConstructionBase(input.drawingPreviousBase):undefined;
         const base=input.drawingPlan?validateConstructionBase(input.drawingPlan):undefined;
         const evidence=input.drawingEvidence?prepareDrawingEvidence(input.drawingCorrection.trim()?{...input.drawingEvidence,authority:"user_clarified",clarifications:[...input.drawingEvidence.clarifications,input.drawingCorrection]}:input.drawingEvidence):undefined;
         const plan=base
             ? await callChain(CONSTRUCTION_PROMPT,JSON.stringify({question:input.questionText,answer:input.answerText,analysis:input.analysis,lockedBase:base}),undefined,raw=>parseConstructionSteps(raw,base),{role:"solve",stage:"construction"})
-            : await callChain(BASE_CONSTRUCTION_PROMPT+"\n"+DRAWING_EVIDENCE_RULES,JSON.stringify({question:input.questionText,correction:input.drawingCorrection,...(evidence?{drawingEvidence:evidence}:{})}),image,raw=>preserveDrawingEvidence(parseConstructionBase(raw),evidence),{role:image?"recognize":"solve",stage:"construction"});
+            : await callChain(BASE_CONSTRUCTION_PROMPT+"\n"+DRAWING_EVIDENCE_RULES,JSON.stringify({question:input.questionText,correction:input.drawingCorrection,...(previousBase?{previousBase}:{}),...(evidence?{drawingEvidence:evidence}:{})}),image,raw=>preserveDrawingEvidence(parseConstructionBase(raw),evidence),{role:image?"recognize":"solve",stage:"construction"});
         return {type:"construction" as const,plan};
     }
     if(!image||!input.drawingPlan||!input.confirmImageEdit)throw new AIError("AI_IMAGE_EDIT_INVALID_INPUT");

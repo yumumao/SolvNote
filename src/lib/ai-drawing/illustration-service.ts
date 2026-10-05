@@ -8,7 +8,7 @@ import {IllustrationInput,type IllustrationResult} from "./illustration-schema";
 import {requireIllustrationAccess} from "./illustration-settings";
 import {sendMiniMaxImage} from "./minimax";
 export async function validateIllustrationInput(input:JobInput,userId:string,tx?:AiAccessTx){
-    if(!input.confirmIllustration || !input.illustrationRevision || input.imageBase64 || input.originalImageBase64 || input.drawingPlan || input.errorItemId || input.answerText || input.analysis || input.review || input.mode==="transcribe")throw Error("INVALID_REQUEST");
+    if(!input.confirmIllustration || !input.illustrationRevision || input.imageBase64 || input.originalImageBase64 || input.drawingPlan || input.drawingPreviousBase || input.errorItemId || input.answerText || input.analysis || input.review || input.mode==="transcribe")throw Error("INVALID_REQUEST");
     // Validate before reading credentials or recording a dispatch.
     IllustrationInput.parse({prompt:input.questionText,ratio:input.illustrationRatio,model:"image-01"});
     return requireIllustrationAccess(userId,input.illustrationRevision,tx);

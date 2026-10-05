@@ -1,3 +1,4 @@
+import { JSON_OUTPUT_RULES } from "./json";
 /**
  * A compact protocol for the one expensive pixel re-read.  Full transcription
  * is intentionally not requested here: asking a vision model to rewrite the
@@ -14,4 +15,5 @@ export const GEOMETRY_CHECK_PROMPT = String.raw`你只负责关键编号角的�
 - 每个已核对角必须有真实可见的vertex和恰好两个不同的arms点名；arms填写两条射线的末端点名，不是整条射线。例如顶点B、射线BA与BC必须写arms:["A","C"]，不能写["BA","BC"]。arms不含vertex。点名不确定时不要猜，改在geometryUncertainties中写明具体编号和不确定的顶点/射线。
 - geometryUncertainties必须始终存在且是数组，最多8项；即使一个角也无法确认，也必须返回{"angles":[],"geometryUncertainties":["编号角1的顶点或射线无法确认"]}，不能省略字段、返回null或改回完整转录协议。全部编号角的顶点、两条射线和角弧对应都已核清时必须返回[]。
 - geometryUncertainties只能记录labelsToLocate中仍未核定的角标证据，不要把普通题干疑问、草稿不清、可选裁剪框、题目缺字或需要数学推导放进来。
-- 不要返回text、facts、regions、uncertainties、missingInformation或geometry包装字段；服务端会保留原转录和原图坐标。`;
+- 不要返回text、facts、regions、uncertainties、missingInformation或geometry包装字段；服务端会保留原转录和原图坐标。
+${JSON_OUTPUT_RULES}`;

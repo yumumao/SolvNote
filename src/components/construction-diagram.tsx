@@ -9,25 +9,35 @@ const SVG_HEIGHT=500;
 const VIEW_PADDING=30;
 
 // All coordinates come from the whitelist compiler, never from arbitrary SVG or JS returned by AI.
-export function ConstructionDiagram({geometry,visible,title,readOnly=false,compact=false,attachmentTitle}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean;compact?:boolean;attachmentTitle?:string}){
+export function ConstructionDiagram({geometry,visible,title,readOnly=false,compact=false,attachmentTitle,shownConditionLines=[]}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean;compact?:boolean;attachmentTitle?:string;shownConditionLines?:readonly string[]}){
     const svg=useRef<SVGSVGElement>(null);
     const rounds=[...geometry.circles,...geometry.arcs];
     // The viewport depends ONLY on the locked source, including across separate jobs.
     // Auxiliary coordinates must never refit or otherwise move the base layer.
     const visibleDerivedPoints=geometry.derivedPoints.filter(p=>p.step<=visible);
+    const visibleDerivedCircles=geometry.derivedCircles.filter(c=>c.step<=visible);
     const allPoints=[...geometry.basePoints,...visibleDerivedPoints];
     const xs=[...geometry.basePoints.map(p=>p.x),...rounds.flatMap(c=>[c.x-c.radius,c.x+c.radius])];
     const ys=[...geometry.basePoints.map(p=>p.y),...rounds.flatMap(c=>[c.y-c.radius,c.y+c.radius])];
     const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
     const scale=Math.min(720/Math.max(maxX-minX,1e-6),420/Math.max(maxY-minY,1e-6));
     const map=(p:{x:number;y:number})=>({x:400+(p.x-(minX+maxX)/2)*scale,y:250-(p.y-(minY+maxY)/2)*scale});
+    const circleBounds=(c:Geometry["circles"][number]|Geometry["derivedCircles"][number])=>{const p=map(c),r=c.radius*scale;return [{x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r}];};
     const points=new Map(allPoints.map(p=>[p.id,p]));
     const originals=new Map(geometry.basePoints.map(p=>[p.id,p]));
     const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})));
     const labelBounds=labels.flatMap(l=>l.bounds);
     const captionLines=diagramConditionLines(geometry.annotations||[],geometry.notes||[]);
     const hiddenLabels=labels.some(l=>l.hidden);
-    const allCaptionLines=hiddenLabels?[...captionLines,"部分标记因图内拥挤或角区过小，仅在图注保留，请对照原图核验位置。"]:captionLines;
+    const crowdedLabelNote="部分标记因图内拥挤或角区过小，仅在图注保留，请对照原图核验位置。";
+    // A shared document may already show these source conditions under its redraw.
+    // Compare complete display lines (including status), not keywords or geometry.
+    const shown=new Set(shownConditionLines);
+    const remainingLines=captionLines.filter(line=>!shown.has(line));
+    const hiddenUnshown=labels.some(l=>l.hidden&&diagramConditionLines([l.annotation],[]).some(line=>!shown.has(line)));
+    const displayedCaptionLines=hiddenUnshown?[...remainingLines,crowdedLabelNote]:remainingLines;
+    // Standalone SVGs must remain self-contained even if their embedding hid duplicates.
+    const allCaptionLines=hiddenLabels?[...captionLines,crowdedLabelNote]:captionLines;
     function renderSegment(s:Geometry["segments"][number],index:number,auxiliary:boolean){
         const a=map(points.get(s.a)!),b=map(points.get(s.b)!);
         return <line key={index} data-base-segment={auxiliary?undefined:"true"} data-aux-segment={auxiliary?"true":undefined} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={auxiliary?"#dc2626":"#334155"} strokeWidth={2.5} strokeDasharray={auxiliary?"8 5":undefined}/>;
@@ -44,7 +54,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
             {x:0,y:0},{x:SVG_WIDTH,y:SVG_HEIGHT},
             ...allPoints.flatMap(pointBounds),
             ...labelBounds,
-            ...geometry.circles.flatMap(c=>{const p=map(c);const r=c.radius*scale;return [{x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r}];}),
+            ...[...geometry.circles,...visibleDerivedCircles].flatMap(circleBounds),
             ...geometry.arcs.flatMap(a=>{const start=map(a.start),end=map(a.end),r=a.radius*scale;return [{x:start.x-r,y:start.y-r},{x:start.x+r,y:start.y+r},{x:end.x-r,y:end.y-r},{x:end.x+r,y:end.y+r}];}),
         ];
         const left=Math.min(...bounds.map(p=>p.x))-VIEW_PADDING;
@@ -59,9 +69,9 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
     function pointBounds(p:Geometry["points"][number]){
         const q=map(p);return [{x:q.x-4,y:q.y-30},{x:q.x+8+p.id.length*18+3,y:q.y+4}];
     }
-    function compactViewBox(cropPoints=allPoints){
+    function compactViewBox(cropPoints=allPoints,cropCircles=visibleDerivedCircles){
         const bounds=[...cropPoints.flatMap(pointBounds),...labelBounds];
-        for(const c of geometry.circles){
+        for(const c of [...geometry.circles,...cropCircles]){
             const p=map(c),r=c.radius*scale;
             bounds.push({x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r});
         }
@@ -120,8 +130,8 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
         }finally{setTimeout(()=>URL.revokeObjectURL(url),60000);}
     }
     const shareCompact=readOnly&&compact;
-    const bounds=readOnly?(shareCompact?compactViewBox():expandedViewBox()):compactViewBox(geometry.basePoints);
-    const outside=visibleDerivedPoints.flatMap(pointBounds).some(p=>p.x<bounds.left||p.x>bounds.left+bounds.width||p.y<bounds.top||p.y>bounds.top+bounds.height);
+    const bounds=readOnly?(shareCompact?compactViewBox():expandedViewBox()):compactViewBox(geometry.basePoints,[]);
+    const outside=[...visibleDerivedPoints.flatMap(pointBounds),...visibleDerivedCircles.flatMap(circleBounds)].some(p=>p.x<bounds.left||p.x>bounds.left+bounds.width||p.y<bounds.top||p.y>bounds.top+bounds.height);
     // Cap width along with height: a tall SVG must not leave a wide empty CSS box.
     const maxWidth=readOnly?(shareCompact?Math.min(800,bounds.width):800):Math.min(800,bounds.width,500*bounds.width/bounds.height);
     return <div className={shareCompact?"space-y-1":"space-y-2"} data-compact-drawing={shareCompact||undefined}>
@@ -140,15 +150,16 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
             </g>)}
             </g>
             <g data-layer="auxiliary">
+            {visibleDerivedCircles.map((c,i)=>{const p=map(c);return <circle key={i} data-aux-circle="true" cx={p.x} cy={p.y} r={c.radius*scale} fill="none" stroke="#dc2626" strokeWidth={2.5} strokeDasharray="8 5"/>;})}
             {geometry.derivedSegments.filter(s=>s.step<=visible).map((s,i)=>renderSegment(s,i,true))}
             {visibleDerivedPoints.map(p=>renderPoint(p,true))}
             </g>
         </svg>
-        {allCaptionLines.length>0&&<aside data-diagram-caption style={{fontSize:14,lineHeight:1.6,marginTop:4,overflowWrap:"anywhere",textAlign:"left",color:"#334155"}}>
+        {displayedCaptionLines.length>0&&<aside data-diagram-caption style={{fontSize:14,lineHeight:1.6,marginTop:4,overflowWrap:"anywhere",textAlign:"left",color:"#334155"}}>
             <p style={{margin:0,fontWeight:600}}>原图标记与图注（识别结果，请核对原图）</p>
-            <ul style={{margin:"2px 0 0",paddingLeft:20}}>{allCaptionLines.map((line,i)=><li key={i}>{line}</li>)}</ul>
+            <ul style={{margin:"2px 0 0",paddingLeft:20}}>{displayedCaptionLines.map((line,i)=><li key={i}>{line}</li>)}</ul>
         </aside>}
-        {outside && !readOnly && <p role="note" data-outside-note className="text-sm">部分辅助点或标签超出固定视窗，原题底图不会自动移动或缩放。可下载或在新标签页打开当前步骤的完整图查看全部辅助点。</p>}
+        {outside && !readOnly && <p role="note" data-outside-note className="text-sm">部分辅助点、辅助圆或标签超出固定视窗，原题底图不会自动移动或缩放。可下载或在新标签页打开当前步骤的完整图查看全部辅助构造。</p>}
         {!readOnly && <div className="flex flex-wrap gap-2">
             <Button variant="outline" data-open-full-image onClick={openFullImage}>在新标签页打开完整图</Button>
             <Button variant="outline" onClick={download}>下载当前步骤示意图</Button>

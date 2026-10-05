@@ -38,7 +38,7 @@ describe("construction prompt matches the strict executable contract", () => {
         expect(examples.length).toBeGreaterThan(0);
         const kinds=new Set<string>();
         for(const example of examples){compileConstruction(example);for(const step of example.steps){kinds.add(step.operation.kind);if("id" in step.operation)expect(example.points.map(p=>p.id)).not.toContain(step.operation.id);}}
-        expect([...kinds].sort()).toEqual(["foot","intersection","midpoint","reflect","rotate","segment"]);
+        expect([...kinds].sort()).toEqual(["circle","foot","intersection","midpoint","reflect","rotate","segment"]);
     });
 });
 

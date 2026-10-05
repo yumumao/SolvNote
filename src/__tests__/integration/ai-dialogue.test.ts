@@ -371,6 +371,30 @@ describe.sequential("bounded drawing routes and jobs",()=>{
   expect((job?.attemptsLog[0] as unknown as {stage:string}).stage).toBe("construction");
   expect((secondJob?.attemptsLog[0] as unknown as {stage:string}).stage).toBe("construction");
  });
+ it("persists editable correction context and makes each manual regeneration a new owner-only job",async()=>{
+  const previous={...construction,steps:[]};
+  const corrected={...previous,points:previous.points.map(p=>p.id==="R"?{...p,x:3}:p)};
+  const sameGeometry={...corrected,title:"Explanation updated, geometry unchanged"};
+  shared.send.mockResolvedValueOnce(JSON.stringify(corrected)).mockResolvedValueOnce(JSON.stringify(sameGeometry));
+  const fields={questionText:"synthetic diagram",answerText:"must not guide the base",analysis:"must not leak into first stage",drawingCorrection:"Move R to x=3; keep P and Q unchanged"};
+  const body={...fields,imageBase64:image,drawingPreviousBase:previous};
+  const requestKey=key();
+  const submit=(input:typeof body,requestId=key())=>DRAW(req("/api/ai/drawing/construction",input,{"x-request-id":requestId}),{params:Promise.resolve({kind:"construction"})});
+  const response=await submit(body,requestKey);expect(response.status).toBe(202);const {jobId}=await response.json();
+  const retried=await submit(body,requestKey);expect(retried.status).toBe(202);expect((await retried.json()).jobId).toBe(jobId);
+  await processOne();
+  const first=await readJob("alice",jobId,true);expect(first?.state).toBe("success");
+  expect(first?.input).toMatchObject({drawingCorrection:fields.drawingCorrection,drawingPreviousBase:previous});
+  expect(first?.result).toMatchObject({type:"construction",plan:corrected});expect(await readJob("bob",jobId,true)).toBeNull();
+  expect(shared.send).toHaveBeenCalledTimes(1);expect(shared.send.mock.calls[0][1].id).toBe("v");
+  expect(JSON.parse(shared.send.mock.calls[0][3])).toEqual({question:fields.questionText,correction:fields.drawingCorrection,previousBase:previous});
+  expect(shared.send.mock.calls[0][4]).toBeTruthy();
+  const second=await submit({...body,drawingPreviousBase:corrected});expect(second.status).toBe(202);const {jobId:secondId}=await second.json();expect(secondId).not.toBe(jobId);
+  await processOne();const secondJob=await readJob("alice",secondId,true);expect(secondJob?.state).toBe("success");
+  expect(secondJob?.input?.drawingPreviousBase).toEqual(corrected);expect(secondJob?.result).toMatchObject({type:"construction",plan:sameGeometry});
+  expect(JSON.parse(shared.send.mock.calls[1][3])).toEqual({question:fields.questionText,correction:fields.drawingCorrection,previousBase:corrected});
+  expect(await readJob("bob",secondId)).toBeNull();await processOne();expect(shared.send).toHaveBeenCalledTimes(2);
+ });
  it("stops unsupported drawings once without spending the fallback model budget",async()=>{
   shared.send.mockResolvedValue(JSON.stringify({unsupported:true}));
   const r=await DRAW(req("/api/ai/drawing/construction",{questionText:"synthetic unsupported curve",answerText:"synthetic answer"}),{params:Promise.resolve({kind:"construction"})});
@@ -463,5 +487,34 @@ describe.sequential("supplemental text completes human evidence review",()=>{
    const c=await view(id);expect(c.input.gradeSemester).toMatch(/[四五]年级/);expect(c.state).toBe("answered");
    for(const call of shared.send.mock.calls){expect(call[2]).toContain("小学奥数");expect(call[2]).toContain("sin/cos/tan");}
   }finally{await shared.db.user.update({where:{id:"alice"},data:{educationStage:null,enrollmentYear:null}});}
+ });
+});
+
+describe.sequential("bounded JSON compatibility in the persistent dialogue worker",()=>{
+ it("saves recovered transcription and completes without a repair/fallback AI call",async()=>{
+  shared.send.mockResolvedValueOnce(String.raw`转录如下：
+{"text":"synthetic $\frac{1}{2}+\theta$","facts":[],"uncertainties":[],"missingInformation":[]}
+以上为转录。`);
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(shared.send).toHaveBeenCalledTimes(2);
+  expect(c.transcript?.text).toBe(String.raw`synthetic $\frac{1}{2}+\theta$`);
+  expect(shared.send.mock.calls[1][3]).toContain(JSON.stringify(String.raw`synthetic $\frac{1}{2}+\theta$`));
+  expect(c.steps.map(step=>step.state)).toEqual(["success","success"]);
+ });
+ it("uses the same compatibility boundary for the targeted reread",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify(transcript))
+   .mockResolvedValueOnce(JSON.stringify({status:"needs_visual_check",questions:["synthetic symbol?"]}))
+   .mockResolvedValueOnce(String.raw`补读结果：{"text":"synthetic $\sqrt{4}$","facts":[],"uncertainties":[],"missingInformation":[]}`)
+   .mockResolvedValueOnce(JSON.stringify(solved));
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(shared.send).toHaveBeenCalledTimes(4);
+  expect(c.transcript?.text).toBe(String.raw`synthetic $\sqrt{4}$`);
+ });
+ it("does not persist an incomplete transcript as a checkpoint",async()=>{
+  shared.send.mockResolvedValueOnce(String.raw`转录：{"text":"synthetic $\frac{1}{2}$","facts":[]`);
+  const id=await create();await processOne();const c=await view(id);
+  expect(c.state).not.toBe("answered");expect(c.transcript).toBeUndefined();
+  expect(c.steps[0]).toMatchObject({state:"failed",diagnostic:"JSON_INVALID"});
+  expect(shared.send).toHaveBeenCalledTimes(1);
  });
 });

@@ -22,10 +22,18 @@ export function validateDiagramAnnotations(annotations:DiagramAnnotation[],get:(
   }
  }
 }
+/** Hide only our historical evidence provenance label; never rewrite stored evidence.
+ * Keep the excerpt warning: a clipped clarification must not look like the full text.
+ */
+function displayedNoteText(text:string):string{
+ const source=/^人工补充\d+（较新说明优先(，此处为摘要，完整内容见角标核对区)?）：/.exec(text);
+ if(!source)return text;
+ return text.slice(source[0].length)+(source[1]?'（此处为摘要，完整内容见角标核对区）':'');
+}
 export function diagramConditionLines(annotations:DiagramAnnotation[],notes:DiagramNote[]):string[]{
  return [
   ...annotations.map(a=>a.kind==='angle'?`原图标注 ${a.text}：∠${a.a}${a.vertex}${a.b}（从${a.vertex}${a.a}到${a.vertex}${a.b}${a.direction==='ccw'?'逆时针':'顺时针'}的角区，标记原样保留）`:`原图标注 ${a.text}：线段${a.a}${a.b}`),
-  ...notes.map(n=>`${n.status==='uncertain'?'待核对（不作为已知条件）':'原图条件（请对照原图核验）'}：${n.text}`),
+  ...notes.map(n=>`${n.status==='uncertain'?'待核对（不作为已知条件）：':''}${displayedNoteText(n.text)}`),
  ];
 }
 export type LabelLayout={annotation:DiagramAnnotation;x:number;y:number;width:number;path?:string;bounds:Point[];hidden:boolean};
