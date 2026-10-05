@@ -75,7 +75,7 @@ describe('marked drawings and captions',()=>{
  it('retains captions in plain text, image document and cross-tab snapshots, with attachment selection respected',()=>mount(async(host,render)=>{
   const snapshot=parseSolutionSnapshot({analysis:'Synthetic solution',basePlan:annotated,auxiliaryPlan:{...annotated,...extra},includeBase:true,includeAuxiliary:true})!;
   await render(<SolutionDocument snapshot={snapshot}/>);
-  expect(host.querySelectorAll('[data-diagram-caption]')).toHaveLength(2);
+  expect(host.querySelectorAll('[data-diagram-caption]')).toHaveLength(1);
   for(const includeLatex of [true,false]){const text=solutionPlainText(host,{includeLatex});expect(text).toContain('图片需通过图片分享');expect(text).toContain('等长刻痕');expect(text).toContain('待核对');expect(text).toContain('∠AOB');}
   await render(<SolutionDocument snapshot={{...snapshot,includeBase:false,includeAuxiliary:false}}/>);expect(solutionPlainText(host)).not.toContain('等长刻痕');
  }));

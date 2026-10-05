@@ -1,5 +1,29 @@
 # Version notes / 版本说明
 
+## 辅助圆构造能力 / Auxiliary circles · 2026-10-05
+
+- Add a strict `circle(center,through)` step on the auxiliary layer; combine it with `midpoint` for diameter circles required by a solution. Original circles and locked coordinates remain unchanged.
+- Render auxiliary circles as red dashed outlines, reveal/rewind by step, and include their full visible bounds in reading, sharing, SVG and GeoGebra export without refitting the original preview.
+- Add synthetic compiler, validation, corrected-base handoff and display regressions. Unsupported requests still stop without automatic paid retries; this does not add circle intersections or claim mathematical correctness.
+
+## 阅读分享图注归属 / Shared diagram captions · 2026-10-05
+- 同时附带原题重绘与辅助线图时，已在第一步显示的原图标记与图注不再重复；只附带第二步时仍保留完整条件，第二步独有图注不丢弃。
+- 辅助构造的步骤说明放在第二步图下；阅读页、文字分享及长图使用同一份展示内容，勾选切换立即同步。
+- 隐藏人工补充序号及较新说明优先的来源标签，但保留正文、摘要提示及待核对状态；不修改保存的证据、两阶段底图或AI优先级。
+- Deduplicate only already-visible source captions, retain auxiliary construction descriptions beneath stage two, and keep standalone SVGs self-contained. No new AI calls or data migration.
+
+## 底图纠正重生成维护 / Base correction regeneration · 2026-10-05
+- 拆分两阶段提示词，避免第一步纠正被第二步不可变坐标约束阻止；保留原图方向与题设保护。
+- 第一阶段纠正携带可修改的上一版底图作对照，不误作第二阶段锁定层；继续以原题、原图和人工纠正为依据，不发送答案/解析或自动重试收费请求。
+- 重生成进度、任务受理和结果反馈显示在图下纠正按钮附近；旧图保留到成功返回，新结果须重新核对锁定。
+- 区分实际绘图变化与仅标题/图注变化；相同点位、连线和图内标记明确提示未确认纠正完成，保留手动再生成入口。
+- Include the editable previous base in correction requests, show progress beside the initiating control, and warn when only captions change. Preserve first/second-stage isolation and explicit user confirmation; add UI and persistent-job regression coverage.
+## 识图JSON兼容维护 / Transcription JSON compatibility · 2026-10-05
+- 识图、补读及共用入口接受单个完整JSON前后的非结构性说明；闭合公式内受限处理常见LaTeX漏转义，避免解析失败及控制字符静默损坏公式。
+- 保留严格字段/角证据校验、未闭合思考与截断拒绝；不猜缺失题设，不增加修复AI调用，不改变ScanDex配置格式。
+- 统一提示词JSON序列化示例，补齐多协议、持久化调用链和公式保真的回归；开发边界见`docs/ai-image-pipeline.md`。
+- Add bounded model-content normalization without repairing incomplete output or weakening geometry validation; keep correctly encoded formulas intact and add synthetic protocol/worker regression coverage.
+
 ## 原图标记与角标核对复用 / Diagram markings and evidence · 2026-10-05
 - 两阶段几何重绘保留原图角号、明确角值、边长及图下注释；复杂或不确定标记使用图注兜底，不把猜测作为题设。
 - 会话重绘复用已有识图题设与角标核对，区分机器记录、独立AI核对和人工修订/补充；不增加识图调用，不凭射线猜角区。

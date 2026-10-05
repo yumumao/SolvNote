@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { JSON_OUTPUT_RULES, parseModelJSON } from "./json";
 import { generateGradeInstruction, geometryConstructionInstruction } from "../ai/prompts";
 import { AIError } from "../ai/transport";
 import { AngleSchema, GeometrySchema, RegionSchema } from "./geometry-schema";
@@ -125,12 +126,8 @@ const DecisionPayloadSchema = z.preprocess(value => {
 export const DecisionSchema = DecisionPayloadSchema;
 export function parseJSON<T>(raw: string, schema: z.ZodType<T>): T {
     if (raw.length > 180000) throw new AIError("AI_RESPONSE_ERROR", true, 0, "JSON_TOO_LARGE");
-    // Some compatible providers put a thinking block in message.content. Strip
-    // only CLOSED leading blocks, never strings inside the actual JSON payload.
-    const text = raw.trim().replace(/^(?:<think>[\s\S]*?<\/think>\s*)+/i, "")
-        .replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     let value: unknown;
-    try { value = JSON.parse(text); }
+    try { value = parseModelJSON(raw); }
     catch { throw new AIError("AI_RESPONSE_ERROR", true, 0, "JSON_INVALID"); }
     const result = schema.safeParse(value);
     if (!result.success) {
@@ -198,7 +195,8 @@ ${DIAGRAM_EVIDENCE}
 【转录格式与作答证据】
 text用Markdown完整保留原题各小问、选项、表格的所有行列、单位与注释；公式用LaTeX，行内$...$、独立公式$$...$$。复杂表格可加结构说明，不得省略单元格。
 将学生作答、草稿、圈选和批改痕迹与原题分开标注并忠实记录到text/facts，供文字解题模型判断错因；不要把学生写下的内容混入题目已知条件，不在转录阶段评判对错或推断未写的步骤。确实可见空白才记未作答，无法辨认则说明不确定。
-JSON中反斜杠必须转义一次，例如{"text":"$\\frac{1}{2}$"}，JSON解码后应为单反斜杠LaTeX；换行使用JSON的\n，不要输出代码围栏。`;
+JSON中反斜杠必须转义一次，例如{"text":"$\\frac{1}{2}$"}，JSON解码后应为单反斜杠LaTeX；换行使用JSON的\n，不要输出代码围栏。
+${JSON_OUTPUT_RULES}`;
 export function solvePrompt(grade?: string | null, review = false, language: "zh" | "en" = "zh") {
     return `你负责准确解题及后续问答。${review ? "这是独立复核，验证候选答案而非盲从。" : ""}
 ${language === "en" ? "Explain in English; translate the section headings below but preserve the original question and options." : "讲解使用简体中文，保留原题语言和选项。"}
@@ -245,4 +243,5 @@ const NOTEBOOK_TEACHING_REQUIREMENTS = String.raw`
 【数学与JSON格式】
 所有字段的数学表达使用LaTeX：行内$...$，独立公式$$...$$；分数、根号、上下标、角度和几何符号保留准确。表格中的公式同样如此。
 输出仍是严格JSON，必须进行JSON转义一次。例如{"answerText":"$\\frac{1}{2}$"}，解码后为单反斜杠LaTeX。换行用JSON的\n，不双重转义成正文里的字面换行；不要沿用旧XML标签格式。
+${JSON_OUTPUT_RULES}
 `;

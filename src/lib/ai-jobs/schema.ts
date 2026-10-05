@@ -8,6 +8,7 @@ export const JobInputSchema = z
         confirmIllustration: z.literal(true).optional(),
         illustrationRatio: z.enum(["1:1","16:9","4:3","3:2","2:3","3:4","9:16"]).optional(),
         drawingPlan: ConstructionSchema.optional(),
+        drawingPreviousBase: ConstructionSchema.refine(plan => plan.steps.length === 0, "PREVIOUS_BASE_MUST_NOT_HAVE_STEPS").optional(),
         drawingEvidence: DrawingEvidenceSchema.optional(),
         drawingRevision: z.number().int().min(1).optional(),
         confirmImageEdit: z.literal(true).optional(),
@@ -51,6 +52,8 @@ export const JobInputSchema = z
         errorItemId: z.string().max(100).optional(),
     })
     .superRefine((v, ctx) => {
+        if (v.drawingPreviousBase && v.drawingPlan)
+            ctx.addIssue({ code: "custom", message: "PREVIOUS_AND_LOCKED_BASE_CONFLICT" });
         if (!v.questionText.trim() && !v.imageBase64)
             ctx.addIssue({ code: "custom", message: "MISSING_QUESTION" });
         if (

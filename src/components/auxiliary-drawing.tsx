@@ -13,6 +13,7 @@ import {ConstructionSchema,compileConstruction,type ConstructionPlan} from "@/li
 import {GeogebraDemo} from "./geogebra-demo";
 import {ConstructionDiagram} from "./construction-diagram";
 import {Button} from "./ui/button";
+import {sameBaseDrawing} from "@/lib/ai-drawing/base-comparison";
 import {AIWorkProgress} from "./ai-work-progress";
 export type DrawingResult={type:"construction";plan:ConstructionPlan}|{type:"image_edit";imageDataUrl:string;modelName?:string;providerName?:string};
 type EditorSettings={enabled:boolean;revision:number;modelName:string|null;providerName:string|null};
@@ -95,27 +96,31 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         return ()=>view?.removeEventListener("keydown",escape,true);
     },[editingOpen]);
     const [progressLabel,setProgressLabel]=useState("作图");
+    const [baseFeedbackAt,setBaseFeedbackAt]=useState<"initial"|"correction">("initial");
     const pending=useRef(false),baseStale=!!base && baseSource!==source,stale=!!plan && planSource!==solution;
     useEffect(()=>{onShareDrawings?.({questionText,answerText,analysis,image,basePlan:!baseStale?base:undefined,auxiliaryPlan:!baseStale&&!stale?plan:undefined})},[onShareDrawings,questionText,answerText,analysis,image,base,plan,baseStale,stale]);
     useEffect(()=>()=>onShareDrawings?.(null),[onShareDrawings]);
     const usableBase=!!base&&!baseStale&&baseConfirmed;
     async function settingsLoad(){try{setSettings(await apiClient.get<EditorSettings>("/api/ai/drawing-settings"));}catch{setMessage("无法读取图片编辑设置，请刷新后重试。");}}
-    async function generate(phase:"base"|"auxiliary"|"image_edit"){
+    async function generate(phase:"base"|"auxiliary"|"image_edit",fromCorrection=false){
         if(pending.current||disabled||illustrating)return;
         if(phase==="auxiliary" && (!usableBase||!answerText.trim()))return;
         if(phase==="image_edit" && (!confirmed||!settings?.enabled||!plan||stale||baseStale||!image))return;
         const notice=phase==="base"?"第一步让AI只读取当前原题和原图，生成底图供你核对，不生成辅助线；答案与解析只保存用于后续步骤。可能产生费用，继续？":phase==="auxiliary"?"第二步发送已核对的固定底图和当前解答，只生成新增辅助步骤，不重建或改写原图。可能产生费用，继续？":"图片模型会生成整张派生图，不能保证原图像素或方向不变。这不是锁定底图模式，可能额外收费。继续？";
         if(!window.confirm(notice))return;
+        if(phase==="base"){setBaseFeedbackAt(fromCorrection?"correction":"initial");setBaseConfirmed(false);}
         pending.current=true;setBusy(true);setProgressLabel(phase==="base"?"原题底图生成":phase==="auxiliary"?"辅助线方案生成":"整图编辑");setJobId("");setMessage("正在提交作图请求，尚未确认受理。请暂勿离开或重复点击；取得任务编号后才可到任务页取回。");
         try{
             const body=phase==="base"
-                ? {questionText,answerText,analysis,drawingCorrection:correction,...(drawingEvidence?{drawingEvidence}:{}),...(image?{imageBase64:image}:{})}
+                ? {questionText,answerText,analysis,drawingCorrection:correction,...(base?{drawingPreviousBase:base}:{}),...(drawingEvidence?{drawingEvidence}:{}),...(image?{imageBase64:image}:{})}
                 : {questionText,answerText,analysis,...(image?{imageBase64:image}:{}),drawingPlan:phase==="auxiliary"?base:plan,...(phase==="image_edit"?{drawingRevision:settings!.revision,confirmImageEdit:true}:{})};
             const r=await apiClient.post<DrawingResult>(`/api/ai/drawing/${phase==="image_edit"?"image_edit":"construction"}`,body,{onJobAccepted:id=>{setJobId(id);setMessage("作图任务已受理，离开页面不会取消后台处理。可通过下方本次任务链接查看进度和取回图形；未保存草稿不会自动恢复。");}});
+            let unchangedBase=false;
             if(r.type==="construction"){
                 const parsed=ConstructionSchema.parse(r.plan);compileConstruction(parsed);
                 if(phase==="base"){
                     if(parsed.steps.length)throw new Error("Unexpected source operations");
+                    unchangedBase=!!base&&sameBaseDrawing(base,parsed);
                     setBase(parsed);setBaseSource(source);setBaseImage(image);setBaseConfirmed(false);setPlan(undefined);setPlanSource("");
                 }else{
                     // Defense in depth: even a malformed successful HTTP response cannot replace the visible base.
@@ -126,7 +131,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
                 setConfirmed(false);setEdited(undefined);
             }else if(phase==="image_edit")setEdited(r);
             else throw new Error("Unexpected drawing result");
-            setMessage(phase==="base"?"原题底图已生成。请先对照原图核对方向、点位及已有边，再勾选锁定并添加辅助线。此底图任务保留24小时，可到任务详情取回后继续，无需重新生成；取回图形不等于恢复当前编辑页或未保存草稿。":phase==="image_edit"?"AI整图编辑已完成。此派生图可能改变原图，请独立核对，不属于锁定底图模式。":"已完成。原题底图未被改写；任务结果保留24小时，可取回而无需重新生成。离开前请下载示意图，或保留全部步骤到题目并点击保存。");
+            setMessage(phase==="base"&&unchangedBase?"AI已返回本次重生成结果，但绘图内容与上一版相同（点位、连线和图内标记未变化）；标题或图注可能已更新，不代表底图已纠正。请核对后补充具体点位、方向或连接关系，再按需重新生成；不会自动重试收费。":phase==="base"?"原题底图已生成。请先对照原图核对方向、点位及已有边，再勾选锁定并添加辅助线。此底图任务保留24小时，可到任务详情取回后继续，无需重新生成；取回图形不等于恢复当前编辑页或未保存草稿。":phase==="image_edit"?"AI整图编辑已完成。此派生图可能改变原图，请独立核对，不属于锁定底图模式。":"已完成。原题底图未被改写；任务结果保留24小时，可取回而无需重新生成。离开前请下载示意图，或保留全部步骤到题目并点击保存。");
         }catch(error){const data=error instanceof ApiError && error.data && typeof error.data==="object"?error.data:undefined;setMessage(drawingFailureMessage(data && "message" in data?data.message:undefined,data && "diagnostic" in data?data.diagnostic:undefined));}finally{pending.current=false;setBusy(false);}
     }
     const workFeedback=<>
@@ -138,11 +143,12 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
     return <section className="border rounded-lg p-4 space-y-3"><h3 className="font-semibold">几何辅助线（可选）</h3><p className="text-sm text-muted-foreground">无需Gemini或生图API，复用现有文字/识图模型。分两次调用AI（均可能收费）：先重建原题底图，人工核对后锁定，再只添加辅助点和辅助线。浏览器免费绘制本地示意图，不是在原图像素上叠线；第二步不能修改、旋转或重新缩放底图。原图角号、数值等会尽量保留，复杂或待核对的标记见图下图注；请先核对标记与图注，再生成第二步。旧图需重新生成第一步才能补充此前未保存的标记。</p>
         <div data-drawing-stage="base" className="space-y-3">
             <Button variant="outline" disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base")}>第一步：生成原题底图</Button>
-            {progressLabel==="原题底图生成" && workFeedback}
+            {progressLabel==="原题底图生成" && baseFeedbackAt==="initial" && workFeedback}
             {baseStale && <p role="alert">原题、原图或底图纠正说明已修改，下面的底图属于旧版本。请先根据纠正说明重新生成并核对，不能套用旧底图。</p>}
             {base && <ConstructionPreview key={baseSource+"base"} plan={base} originalImage={baseImage} onUseCommands={!plan&&!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}
             <label className="block space-y-1"><span className="text-sm font-medium">原题底图纠正说明（可选）</span><textarea data-drawing-correction value={correction} onChange={e=>setCorrection(e.target.value)} maxLength={10000} rows={3} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="例如：A应在左上角，AB是竖直边；不要把原图整体旋转。"/><span className="text-xs text-muted-foreground">这里只纠正原题图的方向、点位、标签和已有边；输入后必须重新生成并核对底图，不会直接当作解题步骤。</span></label>
-            {baseStale && <Button variant="outline" data-regenerate-base disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base")}>根据纠正说明重新生成原题底图</Button>}
+            {base && (baseStale||correction.trim()||baseFeedbackAt==="correction") && <Button variant="outline" data-regenerate-base disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base",true)}>根据纠正说明重新生成原题底图</Button>}
+            {progressLabel==="原题底图生成" && baseFeedbackAt==="correction" && workFeedback}
         </div>
         {base && <div data-drawing-stage="auxiliary" className="space-y-3 border-t pt-3">
             <label className="flex gap-2"><input data-confirm-base type="checkbox" checked={baseConfirmed&&!baseStale} disabled={disabled||busy||illustrating||baseStale} onChange={e=>setBaseConfirmed(e.target.checked)}/>我已核对原图方向、点位与已有边，锁定此底图</label>

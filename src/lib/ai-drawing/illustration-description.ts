@@ -7,7 +7,7 @@ import {requireLiveAiUser} from "../ai-access/account";
 import {parseJSON} from "../ai-dialogue/protocol";
 import {IllustrationDescriptionSchema,ILLUSTRATION_DESCRIPTION_PROMPT,type IllustrationDescriptionResult} from "./illustration-reference";
 export async function validateDescriptionInput(input:JobInput){
-    if(!input.confirmDescription || !input.imageBase64 || input.questionText.trim() || input.originalImageBase64 || input.drawingPlan || input.errorItemId || input.answerText || input.analysis || input.drawingCorrection || input.review || input.mode!=="direct" || input.confirmIllustration || input.confirmImageEdit)throw Error("INVALID_REQUEST");
+    if(!input.confirmDescription || !input.imageBase64 || input.questionText.trim() || input.originalImageBase64 || input.drawingPlan || input.drawingPreviousBase || input.errorItemId || input.answerText || input.analysis || input.drawingCorrection || input.review || input.mode!=="direct" || input.confirmIllustration || input.confirmImageEdit)throw Error("INVALID_REQUEST");
     const match=/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(input.imageBase64);
     if(!match || match[2].length>8*1024*1024)throw Error("INVALID_REQUEST");
     try{
