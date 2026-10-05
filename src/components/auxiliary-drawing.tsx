@@ -13,6 +13,7 @@ import {ConstructionSchema,compileConstruction,type ConstructionPlan} from "@/li
 import {GeogebraDemo} from "./geogebra-demo";
 import {ConstructionDiagram} from "./construction-diagram";
 import {Button} from "./ui/button";
+import type {BaseDrawingCache} from "@/lib/ai-drawing/base-reuse";
 import {sameBaseDrawing} from "@/lib/ai-drawing/base-comparison";
 import {AIWorkProgress} from "./ai-work-progress";
 export type DrawingResult={type:"construction";plan:ConstructionPlan}|{type:"image_edit";imageDataUrl:string;modelName?:string;providerName?:string};
@@ -68,9 +69,11 @@ function EditedImagePreview({result:r}:{result:Extract<DrawingResult,{type:"imag
         <a className="underline" href={r.imageDataUrl} download="auxiliary-diagram.png">下载辅助线示意图</a>
     </div>;
 }
-export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrection="",drawingEvidence,image,onUseCommands,disabled,initialBase,onShareDrawings}:{questionText:string;answerText:string;analysis:string;drawingCorrection?:string;drawingEvidence?:DrawingEvidence;image?:string|null;onUseCommands?:(commands:string)=>void;disabled?:boolean;initialBase?:ConstructionPlan;onShareDrawings?:(state:DrawingShareState|null)=>void}){
+export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrection="",drawingEvidence,image,onUseCommands,disabled,initialBase,onShareDrawings,baseDrawingCache,baseDrawingVersion=0}:{baseDrawingCache?:BaseDrawingCache;baseDrawingVersion?:number;questionText:string;answerText:string;analysis:string;drawingCorrection?:string;drawingEvidence?:DrawingEvidence;image?:string|null;onUseCommands?:(commands:string)=>void;disabled?:boolean;initialBase?:ConstructionPlan;onShareDrawings?:(state:DrawingShareState|null)=>void}){
     const [correction,setCorrection]=useState(drawingCorrection);
-    const source=JSON.stringify({questionText,image,drawingCorrection:correction,drawingEvidence}),solution=JSON.stringify({questionText,answerText,analysis,image});
+    const baseIdentity={questionText,image,drawingEvidence};
+    const sourceFor=(value:string)=>JSON.stringify({questionText,image,drawingCorrection:value,drawingEvidence});
+    const source=sourceFor(correction),solution=JSON.stringify({questionText,answerText,analysis,image});
     const [base,setBase]=useState<ConstructionPlan|undefined>(initialBase),[baseSource,setBaseSource]=useState(initialBase?source:""),[baseImage,setBaseImage]=useState(image);
     const [baseConfirmed,setBaseConfirmed]=useState(false),[plan,setPlan]=useState<ConstructionPlan>(),[planSource,setPlanSource]=useState("");
     const [settings,setSettings]=useState<EditorSettings>(),[confirmed,setConfirmed]=useState(false),[edited,setEdited]=useState<Extract<DrawingResult,{type:"image_edit"}>>();
@@ -106,9 +109,20 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         if(pending.current||disabled||illustrating)return;
         if(phase==="auxiliary" && (!usableBase||!answerText.trim()))return;
         if(phase==="image_edit" && (!confirmed||!settings?.enabled||!plan||stale||baseStale||!image))return;
+        // Reuse is opt-in via this first-step click only. Correction/regeneration always remains a real request.
+        if(phase==="base" && !fromCorrection && !base){
+            const reused=baseDrawingCache?.lookup(baseIdentity,correction);
+            if(reused){
+                setCorrection(reused.correction);setBase(reused.plan);setBaseSource(sourceFor(reused.correction));setBaseImage(image);
+                setBaseConfirmed(false);setPlan(undefined);setPlanSource("");setConfirmed(false);setEdited(undefined);
+                setBaseFeedbackAt("initial");setProgressLabel("原题底图生成");setJobId("");
+                setMessage("已复用同一原题的已有底图及纠正说明，本次未调用AI、未产生新的作图费用。请核对并锁定后，再按当前新题解生成第二步辅助线；旧辅助线不会复用。");
+                return;
+            }
+        }
         const notice=phase==="base"?"第一步让AI只读取当前原题和原图，生成底图供你核对，不生成辅助线；答案与解析只保存用于后续步骤。可能产生费用，继续？":phase==="auxiliary"?"第二步发送已核对的固定底图和当前解答，只生成新增辅助步骤，不重建或改写原图。可能产生费用，继续？":"图片模型会生成整张派生图，不能保证原图像素或方向不变。这不是锁定底图模式，可能额外收费。继续？";
         if(!window.confirm(notice))return;
-        if(phase==="base"){setBaseFeedbackAt(fromCorrection?"correction":"initial");setBaseConfirmed(false);}
+        if(phase==="base"){baseDrawingCache?.invalidate(baseIdentity,baseDrawingVersion);setBaseFeedbackAt(fromCorrection?"correction":"initial");setBaseConfirmed(false);}
         pending.current=true;setBusy(true);setProgressLabel(phase==="base"?"原题底图生成":phase==="auxiliary"?"辅助线方案生成":"整图编辑");setJobId("");setMessage("正在提交作图请求，尚未确认受理。请暂勿离开或重复点击；取得任务编号后才可到任务页取回。");
         try{
             const body=phase==="base"
@@ -121,6 +135,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
                 if(phase==="base"){
                     if(parsed.steps.length)throw new Error("Unexpected source operations");
                     unchangedBase=!!base&&sameBaseDrawing(base,parsed);
+                    baseDrawingCache?.remember(baseIdentity,{plan:parsed,correction},baseDrawingVersion);
                     setBase(parsed);setBaseSource(source);setBaseImage(image);setBaseConfirmed(false);setPlan(undefined);setPlanSource("");
                 }else{
                     // Defense in depth: even a malformed successful HTTP response cannot replace the visible base.
@@ -140,13 +155,13 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         {jobId && <p className="text-sm"><Link className="underline" href={`/ai-tasks?job=${encodeURIComponent(jobId)}`}>查看/取回本次作图任务</Link>（可复制此链接，24小时内登录同一账号打开）</p>}
         {message && <p role="status" className="text-sm">{message} <Link className="underline" href="/ai-tasks">我的AI任务/调用记录</Link></p>}
     </>;
-    return <section className="border rounded-lg p-4 space-y-3"><h3 className="font-semibold">几何辅助线（可选）</h3><p className="text-sm text-muted-foreground">无需Gemini或生图API，复用现有文字/识图模型。分两次调用AI（均可能收费）：先重建原题底图，人工核对后锁定，再只添加辅助点和辅助线。浏览器免费绘制本地示意图，不是在原图像素上叠线；第二步不能修改、旋转或重新缩放底图。原图角号、数值等会尽量保留，复杂或待核对的标记见图下图注；请先核对标记与图注，再生成第二步。旧图需重新生成第一步才能补充此前未保存的标记。</p>
+    return <section className="border rounded-lg p-4 space-y-3"><h3 className="font-semibold">几何辅助线（可选）</h3><p className="text-sm text-muted-foreground">无需Gemini或生图API，复用现有文字/识图模型。通常分两次调用AI（均可能收费）：先重建原题底图，人工核对后锁定，再只添加辅助点和辅助线。同一会话本页换解法时，点击第一步可复用条件未变的已有底图，不额外调用AI；第二步仍需按新解法生成。浏览器免费绘制本地示意图，不是在原图像素上叠线；第二步不能修改、旋转或重新缩放底图。原图角号、数值等会尽量保留，复杂或待核对的标记见图下图注；请先核对标记与图注，再生成第二步。旧图需重新生成第一步才能补充此前未保存的标记。</p>
         <div data-drawing-stage="base" className="space-y-3">
             <Button variant="outline" disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base")}>第一步：生成原题底图</Button>
             {progressLabel==="原题底图生成" && baseFeedbackAt==="initial" && workFeedback}
             {baseStale && <p role="alert">原题、原图或底图纠正说明已修改，下面的底图属于旧版本。请先根据纠正说明重新生成并核对，不能套用旧底图。</p>}
             {base && <ConstructionPreview key={baseSource+"base"} plan={base} originalImage={baseImage} onUseCommands={!plan&&!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}
-            <label className="block space-y-1"><span className="text-sm font-medium">原题底图纠正说明（可选）</span><textarea data-drawing-correction value={correction} onChange={e=>setCorrection(e.target.value)} maxLength={10000} rows={3} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="例如：A应在左上角，AB是竖直边；不要把原图整体旋转。"/><span className="text-xs text-muted-foreground">这里只纠正原题图的方向、点位、标签和已有边；输入后必须重新生成并核对底图，不会直接当作解题步骤。</span></label>
+            <label className="block space-y-1"><span className="text-sm font-medium">原题底图纠正说明（可选）</span><textarea data-drawing-correction value={correction} onChange={e=>{baseDrawingCache?.invalidate(baseIdentity,baseDrawingVersion);setCorrection(e.target.value);}} maxLength={10000} rows={3} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="例如：A应在左上角，AB是竖直边；不要把原图整体旋转。"/><span className="text-xs text-muted-foreground">这里只纠正原题图的方向、点位、标签和已有边；输入后必须重新生成并核对底图，不会直接当作解题步骤。</span></label>
             {base && (baseStale||correction.trim()||baseFeedbackAt==="correction") && <Button variant="outline" data-regenerate-base disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base",true)}>根据纠正说明重新生成原题底图</Button>}
             {progressLabel==="原题底图生成" && baseFeedbackAt==="correction" && workFeedback}
         </div>

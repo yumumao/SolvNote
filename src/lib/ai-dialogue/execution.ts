@@ -59,9 +59,10 @@ export async function executeDialogueJob(job: AiJob, owner: string, controller: 
         if(controller.signal.aborted)throw new AIError("AI_ACCEPTANCE_UNKNOWN");
         await prisma.$transaction(async tx=>{
             await guard(tx,job,owner);
-            const text=result.state==="answered"?JSON.stringify(payload.result):payload.questions.join("\n");
+            const kind=result.state!=="answered"?"notice":result.discussion!==undefined?"discussion":"answer";
+            const text=result.state==="answered"?(result.discussion ?? JSON.stringify(payload.result)):payload.questions.join("\n");
             if(payload.messages.length>=300 || payload.messages.reduce((n,m)=>n+m.text.length,0)+text.length>180000)throw new AIError("AI_CONTEXT_LIMIT");
-            payload.messages.push({id:randomUUID(),kind:result.state==="answered"?"answer":"notice",text,round:c.roundsUsed+1,at:new Date().toISOString()});
+            payload.messages.push({id:randomUUID(),kind,text,round:c.roundsUsed+1,at:new Date().toISOString()});
             const changed=await tx.aiConversation.updateMany({where:{id:c.id,activeJobId:job.id,state:"active"},data:{
                 state:result.state,payload:protect(payload),revision:{increment:1},roundElapsedMs:{increment:elapsed()},
                 ...(result.state==="answered"?{roundsUsed:{increment:1},roundOpen:false}:{}),

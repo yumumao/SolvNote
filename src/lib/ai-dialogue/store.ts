@@ -16,6 +16,8 @@ const requestKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
 const ActionSchema = z.object({
     kind: z.enum(["save", "continue", "retry", "ask", "cancel", "extend_rounds", "extend_budget"]),
     confirmRisk: z.literal(true).optional(),
+    // Optional, not defaulted: preserve receipts for old clients without this field.
+    followUpMode: z.enum(["auto", "explain", "update"]).optional(),
     correctedTranscript: z.string().trim().min(1).max(40000).optional(),
     revision: z.number().int().min(0), text: z.string().trim().max(10000).default(""),
     imageBase64: z.string().max(12 * 1024 * 1024).optional(),
@@ -88,6 +90,8 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
     requestKey.parse(key);const action=ActionSchema.parse(raw);
     if(action.kind==="retry" && !action.confirmRisk)dialogueError("DIALOGUE_RETRY_CONFIRM_REQUIRED",400);
     if(action.kind!=="retry" && action.confirmRisk)dialogueError("INVALID_REQUEST",400);
+    if(action.followUpMode && action.kind!=="ask")dialogueError("INVALID_REQUEST",400);
+    if(action.followUpMode==="explain" && (action.imageBase64 || action.correctedTranscript))dialogueError("INVALID_REQUEST",400);
     await requireLiveAiUser(userId);
     // Cancellation is always permitted; all content-changing/resuming actions revalidate prior contributors.
     if(action.kind!=="cancel"){
@@ -140,25 +144,39 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
                 data.roundOpen=true;data.roundAttempts=0;data.roundElapsedMs=0;
                 data.attemptLimit=DEFAULT_ATTEMPTS;data.timeLimitMs=DEFAULT_ACTIVE_MS;
                 p.solverId=undefined;p.rereads=0;p.reviewDone=false;p.questions=[];
+                p.followUpMode=action.followUpMode ?? "auto";
+                p.followUpTranscript=undefined;p.followUpClarifications=undefined;
             }else{
                 if(!c.roundOpen || (c.state==="cancelled" && !["save","retry"].includes(action.kind)))dialogueError("DIALOGUE_NOT_READY");
                 if(action.kind==="save" && !action.text && !action.imageBase64 && !action.correctedTranscript)dialogueError("DIALOGUE_TEXT_REQUIRED",400);
             }
             if(action.originalImageBase64 && !action.imageBase64)dialogueError("INVALID_IMAGE",400);
             if(action.imageBase64){
+                p.followUpMode="update";p.followUpTranscript=undefined;p.followUpClarifications=undefined;
                 p.input=JobInputSchema.parse({...p.input,mode:"transcribe",imageBase64:action.imageBase64,originalImageBase64:action.originalImageBase64 || action.imageBase64});
                 p.transcript=undefined;p.transcriptClarifications=undefined;p.reviewDone=false;p.geometryCheckStarted=false;p.geometryChecked=false;p.userCorrectedTranscript=false;
             }
             if(action.correctedTranscript){
+                p.followUpMode="update";p.followUpTranscript=undefined;p.followUpClarifications=undefined;
                 p.transcript={text:action.correctedTranscript,facts:[],uncertainties:[],missingInformation:[]};
                 p.transcriptClarifications=undefined;p.userCorrectedTranscript=true;p.geometryCheckStarted=false;p.geometryChecked=false;p.reviewDone=false;p.questions=[];
                 message(p,"clarification",`人工已完整修订题设，以本版为准：\n${action.correctedTranscript}`,c.roundsUsed+1);
             }
             // Added text in an open round reviews the current transcription without
             // replacing it. A new image already invalidated the old source above.
+            // Auto-mode supplements remain round-local until the reply chooses
+            // a replacement. Detail-only clarification never changes the source.
             if(action.text && p.transcript && action.kind!=="ask"){
-                p.transcriptClarifications=[...(p.transcriptClarifications || []),action.text];
-                p.reviewDone=false;p.questions=[];
+                if(p.result && p.followUpMode!=="update"){
+                    if(p.followUpMode!=="explain"){
+                        p.followUpTranscript=undefined;
+                        p.followUpClarifications=[...(p.followUpClarifications ?? []),action.text];
+                    }
+                }else{
+                    p.followUpTranscript=undefined;
+                    p.transcriptClarifications=[...(p.transcriptClarifications || []),action.text];
+                    p.reviewDone=false;p.questions=[];
+                }
             }
             if(action.text || action.imageBase64)
                 message(p,action.kind==="ask"?"question":"clarification",action.text || "用户补充了题图，旧转录失效。",c.roundsUsed+1);
