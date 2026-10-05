@@ -1,7 +1,8 @@
 import type { AIProvider, AIModel } from "../ai-config/schema";
 import { AIUrlError } from "../ai-url";
-import type { AIDiagnostic } from "./diagnostics";
+import type { AIDiagnostic, AITransportDiagnostics } from "./diagnostics";
 export class AIError extends Error {
+    public transport?: AITransportDiagnostics;
     constructor(
         public code: string,
         public fallback = false,
@@ -126,6 +127,7 @@ export async function decodeResponse(
     res: Response,
     protocol: AIProvider["protocol"],
     signal?: AbortSignal,
+    onChunk?: (bytes: number) => void,
 ): Promise<string> {
     const reader = res.body?.getReader();
     if (!reader) throw new AIError("AI_RESPONSE_ERROR", true, 0, "RESPONSE_EMPTY");
@@ -195,6 +197,7 @@ export async function decodeResponse(
                 text += decoder.decode();
                 break;
             }
+            onChunk?.(value.byteLength);
             size += value.byteLength;
             if (size > 4 * 1024 * 1024)
                 throw new AIError("AI_RESPONSE_TOO_LARGE", true);
@@ -271,6 +274,9 @@ export async function sendAI(
 ): Promise<string> {
     const request = buildRequest(p, m, prompt, text, image, detailImages, profile);
     let responseReceived = false;
+    const start=Date.now();
+    const elapsed=()=>Math.max(0,Date.now()-start);
+    const timing:AITransportDiagnostics={protocol:p.protocol,requestedStream:request.body.stream===true,receivedBytes:0,elapsedMs:0};
     try {
         const { withSafeAIResponse } = await import("../ai-url");
         return await withSafeAIResponse(request.url, {
@@ -281,6 +287,8 @@ export async function sendAI(
             redirect: "error",
         }, async (res) => {
             responseReceived = true;
+            timing.headersMs=elapsed();
+            timing.responseFormat=res.headers.get("content-type")?.toLowerCase().includes("text/event-stream")?"sse":"json";
             if (!res.ok) {
                 const after = res.headers.get("retry-after");
                 const ms = after
@@ -300,13 +308,17 @@ export async function sendAI(
                         : 0,
                 );
             }
-            return await decodeResponse(res, p.protocol, signal);
+            return await decodeResponse(res, p.protocol, signal, bytes=>{
+                if(bytes<=0)return;
+                timing.firstByteMs ??= elapsed();timing.lastByteMs=elapsed();timing.receivedBytes+=bytes;
+            });
         });
     } catch (e) {
-        if (e instanceof AIError) throw e;
         // Only the URL gate proves rejection before dispatch. Network failures remain unknown.
-        if (e instanceof AIUrlError)
-            throw new AIError("AI_ENDPOINT_REJECTED", true);
-        throw new AIError("AI_ACCEPTANCE_UNKNOWN", false, 0, interrupted(signal, responseReceived));
+        const failure=e instanceof AIError?e:e instanceof AIUrlError
+            ? new AIError("AI_ENDPOINT_REJECTED",true)
+            : new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,interrupted(signal,responseReceived));
+        failure.transport={...timing,elapsedMs:elapsed()};
+        throw failure;
     }
 }

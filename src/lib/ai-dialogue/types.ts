@@ -1,4 +1,4 @@
-import type { AIDiagnostic } from "../ai/diagnostics";
+import type { AIDiagnostic, AITransportDiagnostics } from "../ai/diagnostics";
 import type { JobInput } from "../ai-jobs/schema";
 import type { ParsedQuestion } from "../ai/types";
 import type { GeometryEvidence } from "./geometry-schema";
@@ -19,7 +19,7 @@ export type DialoguePayload = {
     reviewDone?: boolean;
     result?: ParsedQuestion;
 };
-export type StepMetadata = { diagnostic?: AIDiagnostic; round?: number; stage: string; modelName: string; model: string; providerName: string; withImage: boolean; detailImageCount?:number; questions: string[] };
+export type StepMetadata = { transport?: AITransportDiagnostics; diagnostic?: AIDiagnostic; round?: number; stage: string; modelName: string; model: string; providerName: string; withImage: boolean; detailImageCount?:number; questions: string[] };
 export type ProcessStep = Partial<StepMetadata> & { id?: string; modelId: string; state: string; errorCode?: string | null; startedAt: string | Date; finishedAt: string | Date | null; round?: number };
 export type DialogueView = {
     id: string; state: string; revision: number; roundsUsed: number; roundLimit: number; roundOpen: boolean;

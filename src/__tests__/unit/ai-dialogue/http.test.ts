@@ -30,3 +30,8 @@ describe("dialogue HTTP error mapping", () => {
         expect(await body(response)).toEqual({ message: "DIALOGUE_UNAVAILABLE" });
     });
 });
+
+ it("requires explicit recovery confirmation without hiding the client error",async()=>{
+  const response=dialogueHTTPError(new AIRequestError(400,"DIALOGUE_RETRY_CONFIRM_REQUIRED"));
+  expect(response.status).toBe(400);expect(await body(response)).toEqual({message:"DIALOGUE_RETRY_CONFIRM_REQUIRED"});
+ });

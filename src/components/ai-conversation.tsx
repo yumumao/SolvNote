@@ -12,7 +12,7 @@ import { GeometryEvidence } from "./geometry-evidence";
 import { AIProcess } from "./ai-process";
 import { Button } from "./ui/button";
 export const dialogueLabels:Record<string,string>={active:"排队/AI处理中",awaiting_user:"等待你补充信息",answered:"本轮已完成",failed:"本轮停止，可检查后继续",unknown:"上游状态不确定，禁止自动重发",cancelling:"正在取消",cancelled:"已取消"};
-const errors:Record<string,string>={DIALOGUE_CONFLICT:"状态已更新，请刷新后重新操作。",DIALOGUE_ROUND_LIMIT:"问答轮数已用完。管理员可确认后扩额。",DIALOGUE_CALL_LIMIT:"本轮AI调用或活动时间已用完。可先保存补充条件，管理员确认扩额后再继续。",DIALOGUE_UNKNOWN:"上游可能已受理，请先核查供应商计费记录；不会自动重发。",DIALOGUE_BUSY:"任务仍在执行，请等它完成或先取消。",ORIGIN_REJECTED:"页面地址与服务端正式地址不一致，请检查NEXTAUTH_URL并重新登录。",FORBIDDEN:"当前账户无权限。",DIALOGUE_CONTEXT_LIMIT:"上下文已达上限，请保存已有结果。",DIALOGUE_STORAGE_LIMIT:"未结束会话已达100条，请先完成或取消部分会话；无需删除已完成历史。"};
+const errors:Record<string,string>={DIALOGUE_CONFLICT:"状态已更新，请刷新后重新操作。",DIALOGUE_ROUND_LIMIT:"问答轮数已用完。管理员可确认后扩额。",DIALOGUE_CALL_LIMIT:"本轮AI调用或活动时间已用完。可先保存补充条件，管理员确认扩额后再继续。",DIALOGUE_UNKNOWN:"上游可能已受理，请先核查供应商计费记录；不会自动重发。",DIALOGUE_BUSY:"任务仍在执行，请等它完成或先取消。",DIALOGUE_RETRY_CONFIRM_REQUIRED:"请先确认手动重试及可能重复计费的风险。",ORIGIN_REJECTED:"页面地址与服务端正式地址不一致，请检查NEXTAUTH_URL并重新登录。",FORBIDDEN:"当前账户无权限。",DIALOGUE_CONTEXT_LIMIT:"上下文已达上限，请保存已有结果。",DIALOGUE_STORAGE_LIMIT:"未结束会话已达100条，请先完成或取消部分会话；无需删除已完成历史。"};
 function errorText(e:unknown){const code=e instanceof ApiError?(e.data as {message?:string})?.message:undefined;return errors[code || ""] || "操作未确认成功，请先刷新核对，避免重复提交。";}
 export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubjectId?:string}){
     const router=useRouter();
@@ -44,15 +44,16 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         const timer=setInterval(()=>{if(!viewRef.current || ["active","cancelling"].includes(viewRef.current.state))void reload();},2000);
         return()=>{generation.current=gen+1;clearTimeout(start);clearInterval(timer);};
     },[reload]);
-    async function act(kind:string,amount?:number,correction?:{correctedTranscript:string;revision:number}){
+    async function act(kind:string,amount?:number,correction?:{correctedTranscript:string;revision:number},includeDraft=false){
         if(!view || operation.current || reading)return;
         if(kind==="extend_rounds" && !window.confirm("追加5轮问答？后续调用可能产生费用，扩额不会立即调用AI。"))return;
         if(kind==="extend_budget" && !window.confirm("当前轮追加4次AI调用和10分钟活动时间？可能增加费用，扩额后仍需手动继续。"))return;
-        if(kind==="cancel" && !window.confirm("取消当前轮？不能保证撤销上游已受理请求或退费，取消后不能直接续发本轮。"))return;
+        if(kind==="cancel" && !window.confirm("取消当前轮？不能保证撤销上游已受理请求或退费，停止后仍可保存修订，确认费用风险后才能手动恢复。"))return;
+        if(kind==="retry" && !window.confirm("手动重试当前未完成步骤？将保留已完成的识图/角标核对结果。上游可能仍在处理或已收费，重试可能重复计费；请先核对供应商记录。本次使用已保存内容（若提交修订，则采用本次修订），不会重置本轮预算。补读或独立复核中断时，将从解题步骤继续。"))return;
         operation.current=true;setBusy(true);setError("");
         try{
-            const include=["save","continue","ask"].includes(kind);
-            await apiClient.post(url,{kind,revision:view.revision,...(correction?correction:include?{text,...(image?{imageBase64:image,originalImageBase64:original || image}:{})}:{}),...(amount?{amount}:{})});
+            const include=["save","continue","ask"].includes(kind) || (kind==="retry" && includeDraft);
+            await apiClient.post(url,{kind,revision:view.revision,...(kind==="retry"?{confirmRisk:true}:{}),...(correction?correction:include?{text,...(image?{imageBase64:image,originalImageBase64:original || image}:{})}:{}),...(amount?{amount}:{})});
             if(include && !correction){if(image)first.current=true;setText("");setImage(undefined);setOriginal(undefined);}await reload();return true;
         }catch(e){setError(errorText(e));}finally{operation.current=false;setBusy(false);}
     }
@@ -68,7 +69,8 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         catch(e){setError(errorText(e));}finally{operation.current=false;setBusy(false);}
     }
     if(!view)return <section className="border rounded p-4"><p role="status">{error || "正在恢复解题会话…"}</p><Button variant="outline" onClick={()=>void reload()}>重新读取</Button></section>;
-    const active=["active","cancelling"].includes(view.state),locked=["unknown","cancelled"].includes(view.state);
+    const active=["active","cancelling"].includes(view.state);
+    const recoverable=view.roundOpen && ["unknown","cancelled","failed"].includes(view.state);
     const exhausted=view.roundAttempts>=view.attemptLimit || view.roundElapsedMs>=view.timeLimitMs;
     const wrongNotebook=!!(expectedSubjectId && view.input.subjectId && expectedSubjectId!==view.input.subjectId);
     const messages = view.messages.map(message => ({ message, result: message.kind === "answer" ? readQuestionResult(message.text) : undefined }));
@@ -84,15 +86,16 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         {wrongNotebook && <p role="alert">此会话属于其他错题本，请从独立会话页返回原错题本编辑器。</p>}
         {error && <p role="alert" className="text-destructive">{error}</p>}
         {view.errorCode && <p className="border rounded p-3">本轮停止原因：{view.errorCode}。{view.state==="unknown"?"请求可能已收费，请先核对供应商记录，不会自动重发。":"已保留转录和调用记录；继续会消耗本轮剩余预算。"}</p>}
+        {recoverable && <div className="border rounded p-3 space-y-2"><p className="text-sm">已保留完成的步骤，可以先修订题设或仅保存补充，不调用AI。重新调用需要手动确认，可能重复计费；不会自动重发。</p><Button variant="outline" disabled={busy||reading||exhausted||wrongNotebook} onClick={()=>void act("retry")}>手动重试未完成步骤</Button><p className="text-xs text-muted-foreground">此按钮使用已保存内容；下方尚未提交的补充不会一并发送。</p></div>}
         {messages.map(({message:m,result})=>result ? <details key={m.id} className="p-4 rounded-lg border bg-muted/20">
             <summary className="cursor-pointer text-sm">第{m.round}轮 · AI回复（历史快照，点击查看）</summary><QuestionResultPreview result={result}/>
         </details> : <article key={m.id} className="p-4 rounded-lg border">
             <h3 className="text-xs text-muted-foreground mb-3">第{m.round}轮 · {m.kind==="answer"?"AI回复":m.kind==="notice"?"提示/待确认":"你的输入"}</h3><MarkdownRenderer content={m.text}/>
         </article>)}
-        {view.transcript && <GeometryEvidence transcript={view.transcript} image={view.input.originalImageBase64||view.input.imageBase64} revision={view.revision} corrected={view.userCorrectedTranscript} clarifications={view.transcriptClarifications} verified={view.geometryChecked} disabled={busy||active||locked||reading||wrongNotebook} answered={view.state==="answered"} onCorrect={async(value,revision,saveOnly)=>{if(!saveOnly&&!window.confirm(view.state==="answered"?"采用完整修订并重新解题？将计新一轮，可能产生费用。":"采用完整修订并继续当前轮？可能产生AI调用费用。"))return false;return act(saveOnly?"save":view.state==="answered"?"ask":"continue",undefined,{correctedTranscript:value,revision});}}/>}
+        {view.transcript && <GeometryEvidence transcript={view.transcript} image={view.input.originalImageBase64||view.input.imageBase64} revision={view.revision} corrected={view.userCorrectedTranscript} clarifications={view.transcriptClarifications} verified={view.geometryChecked} disabled={busy||active||reading||wrongNotebook} answered={view.state==="answered"} resumeDisabled={exhausted && view.roundOpen} onCorrect={async(value,revision,saveOnly)=>{if(!saveOnly&&!recoverable&&!window.confirm(view.state==="answered"?"采用完整修订并重新解题？将计新一轮，可能产生费用。":"采用完整修订并继续当前轮？可能产生AI调用费用。"))return false;return act(saveOnly?"save":recoverable?"retry":view.state==="answered"?"ask":"continue",undefined,{correctedTranscript:value,revision});}}/>}
         {answerSnapshot && !wrongNotebook && <ConversationAnswerEditor key={id} id={id} snapshot={answerSnapshot} expectedSubjectId={expectedSubjectId}/>}
         {!!view.questions.length && <aside className="border rounded-lg p-4 bg-amber-50 dark:bg-amber-950/30"><h3 className="font-semibold">请核对或补充</h3><ul className="list-disc pl-5">{view.questions.map((q,i)=><li key={i}>{q}</li>)}</ul><p className="text-sm mt-2">在下方直接补充即可；文字将与当前题设一起核对，不必重抄原题。补图将替换当前题图并重新转录，请提供完整条件。</p></aside>}
-        {!active && !locked && <div className="space-y-3 border rounded-lg p-4">
+        {!active && <div className="space-y-3 border rounded-lg p-4">
             <label className="block">{view.state==="answered"?"继续追问":"补充条件/纠正转录"}<textarea className="w-full min-h-24 border rounded p-2 bg-background" value={text} onChange={e=>setText(e.target.value)} maxLength={10000} disabled={busy || reading}/></label>
             {view.transcript && view.state!=="answered" && <p className="text-sm text-muted-foreground">补充文字视为对当前题设的人工核对，将与已有识图题设一起发送解题；冲突以你的说明为准，无需重新输入完整题设。若仍缺关键条件，AI只会询问具体缺失项。仅保存不会调用AI。</p>}
             <label className="block text-sm">补充完整题图（可选）<input className="block mt-1" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || reading} onChange={e=>void upload(e.target.files?.[0])}/></label>
@@ -100,7 +103,7 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
             <div className="flex flex-wrap gap-2">
                 {view.state==="answered"?<Button disabled={busy || reading || !text.trim() || view.roundsUsed>=view.roundLimit} onClick={()=>void act("ask")}>发送追问（新一轮）</Button>:<>
                     <Button variant="outline" disabled={busy || reading || (!text.trim()&&!image)} onClick={()=>void act("save")}>仅保存补充，不调用AI</Button>
-                    <Button disabled={busy || reading || exhausted} onClick={()=>void act("continue")}>继续当前轮</Button>
+                    {recoverable?<Button disabled={busy || reading || exhausted || wrongNotebook} onClick={()=>void act("retry",undefined,undefined,true)}>确认补充并手动恢复</Button>:<Button disabled={busy || reading || exhausted} onClick={()=>void act("continue")}>继续当前轮</Button>}
                 </>}
             </div>
             {exhausted && view.roundOpen && <p>本轮调用或时间额度耗尽，可先保存补充条件；管理员确认扩额后才能继续。</p>}
@@ -109,11 +112,11 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         <div className="flex flex-wrap gap-2">
             {!active && <Button variant="outline" disabled={busy} onClick={()=>void remove()}>删除会话</Button>}
             {active && <Button variant="outline" disabled={busy || view.state==="cancelling"} onClick={()=>void act("cancel")}>取消当前轮</Button>}
-            {view.isAdmin && !active && !locked && <>
+            {view.isAdmin && !active && <>
                 {view.roundLimit<=95 && <Button variant="outline" disabled={busy} onClick={()=>void act("extend_rounds",5)}>管理员：增加5轮</Button>}
                 {view.roundOpen && view.attemptLimit<=14 && view.timeLimitMs<=1200000 && <Button variant="outline" disabled={busy} onClick={()=>void act("extend_budget")}>管理员：本轮增加调用预算</Button>}
             </>}
         </div>
-        <AIProcess steps={view.steps} messages={view.messages} active={view.state==="active"&&!error}/>
+        <AIProcess steps={view.steps} messages={view.messages} active={view.state==="active"&&!error} retry={recoverable?{disabled:busy||reading||exhausted||wrongNotebook,onRetry:()=>void act("retry")}:undefined}/>
     </section>;
 }

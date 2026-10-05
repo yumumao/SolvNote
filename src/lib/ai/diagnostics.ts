@@ -30,3 +30,25 @@ export function diagnosticMessage(value: unknown): string | undefined {
     return typeof value === "string" && Object.hasOwn(AI_DIAGNOSTIC_MESSAGES, value)
         ? AI_DIAGNOSTIC_MESSAGES[value as AIDiagnostic] : undefined;
 }
+
+/** Timing/counts only; never copy arbitrary properties from errors into the audit. */
+export type AITransportDiagnostics = {
+    protocol: "chat" | "azure" | "responses" | "responses_codex" | "gemini";
+    requestedStream: boolean;
+    responseFormat?: "sse" | "json";
+    headersMs?: number;
+    firstByteMs?: number;
+    lastByteMs?: number;
+    receivedBytes: number;
+    elapsedMs: number;
+};
+export function safeTransportDiagnostics(value: unknown): AITransportDiagnostics | undefined {
+    if(!value || typeof value!=="object")return;
+    const v=value as Record<string,unknown>;
+    const bounded=(n:unknown,max:number):n is number=>typeof n==="number" && Number.isSafeInteger(n) && n>=0 && n<=max;
+    if(!["chat","azure","responses","responses_codex","gemini"].includes(String(v.protocol)) || typeof v.requestedStream!=="boolean" || !bounded(v.receivedBytes,32*1024*1024) || !bounded(v.elapsedMs,3600000))return;
+    const out:AITransportDiagnostics={protocol:v.protocol as AITransportDiagnostics["protocol"],requestedStream:v.requestedStream,receivedBytes:v.receivedBytes,elapsedMs:v.elapsedMs};
+    if(v.responseFormat==="sse" || v.responseFormat==="json")out.responseFormat=v.responseFormat;
+    for(const key of ["headersMs","firstByteMs","lastByteMs"] as const)if(bounded(v[key],3600000))out[key]=v[key];
+    return out;
+}

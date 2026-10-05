@@ -1,10 +1,11 @@
 "use client";
+import { Button } from "./ui/button";
 import { AIWorkProgress } from "./ai-work-progress";
 import { diagnosticMessage } from "@/lib/ai/diagnostics";
 import type { DialogueMessage, ProcessStep } from "@/lib/ai-dialogue/types";
 const stages:Record<string,string>={illustration_describe:"原图配图描述（不解题）",illustration:"MiniMax创作配图",geometry_check:"关键角标局部核对",construction:"辅助线构造",image_edit:"AI辅助线改图",recognize:"识图转录",solve:"解题",reread:"定向补读/核图",review:"独立复核"};
 const states:Record<string,string>={running:"进行中",success:"完成",failed:"失败",unknown:"状态不确定，未自动重发",cancelled:"已取消"};
-export function AIProcess({steps,messages,active=false}:{steps:ProcessStep[];messages:DialogueMessage[];active?:boolean}){
+export function AIProcess({steps,messages,active=false,retry}:{steps:ProcessStep[];messages:DialogueMessage[];active?:boolean;retry?:{disabled:boolean;onRetry:()=>void}}){
     // Never animate an older running snapshot after a newer attempt has ended.
     const latest=steps.reduce<ProcessStep|undefined>((last,step)=>!last||new Date(step.startedAt).getTime()>=new Date(last.startedAt).getTime()?step:last,undefined);
     const events=[...steps.map((s,i)=>({key:s.id || `step-${i}`,at:s.startedAt,step:s,message:null})),
@@ -21,6 +22,8 @@ export function AIProcess({steps,messages,active=false}:{steps:ProcessStep[];mes
                 {diagnosticMessage(e.step.diagnostic) ? <p className="text-amber-700">{diagnosticMessage(e.step.diagnostic)}</p>
                     : e.step.errorCode === "AI_RESPONSE_ERROR" ? <p className="text-amber-700">本次记录未记录细分原因，不能仅凭此错误码判断是模型不可用、空回复还是格式问题。</p>
                     : e.step.errorCode === "AI_ACCEPTANCE_UNKNOWN" ? <p className="text-amber-700">本次记录未记录细分原因，无法确认服务端是否完成，系统不会自动重发。</p> : null}
+                {retry && e.step===latest && e.step.state!=="success" && <Button className="mt-2" size="sm" variant="outline" disabled={retry.disabled} onClick={retry.onRetry}>{e.step.stage==="review" || e.step.stage==="reread"?"手动恢复：从解题步骤继续":`手动重试：${stages[e.step.stage || ""] || "当前步骤"}`}</Button>}
+                {e.step.transport && <p className="text-xs text-muted-foreground">接收诊断：{e.step.transport.protocol} · 请求{e.step.transport.requestedStream?"流式":"非流式"} / 响应{e.step.transport.responseFormat || "尚无响应头"} · 响应头{e.step.transport.headersMs===undefined?"未收到":`${(e.step.transport.headersMs/1000).toFixed(1)}秒`} · 首段正文{e.step.transport.firstByteMs===undefined?"未收到":`${(e.step.transport.firstByteMs/1000).toFixed(1)}秒`} · 已收{e.step.transport.receivedBytes}字节{e.step.transport.lastByteMs!==undefined?` · 最后接收于${(e.step.transport.lastByteMs/1000).toFixed(1)}秒`:""} · 总耗时{(e.step.transport.elapsedMs/1000).toFixed(1)}秒（仅时长和字节数，不记录正文）</p>}
                 <AIWorkProgress compact active={active&&e.step===latest&&e.step.state==="running"&&!e.step.finishedAt} label={stages[e.step.stage || ""] || "AI处理"}/>
                 {!!e.step.detailImageCount && <p>附加原图局部：{e.step.detailImageCount}张</p>}
                 {!!e.step.questions?.length && <p>本次核对：{e.step.questions.join("；")}</p>}

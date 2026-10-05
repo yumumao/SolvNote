@@ -3,7 +3,7 @@ import {useState} from "react";
 import type {Transcript} from "@/lib/ai-dialogue/types";
 import {MarkdownRenderer} from "./markdown-renderer";
 import {Button} from "./ui/button";
-export function GeometryEvidence({transcript,image,revision,corrected=false,clarifications=[],verified=false,disabled=false,answered=false,onCorrect}:{transcript:Transcript;image?:string;revision:number;corrected?:boolean;clarifications?:string[];verified?:boolean;disabled?:boolean;answered?:boolean;onCorrect:(text:string,revision:number,saveOnly:boolean)=>Promise<boolean|undefined>}){
+export function GeometryEvidence({transcript,image,revision,corrected=false,clarifications=[],verified=false,disabled=false,answered=false,resumeDisabled=false,onCorrect}:{transcript:Transcript;image?:string;revision:number;corrected?:boolean;clarifications?:string[];verified?:boolean;disabled?:boolean;answered?:boolean;resumeDisabled?:boolean;onCorrect:(text:string,revision:number,saveOnly:boolean)=>Promise<boolean|undefined>}){
     const [draft,setDraft]=useState<string|null>(null),[baseRevision,setBaseRevision]=useState(revision);
     const stale=draft!==null && revision!==baseRevision;
     async function submit(saveOnly:boolean){if(draft!==null && !stale && await onCorrect(draft,baseRevision,saveOnly))setDraft(null);}
@@ -17,7 +17,7 @@ export function GeometryEvidence({transcript,image,revision,corrected=false,clar
             <label className="block">完整修订题设<textarea aria-label="完整修订题设" className="w-full min-h-40 border rounded p-2 bg-background" maxLength={40000} value={draft} disabled={disabled} onChange={e=>setDraft(e.target.value)}/></label>
             <p className="text-sm">这是完整替换，请保留所有必要条件。仅保存不调用AI；{answered?"已完成的答案重新解题将计新一轮。":"继续当前轮会调用AI，但不另扣问答轮数。"}</p>
             {stale && <p role="alert">会话版本已更新，草稿仍保留。请复制草稿后取消修订、核对新版再提交。</p>}
-            <div className="flex gap-2 flex-wrap"><Button disabled={disabled||stale||!draft.trim()} onClick={()=>void submit(false)}>采用修订并继续{answered?"（新一轮）":""}</Button>{!answered && <Button variant="outline" disabled={disabled||stale||!draft.trim()} onClick={()=>void submit(true)}>仅保存修订</Button>}<Button variant="ghost" disabled={disabled} onClick={()=>setDraft(null)}>取消修订</Button></div>
+            <div className="flex gap-2 flex-wrap"><Button disabled={disabled||resumeDisabled||stale||!draft.trim()} onClick={()=>void submit(false)}>采用修订并继续{answered?"（新一轮）":""}</Button>{!answered && <Button variant="outline" disabled={disabled||stale||!draft.trim()} onClick={()=>void submit(true)}>仅保存修订</Button>}<Button variant="ghost" disabled={disabled} onClick={()=>setDraft(null)}>取消修订</Button></div>
         </div>}
     </section>;
 }
