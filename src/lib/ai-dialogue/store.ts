@@ -14,7 +14,8 @@ import { assertConversationModelAccess } from "../ai-access/runtime";
 type Tx = Prisma.TransactionClient;
 const requestKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
 const ActionSchema = z.object({
-    kind: z.enum(["save", "continue", "ask", "cancel", "extend_rounds", "extend_budget"]),
+    kind: z.enum(["save", "continue", "retry", "ask", "cancel", "extend_rounds", "extend_budget"]),
+    confirmRisk: z.literal(true).optional(),
     correctedTranscript: z.string().trim().min(1).max(40000).optional(),
     revision: z.number().int().min(0), text: z.string().trim().max(10000).default(""),
     imageBase64: z.string().max(12 * 1024 * 1024).optional(),
@@ -85,6 +86,8 @@ export async function createConversation(userId: string, raw: unknown, key: stri
 }
 export async function actConversation(userId:string,id:string,raw:unknown,key:string) {
     requestKey.parse(key);const action=ActionSchema.parse(raw);
+    if(action.kind==="retry" && !action.confirmRisk)dialogueError("DIALOGUE_RETRY_CONFIRM_REQUIRED",400);
+    if(action.kind!=="retry" && action.confirmRisk)dialogueError("INVALID_REQUEST",400);
     await requireLiveAiUser(userId);
     // Cancellation is always permitted; all content-changing/resuming actions revalidate prior contributors.
     if(action.kind!=="cancel"){
@@ -99,10 +102,14 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
         if(old){if(JSON.stringify(unprotect(old.payload))!==JSON.stringify(action))dialogueError("REQUEST_CONFLICT");return;}
         if(c.revision!==action.revision)dialogueError("DIALOGUE_CONFLICT");
         const p=unprotect<DialoguePayload>(c.payload);
-        if(action.correctedTranscript && (!["save","continue","ask"].includes(action.kind) || action.imageBase64))dialogueError("INVALID_REQUEST",400);
+        if(action.correctedTranscript && (!["save","continue","retry","ask"].includes(action.kind) || action.imageBase64))dialogueError("INVALID_REQUEST",400);
         const data:Prisma.AiConversationUpdateManyMutationInput={revision:{increment:1}};
         const active = c.state === "active" || c.state === "cancelling";
-        if(c.state === "unknown")dialogueError("DIALOGUE_UNKNOWN");
+        // Terminal conversations retain checkpoints. Saving is not permission to resubmit.
+        // A stale terminal state must not race any still-active local worker/job.
+        if(!active && await tx.aiJob.count({where:{conversationId:id,state:{in:["pending","running"]}}}))dialogueError("DIALOGUE_BUSY");
+        if(c.state === "unknown" && !["save","retry","extend_rounds","extend_budget"].includes(action.kind))dialogueError("DIALOGUE_UNKNOWN");
+        if(action.kind==="retry" && !active && (!["unknown","failed","cancelled"].includes(c.state) || !c.roundOpen))dialogueError("DIALOGUE_NOT_READY");
         if(action.kind==="extend_rounds" || action.kind==="extend_budget"){
             if(user.role!=="admin")dialogueError("FORBIDDEN",403);
             if(active)dialogueError("DIALOGUE_BUSY");
@@ -134,7 +141,7 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
                 data.attemptLimit=DEFAULT_ATTEMPTS;data.timeLimitMs=DEFAULT_ACTIVE_MS;
                 p.solverId=undefined;p.rereads=0;p.reviewDone=false;p.questions=[];
             }else{
-                if(!c.roundOpen || c.state==="cancelled")dialogueError("DIALOGUE_NOT_READY");
+                if(!c.roundOpen || (c.state==="cancelled" && !["save","retry"].includes(action.kind)))dialogueError("DIALOGUE_NOT_READY");
                 if(action.kind==="save" && !action.text && !action.imageBase64 && !action.correctedTranscript)dialogueError("DIALOGUE_TEXT_REQUIRED",400);
             }
             if(action.originalImageBase64 && !action.imageBase64)dialogueError("INVALID_IMAGE",400);
@@ -155,6 +162,16 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
             }
             if(action.text || action.imageBase64)
                 message(p,action.kind==="ask"?"question":"clarification",action.text || "用户补充了题图，旧转录失效。",c.roundsUsed+1);
+            if(action.kind==="retry"){
+                // Only explicit recovery can re-arm the interrupted geometry read. This
+                // does not refund any paid attempt or active time, nor alter old audit rows.
+                const last=await tx.aiAttempt.findFirst({where:{job:{conversationId:id}},orderBy:[{startedAt:"desc"},{id:"desc"}]});
+                const lastStage=last?.metadata?unprotect<StepMetadata>(last.metadata).stage:undefined;
+                if(lastStage==="geometry_check" && last?.state!=="success" && p.geometryCheckStarted && !p.geometryChecked && !p.userCorrectedTranscript && !p.transcriptClarifications?.length){
+                    p.geometryCheckStarted=false;p.rereads=Math.max(0,p.rereads-1);
+                }
+                message(p,"notice","用户已确认手动恢复：上游可能仍在处理，重发可能重复计费；保留已完成检查点及本轮已用预算。",c.roundsUsed+1);
+            }
             if(action.kind!=="save"){
                 if(action.kind!=="ask" && (c.roundAttempts>=c.attemptLimit || c.roundElapsedMs>=c.timeLimitMs))dialogueError("DIALOGUE_CALL_LIMIT");
                 await queueRoom(tx,userId);

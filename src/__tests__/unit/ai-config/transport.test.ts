@@ -314,3 +314,18 @@ describe("sendAI acceptance boundary", () => {
         expect(network.fetch).toHaveBeenCalledTimes(1);
     });
 });
+
+
+describe("safe receive timing for online-only failures",()=>{
+ it.each([false,true])("distinguishes headers-only from a partially received body (partial=%s)",async partial=>{
+  const controller=new AbortController();const fragment='data: {"choices":[{"index":0,"delta":{"content":"synthetic partial"}}]}\n\n';
+  network.fetch.mockResolvedValue(new Response(new ReadableStream({start(c){if(partial)c.enqueue(new TextEncoder().encode(fragment));}}),{headers:{"content-type":"text/event-stream"}}));
+  const timer=setTimeout(()=>controller.abort(new DOMException("timeout","TimeoutError")),40);
+  try{
+   const error=await sendAI(p,m,"private prompt","private input",undefined,controller.signal,[],"transcription").catch(e=>e);
+   expect(error).toMatchObject({code:"AI_ACCEPTANCE_UNKNOWN",fallback:false,diagnostic:"TIMEOUT_READING_BODY",transport:{protocol:"chat",requestedStream:true,responseFormat:"sse",headersMs:expect.any(Number),receivedBytes:partial?new TextEncoder().encode(fragment).length:0,elapsedMs:expect.any(Number)}});
+   if(partial)expect(error.transport.firstByteMs).toEqual(expect.any(Number));else expect(error.transport).not.toHaveProperty("firstByteMs");
+   expect(JSON.stringify(error.transport)).not.toMatch(/private|synthetic|apiKey|baseUrl|example\.com/);expect(network.fetch).toHaveBeenCalledTimes(1);
+  }finally{clearTimeout(timer);}
+ });
+});

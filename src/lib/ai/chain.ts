@@ -1,5 +1,5 @@
 import type { StepMetadata } from "../ai-dialogue/types";
-import { diagnosticMessage } from "./diagnostics";
+import { diagnosticMessage, safeTransportDiagnostics } from "./diagnostics";
 import { protect } from "../ai-config/vault";
 import type { AIModel, AIProvider } from "../ai-config/schema";
 import { createHash } from "node:crypto";
@@ -175,14 +175,15 @@ export async function callChain<T>(
                     ? error
                     : new AIError("AI_RESPONSE_ERROR", true);
             last = e;
+            const transport=safeTransportDiagnostics(e.transport);
             if (attempt)
                 await finishAttempt(
                     run,
                     attempt.id,
                     e.code === "AI_ACCEPTANCE_UNKNOWN" ? "unknown" : "failed",
                     e.code,
-                    diagnosticMessage(e.diagnostic)
-                        ? { ...attemptMetadata(run, model, provider, attachedImage, options), diagnostic: e.diagnostic }
+                    diagnosticMessage(e.diagnostic) || transport
+                        ? { ...attemptMetadata(run, model, provider, attachedImage, options), ...(diagnosticMessage(e.diagnostic)?{diagnostic:e.diagnostic}:{}), ...(transport?{transport}:{}) }
                         : undefined,
                 );
             if (e.retryAfterMs)

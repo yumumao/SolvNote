@@ -26,7 +26,7 @@ describe("conversation controls and process",()=>{
  it("shows real model/connection and lets the user save without dispatch",async()=>{await render();expect(host.textContent).toContain("Test connection");expect(host.textContent).toContain("Text solver");await fill("length 5");await click("仅保存补充，不调用AI");expect(mocks.post.mock.calls[0][1]).toEqual({kind:"save",revision:2,text:"length 5"});});
  it("does not poll while awaiting human input, and restores images only once",async()=>{await render();expect(mocks.get).toHaveBeenCalledWith("/api/ai/conversations/fixture?restore=1");await act(async()=>{await vi.advanceTimersByTimeAsync(6000);});expect(mocks.get).toHaveBeenCalledTimes(1);await click("刷新状态");expect(mocks.get.mock.calls[1][0]).toBe("/api/ai/conversations/fixture");});
  it("polls active work and offers cancellation instead of another submission",async()=>{c.state="active";await render();expect(host.querySelector("textarea")).toBeNull();await act(async()=>{await vi.advanceTimersByTimeAsync(2200);});expect(mocks.get.mock.calls.length).toBeGreaterThan(1);await click("取消当前轮");expect(mocks.post.mock.calls[0][1].kind).toBe("cancel");});
- it("does not offer automatic continuation after unknown acceptance",async()=>{c.state="unknown";c.errorCode="AI_ACCEPTANCE_UNKNOWN";await render();expect(host.querySelector("textarea")).toBeNull();expect(button("继续当前轮")).toBeUndefined();expect(host.textContent).toContain("不会自动重发");expect(mocks.post).not.toHaveBeenCalled();});
+ it("does not offer automatic continuation after unknown acceptance",async()=>{c.state="unknown";c.errorCode="AI_ACCEPTANCE_UNKNOWN";await render();expect(host.querySelector("textarea")).not.toBeNull();expect(button("继续当前轮")).toBeUndefined();expect(host.textContent).toContain("不会自动重发");expect(mocks.post).not.toHaveBeenCalled();});
  it("blocks spent budgets, but still allows saving human corrections",async()=>{c.roundAttempts=6;await render();expect(button("继续当前轮").disabled).toBe(true);await fill("new condition");expect(button("仅保存补充，不调用AI").disabled).toBe(false);expect(button("管理员：本轮增加调用预算")).toBeUndefined();});
  it("requires an explicit admin warning before extending budget",async()=>{c.isAdmin=true;c.roundAttempts=6;await render();vi.mocked(window.confirm).mockReturnValueOnce(false);await click("管理员：本轮增加调用预算");expect(mocks.post).not.toHaveBeenCalled();await click("管理员：本轮增加调用预算");expect(mocks.post.mock.calls[0][1].kind).toBe("extend_budget");});
  it("blocks a new question at the completed-round limit",async()=>{c.state="answered";c.roundOpen=false;c.roundsUsed=10;await render();await fill("why");expect(button("发送追问（新一轮）").disabled).toBe(true);expect(host.textContent).toContain("已到问答轮数上限");});
@@ -122,5 +122,33 @@ describe("current process step activity",()=>{
  it.each(['answered','cancelling','cancelled','unknown'] as const)("stops the step indicator when parent state becomes %s despite a stale running step",async(state)=>{
   c.state="active";c.steps[0].state="running";c.steps[0].finishedAt=null;await render();expect(host.querySelector('[role=progressbar]')).not.toBeNull();
   c.state=state;c.revision++;await act(async()=>{await vi.advanceTimersByTimeAsync(2100)});expect(host.querySelector('[role=progressbar]')).toBeNull();
+ });
+});
+
+describe("manual recovery controls",()=>{
+ it.each(["unknown","cancelled"])("keeps the human editor available after %s",async state=>{
+  c.state=state;c.errorCode="AI_ACCEPTANCE_UNKNOWN";c.transcript={text:"synthetic transcription",facts:[],uncertainties:[],missingInformation:[]};
+  await render();expect(button("修订完整题设").disabled).toBe(false);await click("修订完整题设");
+  expect(button("仅保存修订").disabled).toBe(false);await click("仅保存修订");
+  expect(mocks.post.mock.calls[0][1]).toMatchObject({kind:"save",correctedTranscript:"synthetic transcription"});
+ });
+ it("requires a risk confirmation and suppresses repeated clicks",async()=>{
+  c.state="unknown";c.steps[0].state="unknown";c.steps[0].diagnostic="TIMEOUT_READING_BODY";
+  await render();const retry=[...host.querySelectorAll("button")].find(b=>b.textContent?.includes("手动重试"))!;
+  expect(retry).toBeDefined();vi.mocked(window.confirm).mockReturnValueOnce(false);await act(async()=>retry.click());expect(mocks.post).not.toHaveBeenCalled();
+  let release!:()=>void;mocks.post.mockImplementationOnce(()=>new Promise<void>(resolve=>{release=resolve;}));
+  await act(async()=>{retry.click();retry.click();});expect(mocks.post).toHaveBeenCalledTimes(1);
+  expect(mocks.post.mock.calls[0][1]).toEqual({kind:"retry",revision:2,confirmRisk:true});expect(window.confirm).toHaveBeenLastCalledWith(expect.stringContaining("重复计费"));
+  await act(async()=>release());
+ });
+ it("can submit a correction using confirmed recovery, not the locked continue action",async()=>{
+  c.state="cancelled";c.transcript={text:"human checked synthetic conditions",facts:[],uncertainties:[],missingInformation:[]};
+  await render();await click("修订完整题设");await click("采用修订并继续");
+  expect(mocks.post.mock.calls[0][1]).toMatchObject({kind:"retry",confirmRisk:true,correctedTranscript:c.transcript.text});
+ });
+ it("blocks exhausted paid recovery but not correction saving",async()=>{
+  c.state="unknown";c.roundAttempts=6;c.transcript={text:"synthetic",facts:[],uncertainties:[],missingInformation:[]};
+  await render();await click("修订完整题设");expect(button("采用修订并继续").disabled).toBe(true);expect(button("仅保存修订").disabled).toBe(false);
+  expect([...host.querySelectorAll("button")].filter(b=>b.textContent?.includes("手动重试")).every(b=>b.disabled)).toBe(true);
  });
 });

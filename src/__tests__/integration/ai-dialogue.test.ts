@@ -518,3 +518,97 @@ describe.sequential("bounded JSON compatibility in the persistent dialogue worke
   expect(shared.send).toHaveBeenCalledTimes(1);
  });
 });
+
+describe.sequential("explicit recovery after interrupted AI stages",()=>{
+ async function interrupt(stage:"recognize"|"geometry_check"|"solve",user="alice"){
+  const geometry={regions:[],angles:[{label:"1",vertex:"Q",arms:["P","R"]}]};
+  if(stage!=="recognize")shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,...(stage==="geometry_check"?{geometry}:{})}));
+  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"TIMEOUT_READING_BODY"));
+  const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
+  const id=await createConversation(user,{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());await processOne();return id;
+ }
+ it.each(["recognize","geometry_check","solve"] as const)("retries only the interrupted %s checkpoint after explicit confirmation",async stage=>{
+  const id=await interrupt(stage),old=await view(id);expect(old.state).toBe("unknown");
+  await expect(act(id,"retry")).rejects.toThrow("DIALOGUE_RETRY_CONFIRM_REQUIRED");
+  await expect(act(id,"continue")).rejects.toThrow("DIALOGUE_UNKNOWN");
+  expect(await processOne()).toBe(false);
+  const sent=shared.send.mock.calls.length;
+  if(stage==="geometry_check")shared.send.mockResolvedValueOnce(JSON.stringify({angles:[{label:"1",vertex:"Q",arms:["P","R"]}],geometryUncertainties:[]}));
+  const action={kind:"retry",revision:old.revision,confirmRisk:true};const k=key();
+  await actConversation("alice",id,action,k);await actConversation("alice",id,action,k);
+  expect(await shared.db.aiJob.count({where:{conversationId:id,state:"pending"}})).toBe(1);
+  expect((await view(id)).roundAttempts).toBe(old.roundAttempts);
+  await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(c.roundsUsed).toBe(1);
+  expect(c.steps[sent].stage).toBe(stage);expect(c.steps[sent-1]).toMatchObject({state:"unknown",diagnostic:"TIMEOUT_READING_BODY"});
+  expect(c.steps.filter(s=>s.stage==="recognize")).toHaveLength(stage==="recognize"?2:1);
+ });
+ it("preserves successful recognition and geometry when retrying a failed solve",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,geometry:{regions:[],angles:[{label:"1",vertex:"Q",arms:["P","R"]}]}}));
+  shared.send.mockResolvedValueOnce(JSON.stringify({angles:[{label:"1",vertex:"Q",arms:["P","R"]}],geometryUncertainties:[]}));
+  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"TIMEOUT_READING_BODY"));
+  const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
+  const id=await createConversation("alice",{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());await processOne();
+  const before=await view(id);expect(before.state).toBe("unknown");expect(before.geometryChecked).toBe(true);
+  await act(id,"retry",{confirmRisk:true});await processOne();const after=await view(id);
+  expect(after.state).toBe("answered");expect(after.geometryChecked).toBe(true);expect(after.transcript).toEqual(before.transcript);
+  expect(after.steps.map(s=>s.stage)).toEqual(["recognize","geometry_check","solve","solve"]);
+  expect(shared.send).toHaveBeenCalledTimes(4);expect(after.roundAttempts).toBe(4);
+ });
+ it("explicitly recovers a queued cancellation with no previous attempts",async()=>{
+  const id=await create();await act(id,"cancel");const before=await view(id);
+  expect(before.state).toBe("cancelled");expect(before.steps).toHaveLength(0);
+  await act(id,"retry",{confirmRisk:true});await processOne();const after=await view(id);
+  expect(after.state).toBe("answered");expect(after.steps.map(s=>s.stage)).toEqual(["recognize","solve"]);
+  expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+ it.each(["unknown","cancelled"])("allows saving a full correction while %s without dispatch or budget reset",async state=>{
+  const id=await interrupt("geometry_check");await shared.db.aiConversation.update({where:{id},data:{state}});
+  const before=await view(id),sent=shared.send.mock.calls.length;
+  await act(id,"save",{correctedTranscript:"synthetic human complete correction"});
+  const saved=await view(id);expect(saved.state).toBe(state);expect(saved.transcript?.text).toBe("synthetic human complete correction");
+  expect(saved.roundAttempts).toBe(before.roundAttempts);expect(saved.roundElapsedMs).toBe(before.roundElapsedMs);
+  expect(await processOne()).toBe(false);expect(shared.send).toHaveBeenCalledTimes(sent);
+  await act(id,"retry",{confirmRisk:true});await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(c.steps.map(s=>s.stage)).toEqual(["recognize","geometry_check","solve"]);
+  expect(shared.send.mock.calls.at(-1)?.[3]).toContain("synthetic human complete correction");
+ });
+ it("atomically adopts correction and resumes without redoing cancelled geometry",async()=>{
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,geometry:{regions:[],angles:[{label:"1",vertex:"Q",arms:["P","R"]}]}}));
+  const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
+  const id=await createConversation("alice",{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());shared.send.mockImplementationOnce(async()=>{await act(id,"cancel");throw new AIError("AI_CANCELLED");});await processOne();
+  expect((await view(id)).state).toBe("cancelled");
+  await act(id,"retry",{confirmRisk:true,correctedTranscript:"human supplied angle condition"});await processOne();
+  expect((await view(id)).state).toBe("answered");expect(shared.send).toHaveBeenCalledTimes(3);
+ });
+ it("does not bypass spent call/time budgets but permits no-call saves and admin extension",async()=>{
+  const id=await interrupt("solve","admin");await shared.db.aiConversation.update({where:{id},data:{roundAttempts:6,roundElapsedMs:600000}});
+  await act(id,"save",{text:"human addition"},"admin");
+  await expect(act(id,"retry",{confirmRisk:true},"admin")).rejects.toThrow("DIALOGUE_CALL_LIMIT");
+  await act(id,"extend_budget",{},"admin");expect(shared.send).toHaveBeenCalledTimes(2);
+  await act(id,"retry",{confirmRisk:true},"admin");await processOne();expect((await view(id,"admin")).state).toBe("answered");
+ });
+ it("rejects unconfirmed, stale, active and cross-user recovery without creating jobs",async()=>{
+  const id=await interrupt("solve"),c=await view(id);
+  await expect(actConversation("bob",id,{kind:"retry",revision:c.revision,confirmRisk:true},key())).rejects.toThrow();
+  await expect(actConversation("alice",id,{kind:"retry",revision:c.revision-1,confirmRisk:true},key())).rejects.toThrow("DIALOGUE_CONFLICT");
+  await act(id,"retry",{confirmRisk:true});
+  await expect(act(id,"retry",{confirmRisk:true})).rejects.toThrow("DIALOGUE_BUSY");
+  expect(await shared.db.aiJob.count({where:{conversationId:id,state:"pending"}})).toBe(1);
+ });
+ it("refuses stale terminal snapshots while any job is still pending or running",async()=>{
+  const id=await create();await shared.db.aiConversation.update({where:{id},data:{state:"unknown"}});
+  await expect(act(id,"retry",{confirmRisk:true})).rejects.toThrow("DIALOGUE_BUSY");
+  await expect(act(id,"save",{correctedTranscript:"synthetic correction"})).rejects.toThrow("DIALOGUE_BUSY");
+ });
+});
+
+
+describe.sequential("bounded failure transport telemetry",()=>{
+ it("persists only safe timing fields alongside the unknown attempt",async()=>{
+  const failure=Object.assign(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"TIMEOUT_READING_BODY"),{transport:{protocol:"chat",requestedStream:true,responseFormat:"sse",headersMs:15,firstByteMs:40,lastByteMs:41,receivedBytes:100,elapsedMs:180000,apiKey:"must-not-persist",body:"private"}});
+  shared.send.mockRejectedValueOnce(failure);const id=await create();await processOne();
+  const c=await view(id);expect(c.state).toBe("unknown");expect(c.steps[0]).toMatchObject({transport:{protocol:"chat",receivedBytes:100,headersMs:15}});
+  expect(JSON.stringify(c.steps)).not.toContain("must-not-persist");expect(JSON.stringify(c.steps)).not.toContain('"body"');
+ });
+});
