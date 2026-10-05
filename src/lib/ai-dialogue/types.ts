@@ -3,11 +3,18 @@ import type { JobInput } from "../ai-jobs/schema";
 import type { ParsedQuestion } from "../ai/types";
 import type { GeometryEvidence } from "./geometry-schema";
 export type Transcript = { geometry?:GeometryEvidence; geometryUncertainties?: string[]; text: string; facts: { detail: string; source?: "text" | "image" }[]; uncertainties: string[]; missingInformation: string[] };
-export type DialogueMessage = { id: string; kind: "question" | "clarification" | "answer" | "notice"; text: string; at: string; round: number };
+export type FollowUpMode = "auto" | "explain" | "update";
+export type DialogueMessage = { id: string; kind: "question" | "clarification" | "answer" | "discussion" | "notice"; text: string; at: string; round: number };
 export type DialoguePayload = {
     input: JobInput;
     messages: DialogueMessage[];
+    /** Persisted per round; absent in legacy conversations. Resume never resets it. */
+    followUpMode?: FollowUpMode;
     transcript?: Transcript;
+    /** Round-local reread; never changes the adopted solution until a solved reply. */
+    followUpTranscript?: Transcript;
+    /** Auto-mode supplements become source evidence only if the round replaces the solution. */
+    followUpClarifications?: string[];
     geometryCheckStarted?: boolean;
     geometryChecked?: boolean;
     userCorrectedTranscript?: boolean;
@@ -25,7 +32,11 @@ export type DialogueView = {
     id: string; state: string; revision: number; roundsUsed: number; roundLimit: number; roundOpen: boolean;
     roundAttempts: number; attemptLimit: number; roundElapsedMs: number; timeLimitMs: number;
     isAdmin: boolean; activeJobId: string | null; errorCode?: string | null;
-    transcript?: Transcript; userCorrectedTranscript?: boolean;
+    transcript?: Transcript;
+    /** Round-local reread; never changes the adopted solution until a solved reply. */
+    followUpTranscript?: Transcript;
+    /** Auto-mode supplements become source evidence only if the round replaces the solution. */
+    followUpClarifications?: string[]; userCorrectedTranscript?: boolean;
     /** Human supplements tied to this transcription; cleared when its source is replaced. */
     transcriptClarifications?: string[]; geometryChecked?: boolean;
     input: JobInput; messages: DialogueMessage[]; questions: string[]; result?: ParsedQuestion;

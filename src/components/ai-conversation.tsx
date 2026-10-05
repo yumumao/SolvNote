@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiClient, ApiError } from "@/lib/api-client";
-import type { DialogueView } from "@/lib/ai-dialogue/types";
+import type { DialogueView, FollowUpMode } from "@/lib/ai-dialogue/types";
 import { ConversationAnswerEditor, type AnswerSnapshot } from "./conversation-answer-editor";
 import { processImageFile } from "@/lib/image-utils";
 import { MarkdownRenderer } from "./markdown-renderer";
@@ -18,8 +18,7 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
     const router=useRouter();
     const operation=useRef(false);
     const [answerSnapshot,setAnswerSnapshot]=useState<AnswerSnapshot>();
-    const [original,setOriginal]=useState<string>();
-    const [view,setView]=useState<DialogueView|null>(null),[error,setError]=useState(""),[text,setText]=useState(""),[image,setImage]=useState<string>(),[busy,setBusy]=useState(false),[reading,setReading]=useState(false);
+    const [view,setView]=useState<DialogueView|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false),[reading,setReading]=useState(false);
     const inFlight=useRef(false),generation=useRef(0),first=useRef(true),viewRef=useRef<DialogueView|null>(null);
     const url=`/api/ai/conversations/${encodeURIComponent(id)}`;
     const reload=useCallback(async()=>{
@@ -44,7 +43,7 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         const timer=setInterval(()=>{if(!viewRef.current || ["active","cancelling"].includes(viewRef.current.state))void reload();},2000);
         return()=>{generation.current=gen+1;clearTimeout(start);clearInterval(timer);};
     },[reload]);
-    async function act(kind:string,amount?:number,correction?:{correctedTranscript:string;revision:number},includeDraft=false){
+    async function act(kind:string,amount?:number,correction?:{correctedTranscript:string;revision:number},includeDraft=false,draft?:FollowUpDraft){
         if(!view || operation.current || reading)return;
         if(kind==="extend_rounds" && !window.confirm("追加5轮问答？后续调用可能产生费用，扩额不会立即调用AI。"))return;
         if(kind==="extend_budget" && !window.confirm("当前轮追加4次AI调用和10分钟活动时间？可能增加费用，扩额后仍需手动继续。"))return;
@@ -53,14 +52,9 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         operation.current=true;setBusy(true);setError("");
         try{
             const include=["save","continue","ask"].includes(kind) || (kind==="retry" && includeDraft);
-            await apiClient.post(url,{kind,revision:view.revision,...(kind==="retry"?{confirmRisk:true}:{}),...(correction?correction:include?{text,...(image?{imageBase64:image,originalImageBase64:original || image}:{})}:{}),...(amount?{amount}:{})});
-            if(include && !correction){if(image)first.current=true;setText("");setImage(undefined);setOriginal(undefined);}await reload();return true;
+            await apiClient.post(url,{kind,revision:view.revision,...(kind==="ask"?{followUpMode:correction || draft?.image?"update":draft?.followUpMode || "auto"}:{}),...(kind==="retry"?{confirmRisk:true}:{}),...(correction?correction:include?{text:draft?.text || "",...(draft?.image?{imageBase64:draft.image,originalImageBase64:draft.original || draft.image}:{})}:{}),...(amount?{amount}:{})});
+            if(include && !correction && draft?.image)first.current=true;await reload();return true;
         }catch(e){setError(errorText(e));}finally{operation.current=false;setBusy(false);}
-    }
-    async function upload(file?:File){
-        if(!file)return;
-        if(file.size>8*1024*1024 || !["image/png","image/jpeg","image/webp"].includes(file.type)){setError("请选择8MiB以内的PNG/JPEG/WebP图片。");return;}
-        setReading(true);try{const raw=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>typeof reader.result==="string"?resolve(reader.result):reject(new Error());reader.onerror=()=>reject(new Error());reader.readAsDataURL(file);});setImage(await processImageFile(file));setOriginal(raw);setError("");}catch{setError("图片处理失败。");}finally{setReading(false);}
     }
     async function remove(){
         if(!view || operation.current || !window.confirm("永久删除此会话的题图、问答和AI调用记录？已存入错题本的题目不受影响。"))return;
@@ -74,6 +68,15 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
     const exhausted=view.roundAttempts>=view.attemptLimit || view.roundElapsedMs>=view.timeLimitMs;
     const wrongNotebook=!!(expectedSubjectId && view.input.subjectId && expectedSubjectId!==view.input.subjectId);
     const messages = view.messages.map(message => ({ message, result: message.kind === "answer" ? readQuestionResult(message.text) : undefined }));
+    const firstAnswer = messages.findIndex(({message}) => message.kind === "answer");
+    const initialMessages = firstAnswer < 0 ? messages : messages.slice(0, firstAnswer);
+    const followUpMessages = firstAnswer < 0 ? [] : messages.slice(firstAnswer);
+    const latestAnswerId = messages.findLast(({result}) => result)?.message.id;
+    const renderMessage = ({message:m,result}:typeof messages[number]) => result ? <details key={`${m.id}:${latestAnswerId}`} className={m.id===latestAnswerId?"p-4 rounded-lg border bg-muted/20":"p-4 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/60"}>
+        <summary className="cursor-pointer text-sm">第{m.round}轮 · AI回复（历史快照，点击查看）{m.id===latestAnswerId?" · 最新题解版本":" · 旧题解"}</summary><QuestionResultPreview result={result}/>
+    </details> : <article key={m.id} className="p-4 rounded-lg border">
+        <h3 className="text-xs text-muted-foreground mb-3">第{m.round}轮 · {m.kind==="answer" || m.kind==="discussion"?"AI回复":m.kind==="notice"?"提示/待确认":"你的输入"}</h3><MarkdownRenderer content={m.text}/>
+    </article>;
 
 
     return <section className="space-y-4" aria-label="同题解题会话">
@@ -87,28 +90,12 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         {error && <p role="alert" className="text-destructive">{error}</p>}
         {view.errorCode && <p className="border rounded p-3">本轮停止原因：{view.errorCode}。{view.state==="unknown"?"请求可能已收费，请先核对供应商记录，不会自动重发。":"已保留转录和调用记录；继续会消耗本轮剩余预算。"}</p>}
         {recoverable && <div className="border rounded p-3 space-y-2"><p className="text-sm">已保留完成的步骤，可以先修订题设或仅保存补充，不调用AI。重新调用需要手动确认，可能重复计费；不会自动重发。</p><Button variant="outline" disabled={busy||reading||exhausted||wrongNotebook} onClick={()=>void act("retry")}>手动重试未完成步骤</Button><p className="text-xs text-muted-foreground">此按钮使用已保存内容；下方尚未提交的补充不会一并发送。</p></div>}
-        {messages.map(({message:m,result})=>result ? <details key={m.id} className="p-4 rounded-lg border bg-muted/20">
-            <summary className="cursor-pointer text-sm">第{m.round}轮 · AI回复（历史快照，点击查看）</summary><QuestionResultPreview result={result}/>
-        </details> : <article key={m.id} className="p-4 rounded-lg border">
-            <h3 className="text-xs text-muted-foreground mb-3">第{m.round}轮 · {m.kind==="answer"?"AI回复":m.kind==="notice"?"提示/待确认":"你的输入"}</h3><MarkdownRenderer content={m.text}/>
-        </article>)}
+        {initialMessages.map(renderMessage)}
         {view.transcript && <GeometryEvidence transcript={view.transcript} image={view.input.originalImageBase64||view.input.imageBase64} revision={view.revision} corrected={view.userCorrectedTranscript} clarifications={view.transcriptClarifications} verified={view.geometryChecked} disabled={busy||active||reading||wrongNotebook} answered={view.state==="answered"} resumeDisabled={exhausted && view.roundOpen} onCorrect={async(value,revision,saveOnly)=>{if(!saveOnly&&!recoverable&&!window.confirm(view.state==="answered"?"采用完整修订并重新解题？将计新一轮，可能产生费用。":"采用完整修订并继续当前轮？可能产生AI调用费用。"))return false;return act(saveOnly?"save":recoverable?"retry":view.state==="answered"?"ask":"continue",undefined,{correctedTranscript:value,revision});}}/>}
         {answerSnapshot && !wrongNotebook && <ConversationAnswerEditor key={id} id={id} snapshot={answerSnapshot} expectedSubjectId={expectedSubjectId}/>}
+        {!!followUpMessages.length && <section aria-label="题解版本与追问记录" className="space-y-3"><h3 className="font-semibold">题解版本与追问</h3>{followUpMessages.map(renderMessage)}</section>}
         {!!view.questions.length && <aside className="border rounded-lg p-4 bg-amber-50 dark:bg-amber-950/30"><h3 className="font-semibold">请核对或补充</h3><ul className="list-disc pl-5">{view.questions.map((q,i)=><li key={i}>{q}</li>)}</ul><p className="text-sm mt-2">在下方直接补充即可；文字将与当前题设一起核对，不必重抄原题。补图将替换当前题图并重新转录，请提供完整条件。</p></aside>}
-        {!active && <div className="space-y-3 border rounded-lg p-4">
-            <label className="block">{view.state==="answered"?"继续追问":"补充条件/纠正转录"}<textarea className="w-full min-h-24 border rounded p-2 bg-background" value={text} onChange={e=>setText(e.target.value)} maxLength={10000} disabled={busy || reading}/></label>
-            {view.transcript && view.state!=="answered" && <p className="text-sm text-muted-foreground">补充文字视为对当前题设的人工核对，将与已有识图题设一起发送解题；冲突以你的说明为准，无需重新输入完整题设。若仍缺关键条件，AI只会询问具体缺失项。仅保存不会调用AI。</p>}
-            <label className="block text-sm">补充完整题图（可选）<input className="block mt-1" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || reading} onChange={e=>void upload(e.target.files?.[0])}/></label>
-            {image && <p className="text-sm">已选择新图，提交后替换旧图并重新转录。<button className="underline ml-2" onClick={()=>setImage(undefined)}>移除待提交图片</button></p>}
-            <div className="flex flex-wrap gap-2">
-                {view.state==="answered"?<Button disabled={busy || reading || !text.trim() || view.roundsUsed>=view.roundLimit} onClick={()=>void act("ask")}>发送追问（新一轮）</Button>:<>
-                    <Button variant="outline" disabled={busy || reading || (!text.trim()&&!image)} onClick={()=>void act("save")}>仅保存补充，不调用AI</Button>
-                    {recoverable?<Button disabled={busy || reading || exhausted || wrongNotebook} onClick={()=>void act("retry",undefined,undefined,true)}>确认补充并手动恢复</Button>:<Button disabled={busy || reading || exhausted} onClick={()=>void act("continue")}>继续当前轮</Button>}
-                </>}
-            </div>
-            {exhausted && view.roundOpen && <p>本轮调用或时间额度耗尽，可先保存补充条件；管理员确认扩额后才能继续。</p>}
-            {view.roundsUsed>=view.roundLimit && !view.roundOpen && <p>已到问答轮数上限，管理员可明确确认后增加额度。</p>}
-        </div>}
+        <ConversationComposer key={`composer:${id}`} view={view} busy={busy} reading={reading} setReading={setReading} setError={setError} wrongNotebook={wrongNotebook} onSubmit={(kind,includeDraft,draft)=>act(kind,undefined,undefined,includeDraft,draft)}/>
         <div className="flex flex-wrap gap-2">
             {!active && <Button variant="outline" disabled={busy} onClick={()=>void remove()}>删除会话</Button>}
             {active && <Button variant="outline" disabled={busy || view.state==="cancelling"} onClick={()=>void act("cancel")}>取消当前轮</Button>}
@@ -119,4 +106,47 @@ export function AIConversation({id,expectedSubjectId}:{id:string;expectedSubject
         </div>
         <AIProcess steps={view.steps} messages={view.messages} active={view.state==="active"&&!error} retry={recoverable?{disabled:busy||reading||exhausted||wrongNotebook,onRetry:()=>void act("retry")}:undefined}/>
     </section>;
+}
+
+
+type FollowUpDraft={text:string;followUpMode:FollowUpMode;image?:string;original?:string};
+/** Keep keystrokes/IME local: answer editors, SVGs and KaTeX history must not render on input. */
+function ConversationComposer({view,busy,reading,setReading,setError,wrongNotebook,onSubmit}:{
+    view:DialogueView;busy:boolean;reading:boolean;setReading:(value:boolean)=>void;setError:(value:string)=>void;wrongNotebook:boolean;
+    onSubmit:(kind:string,includeDraft:boolean,draft:FollowUpDraft)=>Promise<boolean|undefined>;
+}) {
+    const [text,setText]=useState(""),[image,setImage]=useState<string>(),[original,setOriginal]=useState<string>();
+    const [followUpMode,setFollowUpMode]=useState<FollowUpMode>("auto");
+    const active=["active","cancelling"].includes(view.state);
+    const recoverable=view.roundOpen && ["unknown","cancelled","failed"].includes(view.state);
+    const exhausted=view.roundAttempts>=view.attemptLimit || view.roundElapsedMs>=view.timeLimitMs;
+    async function submit(kind:string,includeDraft=false){
+        if(await onSubmit(kind,includeDraft,{text,image,original,followUpMode})){setText("");setImage(undefined);setOriginal(undefined);}
+    }
+    async function upload(file?:File){
+        if(!file)return;
+        if(file.size>8*1024*1024 || !["image/png","image/jpeg","image/webp"].includes(file.type)){setError("请选择8MiB以内的PNG/JPEG/WebP图片。");return;}
+        setReading(true);try{const raw=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>typeof reader.result==="string"?resolve(reader.result):reject(new Error());reader.onerror=()=>reject(new Error());reader.readAsDataURL(file);});setImage(await processImageFile(file));setOriginal(raw);setError("");}catch{setError("图片处理失败。");}finally{setReading(false);}
+    }
+    if(active)return null;
+    return <div className="space-y-3 border rounded-lg p-4">
+            <label className="block">{view.state==="answered"?"继续追问":"补充条件/纠正转录"}<textarea className="w-full min-h-24 border rounded p-2 bg-background" value={text} onChange={e=>setText(e.target.value)} maxLength={10000} disabled={busy || reading}/></label>
+            {view.state==="answered" && <div className="space-y-1 text-sm">
+                <label className="flex flex-wrap items-center gap-2">追问方式<select aria-label="追问方式" className="rounded border bg-background px-2 py-1" value={image?"update":followUpMode} disabled={busy || reading || !!image} onChange={e=>setFollowUpMode(e.target.value as FollowUpMode)}>
+                    <option value="auto">自动判断</option><option value="explain">仅解释</option><option value="update">更新题解</option>
+                </select></label>
+                <p className="text-muted-foreground">{image?"本次替换题图，将按新题设更新题解。":"解释细节会在题解下方追加回答；换方法或纠正解法会更新题解，旧版本自动折叠。"}辅助线图不会自动重绘。</p>
+            </div>}
+            {view.transcript && view.state!=="answered" && <p className="text-sm text-muted-foreground">补充文字视为对当前题设的人工核对，将与已有识图题设一起发送解题；冲突以你的说明为准，无需重新输入完整题设。若仍缺关键条件，AI只会询问具体缺失项。仅保存不会调用AI。</p>}
+            <label className="block text-sm">补充完整题图（可选）<input className="block mt-1" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || reading} onChange={e=>void upload(e.target.files?.[0])}/></label>
+            {image && <p className="text-sm">已选择新图，提交后替换旧图并重新转录。<button className="underline ml-2" onClick={()=>setImage(undefined)}>移除待提交图片</button></p>}
+            <div className="flex flex-wrap gap-2">
+                {view.state==="answered"?<Button disabled={busy || reading || !text.trim() || view.roundsUsed>=view.roundLimit} onClick={()=>void submit("ask")}>发送追问（新一轮）</Button>:<>
+                    <Button variant="outline" disabled={busy || reading || (!text.trim()&&!image)} onClick={()=>void submit("save")}>仅保存补充，不调用AI</Button>
+                    {recoverable?<Button disabled={busy || reading || exhausted || wrongNotebook} onClick={()=>void submit("retry",true)}>确认补充并手动恢复</Button>:<Button disabled={busy || reading || exhausted} onClick={()=>void submit("continue")}>继续当前轮</Button>}
+                </>}
+            </div>
+            {exhausted && view.roundOpen && <p>本轮调用或时间额度耗尽，可先保存补充条件；管理员确认扩额后才能继续。</p>}
+            {view.roundsUsed>=view.roundLimit && !view.roundOpen && <p>已到问答轮数上限，管理员可明确确认后增加额度。</p>}
+        </div>;
 }

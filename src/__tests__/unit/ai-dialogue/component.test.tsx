@@ -3,11 +3,11 @@ import {createRoot,type Root} from "react-dom/client";
 import {beforeEach,afterEach,describe,it,expect,vi} from "vitest";
 import type {DialogueView} from "@/lib/ai-dialogue/types";
 import {JobInputSchema} from "@/lib/ai-jobs/schema";
-const mocks=vi.hoisted(()=>({get:vi.fn(),post:vi.fn(),delete:vi.fn(),push:vi.fn()}));
+const mocks=vi.hoisted(()=>({get:vi.fn(),post:vi.fn(),delete:vi.fn(),push:vi.fn(),editorRender:vi.fn(),markdownRender:vi.fn()}));
 vi.mock("@/lib/api-client",()=>({apiClient:mocks,ApiError:class extends Error{data:unknown;constructor(_status:unknown,_message:unknown,data:unknown){super();this.data=data;}}}));
 vi.mock("next/navigation",()=>({useRouter:()=>({push:mocks.push})}));
-vi.mock("@/components/markdown-renderer",()=>({MarkdownRenderer:({content}:{content:string})=><div>{content}</div>}));
-vi.mock("@/components/conversation-answer-editor",()=>({ConversationAnswerEditor:({snapshot}:{snapshot:{input:{originalImageBase64?:string;imageBase64?:string};result:{questionText:string}}})=><section data-testid="inline-editor" data-image={snapshot.input.originalImageBase64 || snapshot.input.imageBase64}>直接编辑并添加错题 {snapshot.result.questionText}</section>}));
+vi.mock("@/components/markdown-renderer",()=>({MarkdownRenderer:({content}:{content:string})=>{mocks.markdownRender();return <div>{content}</div>}}));
+vi.mock("@/components/conversation-answer-editor",()=>({ConversationAnswerEditor:({snapshot}:{snapshot:{input:{originalImageBase64?:string;imageBase64?:string};result:{questionText:string}}})=>{mocks.editorRender();return <section data-testid="inline-editor" data-image={snapshot.input.originalImageBase64 || snapshot.input.imageBase64}>直接编辑并添加错题 {snapshot.result.questionText}</section>}}));
 import {AIConversation} from "@/components/ai-conversation";
 let host:HTMLDivElement,root:Root,c:DialogueView;
 const image="data:image/png;base64,YQ==";
@@ -35,6 +35,10 @@ describe("conversation controls and process",()=>{
 
 describe("automatic editable result restoration",()=>{
  const result:NonNullable<DialogueView["result"]>={questionText:"fixture",answerText:"fixture answer",analysis:"fixture analysis",subject:"数学",knowledgePoints:[],wrongAnswerText:"",mistakeAnalysis:"",mistakeStatus:"unknown",requiresImage:false};
+ it("uses a separate tint for old solution snapshots in the discussion history",async()=>{
+  c.state="answered";c.result={...result,answerText:"latest"};c.messages=[{id:"old",kind:"answer",round:1,text:JSON.stringify(result),at:"2026-10-06T00:00:00.000Z"},{id:"new",kind:"answer",round:2,text:JSON.stringify(c.result),at:"2026-10-06T00:00:00.000Z"}];
+  await render();const old=[...host.querySelectorAll("summary")].find(s=>s.textContent?.includes("旧题解"))!.parentElement!;expect(old.className).toContain("bg-slate-50");
+ });
  it("automatically restores a completed result and original image without a retrieval button",async()=>{
   c.state="answered";c.result=result;c.input.originalImageBase64="data:image/png;base64,Yg==";await render();
   expect(host.querySelector('[data-testid="inline-editor"]')?.getAttribute("data-image")).toBe(c.input.originalImageBase64);expect(button("取回到编辑器，核对后存错题")).toBeUndefined();expect(mocks.post).not.toHaveBeenCalled();
@@ -151,4 +155,45 @@ describe("manual recovery controls",()=>{
   await render();await click("修订完整题设");expect(button("采用修订并继续").disabled).toBe(true);expect(button("仅保存修订").disabled).toBe(false);
   expect([...host.querySelectorAll("button")].filter(b=>b.textContent?.includes("手动重试")).every(b=>b.disabled)).toBe(true);
  });
+});
+
+
+describe("follow-up modes and discussion placement",()=>{
+ const answer={questionText:"synthetic question",answerText:"same answer",analysis:"old method",subject:"数学" as const,knowledgePoints:[],requiresImage:false,wrongAnswerText:"",mistakeAnalysis:"",mistakeStatus:"unknown" as const};
+ function completed(){c.state="answered";c.roundOpen=false;c.roundsUsed=1;c.result=answer;c.questions=[];c.messages=[{id:"a1",kind:"answer",round:1,text:JSON.stringify(answer),at:new Date(0).toISOString()}];}
+ it.each(["auto","explain","update"])("sends selected %s mode in the same ask request",async mode=>{
+  completed();await render();const select=host.querySelector<HTMLSelectElement>('select[aria-label="追问方式"]');expect(select).not.toBeNull();expect(select!.value).toBe("auto");
+  await act(async()=>{select!.value=mode;select!.dispatchEvent(new Event("change",{bubbles:true}));});await fill("synthetic followup");await click("发送追问（新一轮）");
+  expect(mocks.post).toHaveBeenCalledTimes(1);expect(mocks.post.mock.calls[0][1]).toMatchObject({kind:"ask",text:"synthetic followup",followUpMode:mode});
+ });
+ it("renders discussion below the editable solution, with a correct speaker and no collapsed wrapper",async()=>{
+  completed();c.messages.push({id:"q2",kind:"question",round:2,text:"detail question",at:""},{id:"d2",kind:"discussion",round:2,text:"detail explanation",at:""});await render();
+  const editor=host.querySelector('[data-testid="inline-editor"]')!;const discussion=[...host.querySelectorAll("article")].find(a=>a.textContent?.includes("detail explanation"))!;
+  expect(discussion).toBeDefined();expect(editor.compareDocumentPosition(discussion)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();expect(discussion.textContent).toContain("AI回复");expect(discussion.closest("details")).toBeNull();
+  expect([...host.querySelectorAll("article")].find(a=>a.textContent?.includes("detail question"))!.compareDocumentPosition(discussion)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+ });
+ it("collapses previously opened old solutions on a new method, not on a discussion",async()=>{
+  completed();await render();let history=[...host.querySelectorAll("details")].find(d=>d.querySelector(":scope > summary")?.textContent?.includes("第1轮"))!;expect(history.open).toBe(false);history.open=true;
+  c.revision++;c.messages.push({id:"d2",kind:"discussion",round:2,text:"detail",at:""});await click("刷新状态");expect(history.open).toBe(true);
+  c.revision++;c.result={...answer,analysis:"new method"};c.messages.push({id:"a3",kind:"answer",round:3,text:JSON.stringify(c.result),at:""});await click("刷新状态");
+  history=[...host.querySelectorAll("details")].find(d=>d.querySelector(":scope > summary")?.textContent?.includes("第1轮"))!;expect(history.open).toBe(false);expect(host.textContent).toContain("old method");expect(host.textContent).toContain("new method");
+ });
+});
+
+
+it("typing a follow-up does not rerender the answer editor or history markdown",async()=>{
+ c.state="answered";c.result={questionText:"fixture",answerText:"a",analysis:"steps",subject:"数学",knowledgePoints:[],mistakeStatus:"unknown",requiresImage:false,wrongAnswerText:"",mistakeAnalysis:""};
+ c.messages=[{id:"a",kind:"answer",round:1,text:JSON.stringify(c.result),at:new Date().toISOString()},{id:"d",kind:"discussion",round:2,text:"解释细节",at:new Date().toISOString()}];
+ await render();const edits=mocks.editorRender.mock.calls.length,markdown=mocks.markdownRender.mock.calls.length;
+ for(const text of ["换","换一种","换一种方法", "换一种方法说明角１😀"]){await fill(text);}
+ expect(mocks.editorRender.mock.calls.length).toBe(edits);expect(mocks.markdownRender.mock.calls.length).toBe(markdown);
+ await click("发送追问（新一轮）");expect(mocks.post).toHaveBeenLastCalledWith(expect.any(String),expect.objectContaining({text:"换一种方法说明角１😀",followUpMode:"auto"}));
+});
+
+
+it("keeps exactly one main editor across refresh and follow-up state changes",async()=>{
+ c.state="answered";c.result={questionText:"fixture",answerText:"a",analysis:"steps",subject:"数学",knowledgePoints:[],mistakeStatus:"unknown",requiresImage:false,wrongAnswerText:"",mistakeAnalysis:""};
+ c.messages=[{id:"a",kind:"answer",round:1,text:JSON.stringify(c.result),at:new Date().toISOString()}];await render();
+ for(let i=0;i<3;i++){c.revision++;await click("刷新状态");expect(host.querySelectorAll('[data-testid="inline-editor"]')).toHaveLength(1);}
+ c.state="active";c.revision++;await click("刷新状态");expect(host.querySelectorAll('[data-testid="inline-editor"]')).toHaveLength(1);
 });

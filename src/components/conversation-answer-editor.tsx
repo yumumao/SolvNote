@@ -1,57 +1,70 @@
 "use client";
-import {useEffect, useRef, useState, type ComponentProps} from "react";
+import {memo, useCallback, useEffect, useRef, useState, type ComponentProps} from "react";
 import {useRouter} from "next/navigation";
 import {apiClient} from "@/lib/api-client";
 import type {DialogueView} from "@/lib/ai-dialogue/types";
 import type {ParsedQuestion} from "@/lib/ai";
 import {CorrectionEditor} from "./correction-editor";
 import {drawingEvidenceFromDialogue} from "@/lib/ai-drawing/evidence";
-import {Button} from "./ui/button";
+import {createBaseDrawingCache,type BaseDrawingCache} from "@/lib/ai-drawing/base-reuse";
 export type AnswerSnapshot = Pick<DialogueView,"revision"|"input"|"transcript"|"geometryChecked"|"userCorrectedTranscript"|"transcriptClarifications"> & {result:ParsedQuestion};
 function fingerprint(s:AnswerSnapshot) { return JSON.stringify([s.result,s.input.originalImageBase64 || s.input.imageBase64,s.input.subjectId,drawingEvidenceFromDialogue(s)]); }
 
-/** A paired result/image snapshot: polling and later AI rounds must not replace a human draft. */
+/** Stable keyed editors isolate local edits and late drawing responses by solution version. */
 export function ConversationAnswerEditor({id,snapshot,expectedSubjectId}:{id:string;snapshot:AnswerSnapshot;expectedSubjectId?:string}) {
+    const [versions,setVersions]=useState([{snapshot,version:0}]);
+    const [baseDrawingCache]=useState(createBaseDrawingCache);
+    const current=versions[0];
+    if(snapshot.revision>=current.snapshot.revision) {
+        if(fingerprint(snapshot)!==fingerprint(current.snapshot)) {
+            // Never use draft/drawing activity as a lock on the latest solution.
+            // Keep the old component mounted in collapsed history instead.
+            setVersions([{snapshot,version:current.version+1},...versions]);
+        } else if(snapshot.revision>current.snapshot.revision) {
+            setVersions([{...current,snapshot},...versions.slice(1)]);
+        }
+    }
+    return <section aria-label="直接编辑并添加错题" className="border rounded-lg p-4 space-y-4">
+        <h3 className="font-semibold">核对、编辑并添加到错题本</h3>
+        <p className="text-sm text-muted-foreground">新题解会自动接管这里的编辑和作图功能，旧题解及本页的手动编辑、作图保留在下方折叠区。仅解释细节不会替换题解。会话历史已保存；手动编辑和生成的图需添加到错题本，刷新或离开页面不会保留这些本地内容。</p>
+        {current.version>0 && <p role="status" className="text-sm text-muted-foreground">当前为最新题解。原题条件未变时，点击第一步可复用本页已有底图，无需再次调用AI；仍需核对并锁定。辅助线图需按新解法手动重绘，不会自动调用AI。旧作图即使稍后完成，也不会自动替换当前图。</p>}
+        {versions.map((entry,index)=><AnswerVersion key={`${id}:${entry.version}`} snapshot={entry.snapshot} version={entry.version} active={index===0} baseDrawingCache={baseDrawingCache} expectedSubjectId={expectedSubjectId}/>)}
+    </section>;
+}
+
+const AnswerVersion=memo(function AnswerVersion({snapshot:draft,version,active,baseDrawingCache,expectedSubjectId}:{snapshot:AnswerSnapshot;version:number;active:boolean;baseDrawingCache:BaseDrawingCache;expectedSubjectId?:string}) {
     const router=useRouter();
-    const [draft,setDraft]=useState(snapshot),[version,setVersion]=useState(0),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
-    const operation=useRef(false),saved=useRef(false);
-    const hasNewAnswer=fingerprint(draft)!==fingerprint(snapshot);
+    const [busy,setBusy]=useState(false),[message,setMessage]=useState(""),[expanded,setExpanded]=useState(false);
+    const operation=useRef(false),saved=useRef(false),isCurrent=useRef(active);
+    useEffect(()=>{isCurrent.current=active;},[active]);
+    const protectDraft=useCallback(()=>{saved.current=false;},[]);
     useEffect(()=>{
+        if(!active)return;
         const handler=(e:BeforeUnloadEvent)=>{if(!saved.current){e.preventDefault();e.returnValue="";}};
         window.addEventListener("beforeunload",handler);return()=>window.removeEventListener("beforeunload",handler);
-    },[]);
-    async function replace(){
-        if(operation.current || !window.confirm("采用新回复会替换尚未保存的编辑内容和演示。会话历史仍保留；确认替换吗？"))return;
-        operation.current=true;setBusy(true);setMessage("");
-        try {
-            const fresh=await apiClient.get<DialogueView>(`/api/ai/conversations/${encodeURIComponent(id)}?restore=1`);
-            if(fresh.id!==id || fresh.state!=="answered" || !fresh.result || fresh.revision!==snapshot.revision || (expectedSubjectId && fresh.input.subjectId && fresh.input.subjectId!==expectedSubjectId)) {
-                setMessage("会话状态已变化，请刷新核对；未覆盖编辑内容。");return;
-            }
-            setDraft({result:fresh.result,input:fresh.input,revision:fresh.revision,transcript:fresh.transcript,geometryChecked:fresh.geometryChecked,userCorrectedTranscript:fresh.userCorrectedTranscript,transcriptClarifications:fresh.transcriptClarifications});setVersion(v=>v+1);saved.current=false;
-        } catch {setMessage("无法确认新回复，未覆盖编辑内容。请刷新核对。");}
-        finally {operation.current=false;setBusy(false);}
-    }
+    },[active]);
     const save:ComponentProps<typeof CorrectionEditor>["onSave"]=async data=>{
-        if(operation.current)return;
+        if(!isCurrent.current || operation.current)return;
         operation.current=true;setBusy(true);setMessage("");
         try {
             const subjectId=expectedSubjectId || data.subjectId;
             if(!subjectId){setMessage("请先选择要保存的错题本。");return;}
             await apiClient.post("/api/error-items",{...data,subjectId,originalImageUrl:draft.input.originalImageBase64 || draft.input.imageBase64 || ""});
-            saved.current=true;router.push(`/notebooks/${encodeURIComponent(subjectId)}`);
+            saved.current=true;
+            // A completed old save must not navigate away from a newly adopted answer.
+            if(isCurrent.current)router.push(`/notebooks/${encodeURIComponent(subjectId)}`);
+            else setMessage("旧题解已保存到错题本，当前新题解未受影响。");
         } catch {setMessage("未确认保存成功，编辑内容仍保留。请先到错题本核对，避免重复添加。");}
         finally {operation.current=false;setBusy(false);}
     };
-    return <section aria-label="直接编辑并添加错题" className="border rounded-lg p-4 space-y-4">
-        <h3 className="font-semibold">核对、编辑并添加到错题本</h3>
-        <p className="text-sm text-muted-foreground">无需另行取回。可直接改作答状态、错误解答、错因和知识点；题干、答案、解析默认预览，展开标记代码即可修改。会话历史已保存，但这里的手动编辑需点击保存才会写入错题本。</p>
-        {hasNewAnswer && <aside className="border rounded p-3 space-y-2"><p>已有新的AI回复，当前人工编辑保留不变。可先查看历史回复，再决定是否替换。</p><Button variant="outline" disabled={busy} onClick={()=>void replace()}>采用新回复替换编辑内容</Button></aside>}
-        {message && <p role="alert">{message}</p>}
-        <fieldset disabled={busy} className="min-w-0">
-            <CorrectionEditor drawingEvidence={drawingEvidenceFromDialogue(draft)} key={version} initialData={draft.result} initialSubjectId={expectedSubjectId || draft.input.subjectId}
+    return <details open={active||expanded} onToggle={e=>{if(!active)setExpanded(e.currentTarget.open);}} data-answer-version={version} data-current-answer={active?"true":"false"} className={active?"min-w-0":"min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/60 [&_[data-slot=card]]:bg-transparent"}>
+        <summary className={active?"hidden":"cursor-pointer text-sm"}>旧题解与本地编辑（版本{version+1}，点击展开）</summary>
+        {!active && <p className="text-sm text-muted-foreground my-2">此处只读保留旧版，作图和保存请使用上方最新题解。旧版尚在进行的作图完成后仍显示在此处。</p>}
+        {message && <p role="status">{message}</p>}
+        <fieldset disabled={busy||!active} className="min-w-0">
+            <CorrectionEditor baseDrawingCache={baseDrawingCache} baseDrawingVersion={version} onDraftChange={protectDraft} drawingEvidence={drawingEvidenceFromDialogue(draft)} initialData={draft.result} initialSubjectId={expectedSubjectId || draft.input.subjectId}
                 imagePreview={draft.input.originalImageBase64 || draft.input.imageBase64 || null} onSave={save}
-                onCancel={()=>{if(window.confirm("会话历史已保存；尚未添加到错题本的编辑将丢失，确认返回首页吗？"))router.push("/");}}/>
+                onCancel={()=>{if(isCurrent.current && window.confirm("会话历史已保存；尚未添加到错题本的编辑将丢失，确认返回首页吗？"))router.push("/");}}/>
         </fieldset>
-    </section>;
-}
+    </details>;
+});

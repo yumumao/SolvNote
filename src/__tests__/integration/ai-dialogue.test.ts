@@ -612,3 +612,65 @@ describe.sequential("bounded failure transport telemetry",()=>{
   expect(JSON.stringify(c.steps)).not.toContain("must-not-persist");expect(JSON.stringify(c.steps)).not.toContain('"body"');
  });
 });
+
+
+describe("persistent follow-up routing",()=>{
+ it("stores alternating discussion and method updates, counts each round once and restores mixed context",async()=>{
+  const id=await create();await processOne();const initial=await view(id);const prior=initial.result;
+  await act(id,"ask",{text:"explain step",followUpMode:"auto"});shared.send.mockResolvedValueOnce(JSON.stringify({status:"discussion",text:"synthetic detail"}));await processOne();
+  const detail=await view(id);expect(detail.state).toBe("answered");expect(detail.roundsUsed).toBe(2);expect(detail.roundOpen).toBe(false);expect(detail.roundAttempts).toBe(1);expect(detail.result).toEqual(prior);expect(detail.messages.at(-1)).toMatchObject({kind:"discussion",text:"synthetic detail",round:2});
+  expect(detail.messages.filter(m=>m.kind==="answer")).toHaveLength(1);
+  expect((await readConversation("alice",id,true))!.input.imageBase64).toBe(image);
+  await act(id,"ask",{text:"another method",followUpMode:"update"});shared.send.mockResolvedValueOnce(JSON.stringify({...solved,result:{...solved.result,analysis:"changed method"}}));await processOne();
+  const updated=await view(id);expect(updated.roundsUsed).toBe(3);expect(updated.result!.analysis).toBe("changed method");expect(updated.result!.answerText).toBe(prior!.answerText);expect(updated.messages.filter(m=>m.kind==="answer")).toHaveLength(2);
+  const context=JSON.parse(shared.send.mock.calls.at(-1)![3]);expect(context.messages.some((m:{kind:string;text:string})=>m.kind==="discussion"&&m.text==="synthetic detail")).toBe(true);
+  expect(context.followUp).toEqual({mode:"update",hasCurrentSolution:true});
+  await act(id,"ask",{text:"one more detail",followUpMode:"explain"});shared.send.mockResolvedValueOnce(JSON.stringify({status:"discussion",text:"second detail"}));await processOne();
+  const last=await view(id);expect(last.result).toEqual(updated.result);expect(last.roundsUsed).toBe(4);expect(last.messages.at(-1)!.kind).toBe("discussion");
+ });
+ it("keeps mode and spent budget through cancellation, save-only and explicit retry",async()=>{
+  const c=await create();await processOne();await act(c,"ask",{text:"a detail",followUpMode:"explain"});
+  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN"));await processOne();let stopped=await view(c);expect(stopped.state).toBe("unknown");const used=stopped.roundAttempts;
+  await act(c,"save",{text:"clarifying my question"});expect(shared.send).toHaveBeenCalledTimes(3);
+  await act(c,"retry",{confirmRisk:true});shared.send.mockResolvedValueOnce(JSON.stringify({status:"discussion",text:"recovered detail"}));await processOne();stopped=await view(c);
+  expect(stopped.state).toBe("answered");expect(stopped.roundAttempts).toBe(used+1);expect(stopped.result!.analysis).toBe(solved.result.analysis);expect(JSON.parse(shared.send.mock.calls.at(-1)![3]).followUp.mode).toBe("explain");
+ });
+ it("preserves request idempotency, rejects changed mode and validates mode placement",async()=>{
+  const id=await create();await processOne();const c=await view(id);const k=key();const action={kind:"ask",revision:c.revision,text:"why",followUpMode:"explain"};
+  await actConversation("alice",id,action,k);await actConversation("alice",id,action,k);
+  await expect(actConversation("alice",id,{...action,followUpMode:"update"},k)).rejects.toThrow("REQUEST_CONFLICT");
+  expect(await shared.db.aiJob.count({where:{conversationId:id,state:"pending"}})).toBe(1);
+  await expect(actConversation("alice",id,{kind:"cancel",revision:(await view(id)).revision,followUpMode:"update"},key())).rejects.toThrow("INVALID_REQUEST");
+  await expect(actConversation("alice",id,{...action,followUpMode:"invented"},key())).rejects.toThrow();
+ });
+ it("legacy callers without a mode still receive discussion without rewriting the solution",async()=>{
+  const id=await create();await processOne();await act(id,"ask",{text:"why"});shared.send.mockResolvedValueOnce(JSON.stringify({status:"discussion",text:"legacy detail"}));await processOne();const c=await view(id);expect(c.state).toBe("answered");expect(c.result!.analysis).toBe(solved.result.analysis);expect(c.messages.at(-1)!.kind).toBe("discussion");
+ });
+ it("does not accept explain mode when replacing the source and forces update for corrections",async()=>{
+  const id=await create();await processOne();await expect(act(id,"ask",{text:"why",followUpMode:"explain",imageBase64:image})).rejects.toThrow("INVALID_REQUEST");
+  await act(id,"ask",{correctedTranscript:"corrected synthetic q",followUpMode:"auto"});await processOne();expect(JSON.parse(shared.send.mock.calls.at(-1)![3]).followUp.mode).toBe("update");
+ });
+});
+
+
+it.each(["auto","explain"])("keeps %s discussion clarifications out of original diagram evidence when cancelled and resumed",async followUpMode=>{
+ const id=await create();await processOne();const original=await view(id);await act(id,"ask",{text:"why this step",followUpMode});await act(id,"cancel");
+ const calls=shared.send.mock.calls.length;await act(id,"save",{text:"I meant the second step"});expect(shared.send).toHaveBeenCalledTimes(calls);
+ expect((await view(id)).transcriptClarifications).toEqual(original.transcriptClarifications);
+ await act(id,"retry",{confirmRisk:true});shared.send.mockResolvedValueOnce(JSON.stringify({status:"discussion",text:"second step detail"}));await processOne();
+ const c=await view(id);expect(c.result).toEqual(original.result);expect(c.transcript).toEqual(original.transcript);expect(c.transcriptClarifications).toEqual(original.transcriptClarifications);
+ expect(c.messages.some(m=>m.text==="I meant the second step")).toBe(true);expect(c.messages.at(-1)!.kind).toBe("discussion");expect(c.roundsUsed).toBe(2);
+});
+it("rejects a discussion in explicit update mode without another model call",async()=>{
+ const id=await create();await processOne();const original=await view(id);const calls=shared.send.mock.calls.length;
+ await act(id,"ask",{text:"replace method",followUpMode:"update"});shared.send.mockResolvedValueOnce(JSON.stringify({status:"discussion",text:"not a complete replacement"}));await processOne();
+ const c=await view(id);expect(c.state).toBe("failed");expect(c.roundsUsed).toBe(1);expect(c.roundOpen).toBe(true);expect(shared.send).toHaveBeenCalledTimes(calls+1);expect(c.messages.filter(m=>m.kind==="answer")).toEqual(original.messages.filter(m=>m.kind==="answer"));
+});
+
+
+it("adopts deferred auto-mode supplements only after a complete replacement, not while saving",async()=>{
+ const id=await create();await processOne();const original=await view(id);await act(id,"ask",{text:"check this label",followUpMode:"auto"});await act(id,"cancel");
+ await act(id,"save",{text:"synthetic human correction: angle A is 30"});expect((await view(id)).transcriptClarifications).toEqual(original.transcriptClarifications);
+ await act(id,"retry",{confirmRisk:true});shared.send.mockResolvedValueOnce(JSON.stringify({status:"solved",result:{...solved.result,questionText:""}}));await processOne();const c=await view(id);
+ expect(c.state).toBe("answered");expect(c.transcriptClarifications).toContain("synthetic human correction: angle A is 30");expect(c.result!.questionText).toContain("synthetic human correction: angle A is 30");expect(c.messages.at(-1)!.kind).toBe("answer");
+});

@@ -84,11 +84,12 @@ afterEach(async () => {
     host.remove();
     vi.unstubAllGlobals();
 });
-const render = async (data = question, preview: string | null = image) => {
+const render = async (data = question, preview: string | null = image, onDraftChange?: () => void) => {
     await act(async () => {
         root.render(
             createElement(CorrectionEditor, {
                 initialData: data,
+                onDraftChange,
                 imagePreview: preview,
                 onSave: vi.fn(),
                 onCancel: vi.fn(),
@@ -292,4 +293,23 @@ it("preserves automatic wrong-attempt status when the user supplies a wrong answ
         field.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect([...host.querySelectorAll('[role="combobox"]')].at(-1)?.textContent).toContain("做错了");
+});
+
+
+describe("conversation draft protection signals",()=>{
+ it("does not mark automatic notebook/profile initialization as an edit",async()=>{
+  const changed=vi.fn();await render(question,image,changed);expect(changed).not.toHaveBeenCalled();
+ });
+ it("protects manual changes to answer source text",async()=>{
+  const changed=vi.fn();await render(question,image,changed);
+  const source=host.querySelector<HTMLTextAreaElement>('textarea[aria-label="参考答案 标记代码"]') || [...host.querySelectorAll("textarea")].find(t=>t.value===question.answerText)!;
+  expect(source).toBeDefined();await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value")!.set!.call(source,"manual answer");source.dispatchEvent(new Event("input",{bubbles:true}));});
+  expect(changed).toHaveBeenCalled();
+ });
+ it("protects a draft as soon as a GeoGebra request starts, before it completes",async()=>{
+  let finish!:(v:Response)=>void;const original=fetchMock.getMockImplementation() as (url:string,...args:unknown[])=>Promise<Response>;
+  fetchMock.mockImplementation((url:string,...args:unknown[])=>url==="/api/geogebra-analyze"?new Promise<Response>(resolve=>{finish=resolve;}):original(url,...args));
+  const changed=vi.fn();await render(question,image,changed);await act(async()=>{button("生成演示")!.click();});expect(changed).toHaveBeenCalled();
+  await act(async()=>{finish(response(geometry));});
+ });
 });

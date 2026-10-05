@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type SetStateAction } from "react";
 import Link from "next/link";
 import { ParsedQuestion } from "@/lib/ai";
 import { calculateGrade } from "@/lib/grade-calculator";
@@ -35,6 +35,10 @@ interface ParsedQuestionWithSubject extends ParsedQuestion {
 }
 
 interface CorrectionEditorProps {
+    baseDrawingCache?: import("@/lib/ai-drawing/base-reuse").BaseDrawingCache;
+    baseDrawingVersion?: number;
+    /** Only local edits/actions protect a conversation draft; initialization does not. */
+    onDraftChange?: () => void;
     drawingEvidence?: import("@/lib/ai-drawing/evidence").DrawingEvidence;
     initialData: ParsedQuestion;
     onSave: (data: ParsedQuestionWithSubject) => Promise<void>;
@@ -51,8 +55,8 @@ type ReanswerErrorMessages = {
     responseError?: string;
 };
 
-export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, initialSubjectId, aiTimeout, drawingEvidence }: CorrectionEditorProps) {
-    const [data, setData] = useState<ParsedQuestionWithSubject>({
+export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, initialSubjectId, aiTimeout, drawingEvidence, onDraftChange, baseDrawingCache, baseDrawingVersion }: CorrectionEditorProps) {
+    const [data, setDataState] = useState<ParsedQuestionWithSubject>({
         ...initialData,
         wrongAnswerText: initialData.wrongAnswerText || "",
         mistakeAnalysis: initialData.mistakeAnalysis || "",
@@ -61,6 +65,10 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
         gradeSemester: "",
         paperLevel: "a"
     });
+    const setData = (update: SetStateAction<ParsedQuestionWithSubject>) => {
+        onDraftChange?.();
+        setDataState(update);
+    };
     const [shareDrawings,setShareDrawings]=useState<DrawingShareState|null>(null);
     const drawingAttachments=currentDrawingAttachments(shareDrawings,data.questionText,data.answerText,data.analysis,imagePreview);
     const { t, language } = useLanguage();
@@ -97,7 +105,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
 
     // Notebook inference may arrive after the result. Never overwrite a user's selection.
     useEffect(() => {
-        if (initialSubjectId) setData(prev => prev.subjectId ? prev : { ...prev, subjectId: initialSubjectId });
+        if (initialSubjectId) setDataState(prev => prev.subjectId ? prev : { ...prev, subjectId: initialSubjectId });
     }, [initialSubjectId]);
 
     // Fetch user info and calculate grade on mount
@@ -111,7 +119,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
             .then(user => {
                 if (user && user.educationStage && user.enrollmentYear) {
                     const grade = calculateGrade(user.educationStage, user.enrollmentYear, new Date(), language);
-                    setData(prev => ({ ...prev, gradeSemester: grade }));
+                    setDataState(prev => ({ ...prev, gradeSemester: grade }));
                     setEducationStage(user.educationStage);
                 }
             })
@@ -126,6 +134,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
         }
 
         if (reanswerRequest.current || geogebraRequest.current) return;
+        onDraftChange?.(); // Protect pending paid work before an awaited response.
         const controller = new AbortController();
         reanswerRequest.current = controller;
         setTaskStatus("正在提交重解任务，请勿重复提交。");
@@ -199,6 +208,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
         }
 
         if (geogebraRequest.current || reanswerRequest.current) return;
+        onDraftChange?.(); // Protect pending paid work before an awaited response.
         const controller = new AbortController();
         geogebraRequest.current = controller;
         setTaskStatus("正在提交GeoGebra任务，请勿重复提交。");
@@ -423,7 +433,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     </Card>
                 </div>
 
-                {!!data.answerText.trim() && <AuxiliaryDrawing drawingEvidence={data.questionText===initialData.questionText?drawingEvidence:undefined} onShareDrawings={setShareDrawings} questionText={data.questionText} answerText={data.answerText} analysis={data.analysis} image={imagePreview} disabled={isReanswering||isAnalyzingGeogebra} onUseCommands={commands=>setData(prev=>({...prev,geogebraCommands:commands}))}/>}
+                {!!data.answerText.trim() && <div onClickCapture={onDraftChange} onChangeCapture={onDraftChange}><AuxiliaryDrawing baseDrawingCache={baseDrawingCache} baseDrawingVersion={baseDrawingVersion} drawingEvidence={data.questionText===initialData.questionText?drawingEvidence:undefined} onShareDrawings={setShareDrawings} questionText={data.questionText} answerText={data.answerText} analysis={data.analysis} image={imagePreview} disabled={isReanswering||isAnalyzingGeogebra} onUseCommands={commands=>setData(prev=>({...prev,geogebraCommands:commands}))}/></div>}
                 {/* The preview and source now share each field; keep the existing durable GeoGebra action. */}
                 <div id="geogebra-demo" className="space-y-6">
                     {/* GeoGebra Dynamic Demo */}

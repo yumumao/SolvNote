@@ -7,19 +7,28 @@ import type { DialoguePayload } from "./types";
 import { detailCrops } from "./crops";
 import { GEOMETRY_CHECK_PROMPT } from "./geometry-check";
 
+// A review checkpoint may contain a candidate result without any completed answer.
+function hasCompletedSolution(p: DialoguePayload) {
+    return !!p.result && p.messages.some(m => m.kind === "answer");
+}
 /** Context is explicit and bounded; never silently summarize away geometry. */
 export function dialogueContext(p: DialoguePayload) {
+    const clarifications = [...(p.transcriptClarifications ?? []), ...(p.followUpClarifications ?? [])];
     const context = JSON.stringify({
         question: p.input.questionText, subject: p.input.subject,
-        transcription: p.transcript, questionsToCheck: p.questions,
-        ...(p.transcriptClarifications?.length ? {transcriptionAuthority:"user_clarified",transcriptionClarifications:p.transcriptClarifications} : p.userCorrectedTranscript ? {transcriptionAuthority:"user_corrected"} : {}),
+        followUp: { mode: hasCompletedSolution(p) ? p.followUpMode ?? "auto" : "update", hasCurrentSolution: hasCompletedSolution(p) },
+        transcription: p.followUpTranscript ?? p.transcript, questionsToCheck: p.questions,
+        ...(clarifications.length ? {transcriptionAuthority:"user_clarified",transcriptionClarifications:clarifications} : p.userCorrectedTranscript ? {transcriptionAuthority:"user_corrected"} : {}),
         imageContext: { sourceImageAvailable: !!p.input.imageBase64, rereadsUsed: p.rereads, rereadLimit: 1 },
         messages: p.messages.map(m => ({ kind: m.kind, text: m.text, round: m.round })),
     });
     if (context.length > 200000) throw new AIError("AI_CONTEXT_LIMIT");
     return context;
 }
-export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Promise<void>) {
+export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Promise<void>): Promise<{
+    state: "answered" | "awaiting_user"; payload: DialoguePayload; discussion?: string;
+}> {
+    const followUpMode = hasCompletedSolution(p) ? p.followUpMode ?? "auto" : undefined;
     const run = aiRun.getStore();
     if (!run) throw new AIError("AI_INTERNAL_ERROR");
     const image = p.input.imageBase64
@@ -38,7 +47,7 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
     }
     let detailImages:string[]=[];
     const geometry=p.transcript?.geometry;
-    const humanReviewed=p.userCorrectedTranscript || !!p.transcriptClarifications?.length;
+    const humanReviewed=p.userCorrectedTranscript || !!p.transcriptClarifications?.length || !!p.followUpClarifications?.length;
     if(image && geometry && !humanReviewed){
         const regions=[...geometry.regions,...geometry.angles.flatMap(a=>a.region?[a.region]:[])];
         detailImages=await detailCrops(rereadImage!,regions);
@@ -111,7 +120,7 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
         }
     }
     const solve = async (stage: "solve" | "reread" | "review", modelId?: string, review = stage === "review") => {
-        const decision = await callChain(solvePrompt(p.input.gradeSemester, review, p.input.language),
+        const decision = await callChain(solvePrompt(p.input.gradeSemester, review, p.input.language, followUpMode),
             dialogueContext(p) + (review ? `\n候选答案：${JSON.stringify(p.result)}` : ""), stage === "reread" ? rereadImage : image,
             raw => parseJSON(raw, DecisionSchema), { role: "solve", stage, modelId, question: p.questions, ...(detailImages.length ? {detailImages} : {}) });
         if (!review) p.solverId = run.lastModel;
@@ -138,15 +147,39 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
         const excludedModel = run.excludeModel;
         if (review) run.excludeModel = undefined;
         try {
-            p.transcript = await callChain(RECOGNIZE_PROMPT, dialogueContext(p), rereadImage,
+            const reread = await callChain(RECOGNIZE_PROMPT, dialogueContext(p), rereadImage,
                 parseTranscript, { role: "recognize", stage: "reread", question: p.questions });
+            // Persist supplemental pixels for retry/context, but do not mutate
+            // the adopted answer's diagram evidence for a detail-only discussion.
+            if (!review && followUpMode && followUpMode !== "update") p.followUpTranscript = reread;
+            else p.transcript = reread;
         } finally { run.excludeModel = excludedModel; }
         await checkpoint();
         // Even an inconclusive reader cannot bypass the responsible solver/reviewer.
         return solve(review ? "review" : "solve", modelId, review);
     };
     const decision = await checkVisualDoubts(await solve("solve", p.solverId));
+    if (decision.status === "discussion" || (decision.status === "solved" && followUpMode === "explain")) {
+        // A reply without a complete solution cannot complete an initial/update round.
+        // Enforce the explicit mode outside callChain: never dispatch another model
+        // just to classify the reply or fix a mode mismatch.
+        if (!followUpMode || followUpMode === "update") throw new AIError("AI_RESPONSE_ERROR", false, 0, "JSON_SCHEMA_INVALID");
+        const discussion = decision.status === "discussion" ? decision.text
+            : `${decision.result.answerText}\n\n${decision.result.analysis}`;
+        p.questions = [];
+        p.followUpTranscript = undefined;
+        p.followUpClarifications = undefined;
+        return { state: "answered", payload: p, discussion };
+    }
     if (decision.status !== "solved") return wait(decision.questions);
+    if (p.followUpTranscript) {
+        p.transcript = p.followUpTranscript;
+        p.followUpTranscript = undefined;
+    }
+    if (p.followUpClarifications?.length) {
+        p.transcriptClarifications = [...(p.transcriptClarifications ?? []), ...p.followUpClarifications];
+        p.followUpClarifications = undefined;
+    }
     const sourceBackedResult = (result: typeof decision.result) => {
         let questionText = result.questionText.trim();
         if (!questionText) {
@@ -167,11 +200,16 @@ export async function advanceDialogue(p: DialoguePayload, checkpoint: () => Prom
         return { ...result, questionText, requiresImage: Boolean(image) || result.requiresImage };
     };
     p.result = sourceBackedResult(decision.result);
+    // Once auto chooses a replacement, interruption/retry must finish that
+    // solution (including review), not reinterpret the round as discussion.
+    p.followUpMode = "update";
+    await checkpoint();
     // Optional independent review shares the same budget and single reread allowance.
     if (p.input.review && !p.reviewDone) {
         run.excludeModel = p.solverId;
         try {
             const reviewed = await checkVisualDoubts(await solve("review"), true);
+            if (reviewed.status === "discussion") throw new AIError("AI_RESPONSE_ERROR", false, 0, "JSON_SCHEMA_INVALID");
             if (reviewed.status !== "solved") return wait(reviewed.questions);
             p.result = sourceBackedResult(reviewed.result);
             p.reviewDone = true;
