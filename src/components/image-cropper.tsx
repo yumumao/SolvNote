@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from "react-image-crop";
+import { useState, useRef, useEffect, type SyntheticEvent } from "react";
+import ReactCrop, { type PercentCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { sourceCropRect } from "@/lib/image-crop";
 
 interface ImageCropperProps {
     imageSrc: string;
@@ -14,154 +15,138 @@ interface ImageCropperProps {
     onCropComplete: (croppedImageBlob: Blob) => void;
 }
 
-// Helper to center the crop initially
-function centerAspectCrop(
-    mediaWidth: number,
-    mediaHeight: number,
-    aspect: number,
-) {
-    return centerCrop(
-        makeAspectCrop(
-            {
-                unit: '%',
-                width: 90,
-            },
-            aspect,
-            mediaWidth,
-            mediaHeight,
-        ),
-        mediaWidth,
-        mediaHeight,
-    )
+// Closing/reopening or changing the source creates a fresh editing session.
+export function ImageCropper(props: ImageCropperProps) {
+    return props.open ? <CropperDialog key={props.imageSrc} {...props} /> : null;
 }
 
-export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageCropperProps) {
+function CropperDialog({ imageSrc, onClose, onCropComplete }: ImageCropperProps) {
     const { t, language } = useLanguage();
-    const [crop, setCrop] = useState<Crop>();
-    const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
+    const [crop, setCrop] = useState<PercentCrop>();
+    const [natural, setNatural] = useState<{ width: number; height: number }>();
+    const [stage, setStage] = useState<HTMLDivElement | null>(null);
+    const [available, setAvailable] = useState({ width: 0, height: 0 });
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
     const imgRef = useRef<HTMLImageElement>(null);
+    const cropRef = useRef<PercentCrop | undefined>(undefined);
+    const saving = useRef(false);
+    const active = useRef(true);
+    const zh = language === "zh";
 
-    function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
-        const { width, height } = e.currentTarget;
-        // Start with a centered crop covering most of the image
-        // Since we want free aspect, we just make a box
-        const initialCrop = centerCrop(
-            {
-                unit: '%',
-                width: 80,
-                height: 50,
-                x: 10,
-                y: 25
-            },
-            width,
-            height
-        );
-        setCrop(initialCrop);
+    useEffect(() => {
+        active.current = true;
+        return () => { active.current = false; };
+    }, []);
+
+    useEffect(() => {
+        if (!stage) return;
+        // Observe the untransformed content box, not the dialog's animated bbox.
+        // Image, crop wrapper and selection must always share one display area.
+        const observer = new ResizeObserver(([entry]) => {
+            setAvailable({ width: entry.contentRect.width, height: entry.contentRect.height });
+        });
+        observer.observe(stage);
+        return () => observer.disconnect();
+    }, [stage]);
+
+    function updateCrop(next: PercentCrop) {
+        cropRef.current = next;
+        setCrop(next);
     }
 
-    const getCroppedImg = async (
-        image: HTMLImageElement,
-        crop: PixelCrop
-    ): Promise<Blob | null> => {
-        const canvas = document.createElement("canvas");
-        const scaleX = image.naturalWidth / image.width;
-        const scaleY = image.naturalHeight / image.height;
-        canvas.width = crop.width * scaleX;
-        canvas.height = crop.height * scaleY;
-        const ctx = canvas.getContext("2d");
+    function onImageLoad(e: SyntheticEvent<HTMLImageElement>) {
+        const { naturalWidth: width, naturalHeight: height } = e.currentTarget;
+        if (!width || !height) return;
+        setNatural({ width, height });
+        updateCrop({ unit: "%", x: 10, y: 25, width: 80, height: 50 });
+        setError("");
+    }
 
-        if (!ctx) {
-            return null;
-        }
+    function close() {
+        active.current = false;
+        onClose();
+    }
 
-        ctx.drawImage(
-            image,
-            crop.x * scaleX,
-            crop.y * scaleY,
-            crop.width * scaleX,
-            crop.height * scaleY,
-            0,
-            0,
-            crop.width * scaleX,
-            crop.height * scaleY
-        );
-
-        return new Promise((resolve, reject) => {
-            canvas.toBlob((blob) => {
-                if (!blob) {
-                    reject(new Error("Canvas is empty"));
-                    return;
-                }
-                resolve(blob);
-            }, "image/jpeg");
-        });
-    };
-
-    const handleConfirm = async () => {
-        if (completedCrop && imgRef.current) {
-            try {
-                const croppedBlob = await getCroppedImg(imgRef.current, completedCrop);
-                if (croppedBlob) {
-                    onCropComplete(croppedBlob);
-                }
-            } catch (e) {
-                console.error(e);
-            }
-        } else {
-            // If no crop, just return original? Or force crop?
-            // Let's assume user wants to crop. If they didn't touch it, use current crop state?
-            // If crop is undefined, maybe they want whole image?
-            // For now, let's require a crop or just use the whole image if nothing selected?
-            // Actually, better to just close if they cancel.
-            // If they click confirm but no crop is set (unlikely with initial state), do nothing or alert.
-            if (!completedCrop && imageSrc) {
-                // Fallback: fetch original and return as blob
-                try {
-                    const res = await fetch(imageSrc);
-                    const blob = await res.blob();
-                    onCropComplete(blob);
-                } catch (e) {
-                    console.error(e);
-                }
+    async function handleConfirm() {
+        const image = imgRef.current, selection = cropRef.current;
+        if (saving.current || !active.current || !natural || !image?.complete || !selection) return;
+        const rect = sourceCropRect(selection, image.naturalWidth, image.naturalHeight);
+        if (!rect) return;
+        saving.current = true;
+        setBusy(true);
+        setError("");
+        try {
+            const canvas = document.createElement("canvas");
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) throw new Error("Canvas unavailable");
+            ctx.drawImage(image, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+            const blob = await new Promise<Blob>((resolve, reject) => {
+                canvas.toBlob(value => value ? resolve(value) : reject(new Error("Empty crop")), "image/jpeg");
+            });
+            // A canceled/previous image must never enter the caller's AI workflow.
+            if (active.current) onCropComplete(blob);
+        } catch {
+            if (active.current) setError(zh ? "裁剪失败，请重试或重新选择图片。" : "Cropping failed. Please retry or select the image again.");
+        } finally {
+            if (active.current) {
+                saving.current = false;
+                setBusy(false);
             }
         }
-    };
+    }
+
+    const scale = natural ? Math.min(1, available.width / natural.width, available.height / natural.height) : 0;
+    const display = { width: natural ? natural.width * scale : 0, height: natural ? natural.height * scale : 0 };
+    const valid = !!(natural && crop && sourceCropRect(crop, natural.width, natural.height));
 
     return (
-        <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className="max-w-3xl h-[90vh] flex flex-col p-0 gap-0">
+        <Dialog open onOpenChange={(isOpen) => !isOpen && close()}>
+            <DialogContent className="max-w-3xl h-[90vh] flex flex-col p-0 gap-0" style={{ height: "90dvh" }}>
                 <DialogHeader className="p-4 border-b shrink-0">
                     <DialogTitle>{t.common.cropper?.title || "Crop Image"}</DialogTitle>
+                    <DialogDescription className="sr-only">
+                        {t.common.cropper?.hint || "Drag to adjust crop area"}
+                    </DialogDescription>
                 </DialogHeader>
 
-                <div className="flex-1 bg-black w-full overflow-auto flex items-center justify-center p-4">
+                <div ref={setStage} className="flex-1 min-h-0 bg-black w-full overflow-hidden flex items-center justify-center p-4">
                     <ReactCrop
                         crop={crop}
-                        onChange={(_, percentCrop) => setCrop(percentCrop)}
-                        onComplete={(c) => setCompletedCrop(c)}
-                        className="max-h-full"
+                        onChange={(_, percentCrop) => updateCrop(percentCrop)}
+                        disabled={busy || !natural}
+                        style={{ ...display, flexShrink: 0 }}
                     >
+                        {/* Native img is needed for local blobs and natural pixel dimensions. */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             ref={imgRef}
-                            alt="Crop me"
+                            alt={zh ? "待裁剪图片" : "Image to crop"}
                             src={imageSrc}
                             onLoad={onImageLoad}
-                            style={{ maxHeight: '70vh', maxWidth: '100%', objectFit: 'contain' }}
+                            onError={() => {
+                                setNatural(undefined);
+                                cropRef.current = undefined;
+                                setCrop(undefined);
+                                setError(zh ? "图片加载失败，请重新选择。" : "Image failed to load. Please select it again.");
+                            }}
+                            style={{ ...display, display: "block", maxWidth: "none", maxHeight: "none" }}
                         />
                     </ReactCrop>
                 </div>
 
                 <div className="p-4 border-t bg-background shrink-0">
-                    <div className="flex justify-between items-center">
+                    {error && <p role="alert" className="text-sm text-red-600 mb-2">{error}</p>}
+                    <div className="flex flex-wrap gap-2 justify-between items-center">
                         <p className="text-sm text-muted-foreground">
                             {t.common.cropper?.hint || "💡 Drag to adjust crop area"}
                         </p>
                         <div className="flex gap-2">
-                            <Button variant="outline" onClick={onClose}>
-                                {t.common.cancel || "Cancel"}
-                            </Button>
-                            <Button onClick={handleConfirm}>
-                                {t.common.confirm || "Confirm"}
+                            <Button variant="outline" onClick={close}>{t.common.cancel || "Cancel"}</Button>
+                            <Button disabled={busy || !valid} onClick={handleConfirm}>
+                                {busy ? (zh ? "裁剪中…" : "Cropping…") : (t.common.confirm || "Confirm")}
                             </Button>
                         </div>
                     </div>
