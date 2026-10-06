@@ -18,3 +18,11 @@
  .fit :global(.katex-display) { padding-inline-start: 2.5rem; }
  .fit :global(.katex-display > .katex) { margin-inline: 0; }
 }
+
+/* Only generated visual rows are replaced. Original MathML/TeX remains intact. */
+.fit :global(.katex[data-math-reflow] > .katex-html:not([data-math-lines])) { display: none; }
+.fit :global(.katex > [data-math-lines]) { display: block; }
+.fit :global(.katex [data-math-line]) { display: block; width: max-content; text-align: left; }
+.fit :global(.katex [data-math-line] + [data-math-line]) { margin-top: .35em; }
+.fit :global(.katex[data-math-overflow]) { display: inline-block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; padding-block: .2em; }
+.fit :global(.katex[data-math-overflow] > .katex-html) { display: inline-block; min-width: max-content; }
