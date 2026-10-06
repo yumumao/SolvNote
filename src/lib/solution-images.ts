@@ -1,4 +1,4 @@
-import {fitMarkdownWidth,solutionImageWidth} from "./markdown-fit";
+import {fitMarkdownWidth,fitMarkdownImagePage,solutionImageWidth} from "./markdown-fit";
 import { toBlob } from "html-to-image";
 import {localSolutionImage} from "./solution-snapshot";
 import { localStyleText, solutionUnits } from "./solution-share";
@@ -58,8 +58,7 @@ export async function renderSolutionImages(source:HTMLElement):Promise<SolutionI
   for(let i=0;i<groups.length;i++){
    page.replaceChildren(...groups[i]);page.style.width=initialWidth+'px';
    await waitForSolutionImages(page);
-   if(fit)fitMarkdownWidth(page);
-   let width=initialWidth;
+   let width=fit?fitMarkdownImagePage(page,initialWidth):initialWidth;
    if(!fit)page.querySelectorAll<HTMLElement>('.katex-display,pre,table').forEach(n=>{width=Math.max(width,n.scrollWidth+100)});
    if(width>2048)throw Error('某条公式或表格过宽，请分行后导出，或使用文字分享。');
    page.style.width=width+'px';
