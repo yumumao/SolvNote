@@ -122,7 +122,8 @@ ScanDex负责导出文件，错题本页面负责将文件提交给错题本后�
 `Admin initialization failed; refusing to start the application`是启动脚本的汇总消息，`BackOff`是容器退出后的反复重启，不是镜像仍在构建。请查看该消息之前的第一条错误，不要通过删除卷、重置管理员或跳过初始化掩盖故障。
 
 - 若前面是`MODULE_NOT_FOUND`且指向`bcryptjs/umd/index.js`：这是曾发现的精简镜像遗漏CommonJS入口问题。当前Dockerfile显式携带完整bcryptjs，并在构建期只加载seed模块验证依赖；发布前再运行真实容器检查。升级到包含此修复的新镜像，无需修改已有管理员密码。
-- 若前面明确提示`INITIAL_ADMIN_PASSWORD`：仅当目标数据库没有任何管理员时才要求设置至少12字符的非空初始密码；已存在管理员（包括停用的管理员）应保持不变。旧站突然触发首次初始化时先检查实际镜像、`DATABASE_URL`和`/app/data`挂载，不要在错误的新库里盲目创建新管理员。
+- 旧镜像的统一catch会把数据库、加密和账号冲突等所有异常都输出成`INITIAL_ADMIN_PASSWORD`指导文本，因此不能据此判定密码错误。新容器脚本输出`[AdminBootstrap]`结构化诊断：`stage`区分`client-init`、`find-admin`、`validate-password`、`find-account`、`account-conflict`、`hash-password`、`create-admin`和`disconnect`；`errorType`及`errorCode`仅限白名单，不输出原始消息、堆栈或账号数据。`initialPasswordPresent`和`initialPasswordValid`只是容器实际收到密码的布尔状态，不输出值或长度。
+- 只有`stage=validate-password`才按提示检查当前服务运行时变量。`initialPasswordValid=true`而在数据库阶段失败时，按错误码核查客户端、schema、实际数据库和写权限；迁移显示无待应用项不等于排除数据库结构漂移。已有管理员（包括停用的管理员）仍跳过初始化，所有账号保护保持不变。开发命令`prisma db seed`的旧汇总日志尚未改造，本节新诊断适用于容器调用的`scripts/seed-admin.js`。
 - 确认Zeabur镜像来源是`ghcr.io/yumumao/solvnote`及对应发布digest。日志中的容器显示名可能沿用创建服务时的旧名称，不能仅凭显示名认定当前仍在使用上游镜像。
 - `scripts/smoke-container.sh`只供隔离CI/显式本地Docker验收，自动新建并清理自己的合成容器和卷；绝不指向真实卷。管理员和会话测试值随机生成到临时env文件，不写日志或镜像，两个持久卷及数据库不会放进公开artifact。
 

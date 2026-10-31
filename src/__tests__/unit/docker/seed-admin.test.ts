@@ -376,3 +376,82 @@ describe('authentication logging only', () => {
         expect(compare).toHaveBeenCalledExactlyOnceWith(initialPassword, storedHash);
     });
 });
+
+
+describe('runtime bootstrap diagnostics', () => {
+    function diagnostic(output: string) {
+        const line = output.split('\n').find((value) => value.startsWith('[AdminBootstrap] '));
+        expect(line, 'runtime must report a sanitized diagnostic').toBeDefined();
+        return JSON.parse(line!.slice('[AdminBootstrap] '.length));
+    }
+
+    it.each([
+        ['findFirst', 'find-admin'], ['findUnique', 'find-account'],
+        ['hash', 'hash-password'], ['create', 'create-admin'], ['disconnect', 'disconnect'],
+    ] as const)('identifies the failing %s stage without exposing the raw error', async (operation, stage) => {
+        const deps = dependencies();
+        const env = { INITIAL_ADMIN_EMAIL: initialEmail, INITIAL_ADMIN_PASSWORD: initialPassword };
+        const error = Object.assign(new Error(initialPassword + ' ' + initialEmail), {
+            name: 'PrismaClientKnownRequestError', code: 'P2022', meta: { password: initialPassword },
+        });
+        const target = operation === 'hash' ? deps.hash
+            : operation === 'disconnect' ? deps.prisma.$disconnect : deps.prisma.user[operation];
+        target.mockRejectedValueOnce(error);
+        const result = await runSeed('scripts/seed-admin.js', deps, env);
+        expect(result.exitCode).toBe(1);
+        expect(diagnostic(result.output)).toEqual({
+            stage, errorType: 'PrismaClientKnownRequestError', errorCode: 'P2022',
+            initialPasswordPresent: true, initialPasswordValid: true,
+        });
+        expect(result.output).not.toContain('For a new installation');
+        expectNoCredentials(result.output, env);
+    });
+
+    it.each([undefined, '', 'short', ' '.repeat(24)])('distinguishes invalid password configuration (%s)', async (password) => {
+        const result = await runSeed('scripts/seed-admin.js', dependencies(), { INITIAL_ADMIN_PASSWORD: password });
+        expect(result.exitCode).toBe(1);
+        expect(diagnostic(result.output)).toMatchObject({stage: 'validate-password', initialPasswordPresent: !!password, initialPasswordValid: false});
+        expect(result.output).toContain('INITIAL_ADMIN_PASSWORD');
+    });
+
+    it('distinguishes account conflicts from database and password failures', async () => {
+        const deps = dependencies(null, makeUser({ role: 'user' }));
+        const result = await runSeed('scripts/seed-admin.js', deps, { INITIAL_ADMIN_PASSWORD: initialPassword });
+        expect(result.exitCode).toBe(1);
+        expect(diagnostic(result.output)).toMatchObject({stage: 'account-conflict', initialPasswordValid: true});
+        expectNoChanges(deps);
+        expectNoCredentials(result.output);
+    });
+
+    it('reports initialization errorCode without logging the database URL or message', async () => {
+        const error = Object.assign(new Error(initialPassword), { name: 'PrismaClientInitializationError', errorCode: 'P1003' });
+        const result = await runSeed('scripts/seed-admin.js', dependencies(), { INITIAL_ADMIN_PASSWORD: initialPassword }, error);
+        expect(diagnostic(result.output)).toMatchObject({stage: 'client-init', errorType: 'PrismaClientInitializationError', errorCode: 'P1003'});
+        expectNoCredentials(result.output);
+    });
+
+    it('does not let disconnect errors hide the original failure', async () => {
+        const deps = dependencies();
+        deps.prisma.user.create.mockRejectedValueOnce(Object.assign(new Error(initialPassword), {code: 'P2002'}));
+        deps.prisma.$disconnect.mockRejectedValueOnce(new Error('cleanup failure'));
+        const result = await runSeed('scripts/seed-admin.js', deps, { INITIAL_ADMIN_PASSWORD: initialPassword });
+        expect(diagnostic(result.output)).toMatchObject({stage: 'create-admin', errorCode: 'P2002'});
+        expectNoCredentials(result.output);
+    });
+
+    it('redacts arbitrary error names and codes', async () => {
+        const deps = dependencies();
+        deps.hash.mockRejectedValueOnce({name: initialEmail, code: initialPassword, errorCode: storedHash, message: initialPassword});
+        const result = await runSeed('scripts/seed-admin.js', deps, { INITIAL_ADMIN_PASSWORD: initialPassword });
+        expect(diagnostic(result.output)).toMatchObject({stage: 'hash-password', errorType: 'UnknownError', errorCode: null});
+        expectNoCredentials(result.output);
+    });
+
+    it('does not inspect or change existing administrators when bootstrap configuration is absent', async () => {
+        const deps = dependencies(makeUser());
+        const result = await runSeed('scripts/seed-admin.js', deps, {});
+        expect(result.exitCode).toBe(0);
+        expect(result.output).not.toContain('[AdminBootstrap]');
+        expectNoChanges(deps);
+    });
+});
