@@ -262,6 +262,35 @@ export async function decodeResponse(
         throw new AIError("AI_RESPONSE_ERROR", true, 0, "RESPONSE_EMPTY");
     return output;
 }
+function assertNoCredentialReflection(output: string, apiKey: string): void {
+    if (!apiKey) return;
+    // Providers must keep authentication out of answers. Block common accidental
+    // reflections before they reach parsing, persistence, or the user response.
+    const bytes = Buffer.from(apiKey, "utf8");
+    const base64 = bytes.toString("base64");
+    const hex = bytes.toString("hex");
+    const representations = new Set([apiKey, base64, base64.replace(/=+$/, ""), bytes.toString("base64url"), hex, hex.toUpperCase()]);
+    // Short values occur in unauthenticated gateways and fixtures. Matching them
+    // inside ordinary prose would reject valid answers (for example, key="k").
+    const escaped = apiKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const labelled = new RegExp(`\\b(?:authorization|(?:x-goog-)?api[-_ ]?key|secret|token)\\b["']?\\s*[:=]\\s*["']?\\s*(?:bearer\\s+)?(${escaped})(?=$|[\\s"',;}\\]<])`, "gi");
+    let candidate = output;
+    for (let pass = 0; pass <= 2; pass++) {
+        const reflected = apiKey.length >= 12
+            ? [...representations].some(value => candidate.includes(value))
+            : candidate.trim() === apiKey || [...candidate.matchAll(labelled)].some(match => match[1] === apiKey);
+        if (reflected) throw new AIError("AI_RESPONSE_ERROR");
+        if (pass === 2) break;
+        // Normalize only the detection copy; preserve legitimate answer text.
+        const normalized = candidate.replace(/\\u([\da-f]{4})|\\\//gi, (_match, code: string | undefined) => code ? String.fromCharCode(parseInt(code, 16)) : "/")
+            .replace(/(?:%[\da-f]{2})+/gi, encoded => {
+                try { return decodeURIComponent(encoded); } catch { return encoded; }
+            });
+        if (normalized === candidate) break;
+        candidate = normalized;
+    }
+}
+
 export async function sendAI(
     p: AIProvider,
     m: AIModel,
@@ -308,10 +337,12 @@ export async function sendAI(
                         : 0,
                 );
             }
-            return await decodeResponse(res, p.protocol, signal, bytes=>{
+            const output = await decodeResponse(res, p.protocol, signal, bytes=>{
                 if(bytes<=0)return;
                 timing.firstByteMs ??= elapsed();timing.lastByteMs=elapsed();timing.receivedBytes+=bytes;
             });
+            assertNoCredentialReflection(output, p.apiKey);
+            return output;
         });
     } catch (e) {
         // Only the URL gate proves rejection before dispatch. Network failures remain unknown.

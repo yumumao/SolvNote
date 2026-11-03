@@ -23,6 +23,7 @@ import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedb
 import { frontendLogger } from "@/lib/frontend-logger";
 import { TextInputZone } from "@/components/text-input-zone";
 import { DirectTextEditor } from "@/components/direct-text-editor";
+import { ProjectFooter } from "@/components/project-footer";
 
 type RestorableAnalyzeJob = {
     kind: string;
@@ -603,6 +604,7 @@ function HomeContent() {
                 )}
 
             </div>
+            <ProjectFooter language={language} className="mt-8 border-t pt-5" />
         </main>
     );
 }

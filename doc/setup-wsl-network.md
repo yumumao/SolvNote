@@ -41,7 +41,7 @@ netsh interface portproxy delete v4tov4 listenport=3000 listenaddress=0.0.0.0
 ### 方法二：使用 WSL 镜像网络模式（Windows 11 22H2+）
 
 #### 1. 创建或编辑 `.wslconfig`
-在 Windows 用户目录（`C:\Users\YourUsername\`）创建 `.wslconfig` 文件：
+在 Windows 用户目录（`C:\Users\<用户名>`）创建 `.wslconfig` 文件：
 ```ini
 [wsl2]
 networkingMode=mirrored

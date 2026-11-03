@@ -55,8 +55,8 @@ export function cleanMarkdown(content: string): string {
             .trim();
 
         return text;
-    } catch (error) {
-        console.error("Failed to strip markdown:", error);
+    } catch {
+        console.error("Failed to strip markdown");
         // Fallback to original content if stripping fails
         return content;
     }

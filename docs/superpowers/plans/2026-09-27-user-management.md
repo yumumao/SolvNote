@@ -11,7 +11,7 @@
 
 **Tech Stack:** Next.js App Router route handlers, NextAuth v4 Credentials/JWT, Prisma 5.22 with SQLite, bcryptjs, Zod, React, Vitest, Playwright, Cloudflare Turnstile Siteverify.
 
-**Spec:** `D:\work\github\solvnote\.codex\logs\20260926-user-management-export-auth-draft.md` and `D:\work\github\solvnote\.codex\logs\20260926-user-policy-and-naming.md`.
+**Spec:** [User management and account policy](../../user-management.md) and [privacy and security boundaries](../../privacy-security.md).
 
 ## Global Constraints
 

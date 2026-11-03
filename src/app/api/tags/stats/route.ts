@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
+import { requireUser, aiJson, aiErrorResponse, AIRequestError } from "@/lib/ai-access";
 
 const logger = createLogger('api:tags:stats');
 
@@ -13,8 +13,10 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
     try {
-        // 获取所有错题的知识点
+        const user = await requireUser(req);
+        // Only aggregate the authenticated user's private tags.
         const errorItems = await prisma.errorItem.findMany({
+            where: { userId: user.id },
             select: {
                 knowledgePoints: true,
             },
@@ -35,7 +37,7 @@ export async function GET(req: Request) {
                         });
                     }
                 } catch (e) {
-                    logger.warn({ knowledgePoints: item.knowledgePoints }, 'Failed to parse knowledgePoints for item');
+                    logger.warn('Failed to parse knowledgePoints for item');
                 }
             }
         });
@@ -45,16 +47,13 @@ export async function GET(req: Request) {
             .map(([tag, count]) => ({ tag, count }))
             .sort((a, b) => b.count - a.count);
 
-        return NextResponse.json({
+        return aiJson({
             stats: sortedStats,
             total: errorItems.length,
             uniqueTags: sortedStats.length,
         });
     } catch (error) {
-        logger.error({ error }, 'Error getting tag stats');
-        return NextResponse.json(
-            { message: "Failed to get tag statistics" },
-            { status: 500 }
-        );
+        if (error instanceof AIRequestError) return aiErrorResponse(error);
+        return aiJson({ message: "Failed to get tag statistics" }, 500);
     }
 }

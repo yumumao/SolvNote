@@ -11,7 +11,7 @@
 
 **Tech Stack:** Next.js App Router route handlers, Node runtime, existing `sealExport`, `loadAIConfig`, portable v1 schema, Zod, React, and Vitest.
 
-**Spec:** `D:\work\github\solvnote\.codex\接续入口.md`顶部确认：导出默认关闭，仅环境变量明确开启才允许；保留导入和编辑；普通登录不增加邮箱验证码，也不复用ScanDex邮箱码。
+**Spec:** [用户管理与AI权限规则](../../user-management.md)：导出默认关闭，仅环境变量明确开启才允许；保留导入和编辑；普通登录不增加邮箱验证码，也不复用ScanDex邮箱码。
 
 ## Global Constraints
 

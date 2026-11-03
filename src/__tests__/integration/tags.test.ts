@@ -49,6 +49,12 @@ describe('/api/tags', () => {
     });
 
     describe('GET /api/tags/stats (标签统计)', () => {
+        beforeEach(() => {
+            const user = { id: 'user-123', role: 'user', isActive: true, expiresAt: null, sessionVersion: 0 };
+            mocks.mockGetServerSession.mockResolvedValue({ user });
+            mocks.mockPrismaUser.findUnique.mockResolvedValue(user);
+        });
+
         it('应该返回标签使用频率统计', async () => {
             const errorItems = [
                 { knowledgePoints: '["一元一次方程", "移项"]' },

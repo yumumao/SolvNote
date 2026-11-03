@@ -42,12 +42,13 @@ const DialogContent = React.forwardRef<
                 e.preventDefault();
             }}
             className={cn(
-                "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
+                "group/dialog fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
                 className
             )}
             {...props}
         >
-            <DialogPrimitive.Close className="sticky top-4 z-20 ml-auto -mb-9 mr-0 inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-500 shadow-sm ring-offset-background backdrop-blur-sm transition-[background-color,color,box-shadow,transform] hover:bg-red-200 hover:text-red-700 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-2 active:scale-95 disabled:pointer-events-none">
+            {/* Share the header's grid cell; padding-free flex dialogs need their own inset. */}
+            <DialogPrimitive.Close className="sticky top-0 col-start-1 row-start-1 self-start z-20 ml-auto -mb-9 mr-0 group-[.p-0]/dialog:top-4 group-[.p-0]/dialog:mr-4 inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-500 shadow-sm ring-offset-background backdrop-blur-sm transition-[background-color,color,box-shadow,transform] hover:bg-red-200 hover:text-red-700 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-2 active:scale-95 disabled:pointer-events-none">
                 <X className="h-4 w-4" />
                 <span className="sr-only">关闭弹窗</span>
             </DialogPrimitive.Close>
@@ -63,7 +64,7 @@ const DialogHeader = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
     <div
         className={cn(
-            "flex flex-col space-y-1.5 text-center sm:text-left",
+            "col-start-1 row-start-1 flex flex-col space-y-1.5 pr-12 group-[.p-0]/dialog:pr-16 text-center sm:text-left",
             className
         )}
         {...props}

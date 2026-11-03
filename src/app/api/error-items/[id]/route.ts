@@ -34,8 +34,8 @@ export async function GET(
                 id: id,
             },
             include: {
-                subject: true,
-                tags: true, // 包含标签关联
+                subject: { where: { userId: user.id } },
+                tags: { where: { OR: [{ isSystem: true }, { userId: user.id }] } },
             },
         });
 
@@ -79,7 +79,7 @@ export async function PUT(
 
         const errorItem = await prisma.errorItem.findUnique({
             where: { id },
-            include: { subject: true },
+            include: { subject: { where: { userId: user.id } } },
         });
 
         if (!errorItem) {
@@ -181,7 +181,7 @@ export async function PUT(
         const updated = await prisma.errorItem.update({
             where: { id },
             data: updateData,
-            include: { tags: true },
+            include: { tags: { where: { OR: [{ isSystem: true }, { userId: user.id }] } } },
         });
 
         return NextResponse.json(updated);

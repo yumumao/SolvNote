@@ -35,7 +35,7 @@ export async function GET(
             include: {
                 _count: {
                     select: {
-                        errorItems: true,
+                        errorItems: { where: { userId: user.id } },
                     },
                 },
             },
@@ -106,7 +106,7 @@ export async function PUT(
             include: {
                 _count: {
                     select: {
-                        errorItems: true,
+                        errorItems: { where: { userId: user.id } },
                     },
                 },
             },
@@ -147,6 +147,8 @@ export async function DELETE(
             include: {
                 _count: {
                     select: {
+                        // Deleting a subject cascades to every linked item. Keep
+                        // this guard unfiltered even for legacy foreign links.
                         errorItems: true,
                     },
                 },

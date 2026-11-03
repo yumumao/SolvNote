@@ -16,6 +16,8 @@
  *   logger.debug({ data }, 'Debug information');
  */
 
+import { privateLogContext } from './log-privacy';
+
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
 const LOG_LEVELS: Record<LogLevel, number> = {
@@ -162,7 +164,7 @@ function createLogFunction(level: LogLevel, baseContext: LogContext = {}): (ctx:
       context = {};
       message = ctx;
     } else {
-      context = ctx;
+      context = privateLogContext(ctx) as LogContext;
       message = msg || '';
     }
 
@@ -209,6 +211,12 @@ function createLogFunction(level: LogLevel, baseContext: LogContext = {}): (ctx:
 }
 
 function createLoggerInstance(baseContext: LogContext = {}): Logger {
+  baseContext = {
+    ...privateLogContext(baseContext) as LogContext,
+    // Labels are supplied by code, never from request bodies.
+    module: baseContext.module,
+    env: process.env.NODE_ENV,
+  };
   const module = baseContext.module || '';
   const moduleTag = module ? `[${module}]` : '';
 
@@ -223,6 +231,7 @@ function createLoggerInstance(baseContext: LogContext = {}): Logger {
 
     // Decorative box logging (only in development)
     box: (title: string, content?: string | LogContext, emoji: string = '📋') => {
+      content = privateLogContext(content) as string | LogContext | undefined;
       if (!isPrettyMode) {
         // In production, just log as JSON
         const ctx = typeof content === 'string' ? { content } : (content || {});

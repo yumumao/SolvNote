@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { calculateGrade } from "@/lib/grade-calculator";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { unauthorized, forbidden, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { inferSubjectFromName } from "@/lib/knowledge-tags";
@@ -67,6 +67,14 @@ export async function POST(req: Request) {
             return unauthorized("No user found in DB");
         }
 
+        // Validate notebook ownership before creating tags or an item.
+        const subject = subjectId
+            ? await prisma.subject.findUnique({ where: { id: subjectId } })
+            : null;
+        if (subjectId && (!subject || subject.userId !== user.id)) {
+            return forbidden("Not authorized to add to this notebook");
+        }
+
         // ========== 去重检查：2秒内同一用户提交相同题目视为重复 ==========
         const DEDUP_WINDOW_MS = 2000; // 2秒去重窗口
         const questionTextPrefix = questionText?.substring(0, 100) || ''; // 取前100字符比较
@@ -83,7 +91,7 @@ export async function POST(req: Request) {
                     },
                 },
                 include: {
-                    tags: true,
+                    tags: { where: { OR: [{ isSystem: true }, { userId: user.id }] } },
                 },
             });
 
@@ -113,7 +121,6 @@ export async function POST(req: Request) {
         const tagConnections: { id: string }[] = [];
 
         // 推断学科
-        const subject = await prisma.subject.findUnique({ where: { id: subjectId || '' } });
         const subjectKey = inferSubjectFromName(subject?.name ?? null) || 'other';
         logger.debug({ subjectId, subjectName: subject?.name, subjectKey }, 'Subject inferred');
 
@@ -180,7 +187,7 @@ export async function POST(req: Request) {
                     },
                 },
                 include: {
-                    tags: true,
+                    tags: { where: { OR: [{ isSystem: true }, { userId: user.id }] } },
                 },
             });
 

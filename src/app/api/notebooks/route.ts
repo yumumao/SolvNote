@@ -33,7 +33,7 @@ export async function GET() {
             include: {
                 _count: {
                     select: {
-                        errorItems: true,
+                        errorItems: { where: { userId: user.id } },
                     },
                 },
             },
@@ -63,7 +63,7 @@ export async function GET() {
                 include: {
                     _count: {
                         select: {
-                            errorItems: true,
+                            errorItems: { where: { userId: user.id } },
                         },
                     },
                 },
@@ -128,7 +128,7 @@ export async function POST(req: Request) {
             include: {
                 _count: {
                     select: {
-                        errorItems: true,
+                        errorItems: { where: { userId: user.id } },
                     },
                 },
             },

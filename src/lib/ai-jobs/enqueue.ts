@@ -21,7 +21,7 @@ export async function enqueue(
             if (typeof id !== "string") throw Error("INVALID_REQUEST");
             const item = await prisma.errorItem.findFirst({
                 where: { id, userId: user.id },
-                include: { subject: true },
+                include: { subject: { where: { userId: user.id } } },
             });
             if (!item)
                 return NextResponse.json(

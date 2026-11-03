@@ -73,7 +73,9 @@ upload_test_output*.txt
 # Private runtime and AI credentials
 .codex/
 .claude/
+.shared/
 *.bak
+*Zone.Identifier
 *.aiconfig.enc.json
 *.key
 *.db-wal

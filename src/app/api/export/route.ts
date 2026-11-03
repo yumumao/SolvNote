@@ -47,7 +47,7 @@ export async function GET(req: Request) {
         const errorItems = await prisma.errorItem.findMany({
             where: userFilter,
             include: {
-                tags: true,
+                tags: exportAll ? true : { where: { OR: [{ isSystem: true }, { userId: user.id }] } },
             },
         });
 

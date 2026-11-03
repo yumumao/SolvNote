@@ -148,8 +148,8 @@ export async function GET(req: Request) {
             where: whereClause,
             orderBy: { createdAt: "desc" },
             include: {
-                subject: true,
-                tags: true,
+                subject: { where: { userId: user.id } },
+                tags: { where: { OR: [{ isSystem: true }, { userId: user.id }] } },
             },
             skip: (page - 1) * pageSize,
             take: pageSize,

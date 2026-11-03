@@ -11,7 +11,7 @@
 
 **Tech Stack:** Next.js App Router, NextAuth v4, Prisma 5.22/SQLite, Zod, React, Vitest, Playwright, and the existing `src/lib/ai-config` vault/schema.
 
-**Spec:** `D:\work\github\solvnote\.codex\接续入口.md`顶部已确认的AI权限口径，以及`docs/superpowers/plans/2026-09-27-user-management.md`的注册事务接口。
+**Spec:** [用户管理与AI权限规则](../../user-management.md)，以及[用户管理计划](2026-09-27-user-management.md)的注册事务接口。
 
 ## Global Constraints
 

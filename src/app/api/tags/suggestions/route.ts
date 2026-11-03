@@ -53,7 +53,12 @@ export async function GET(req: Request) {
                 parentId: true,
                 userId: true,
                 isSystem: true,
-                children: { select: { id: true } }, // Check if leaf
+                children: {
+                    where: {
+                        OR: [{ isSystem: true }, ...(user ? [{ userId: user.id }] : [])],
+                    },
+                    select: { id: true },
+                }, // Only visible children determine whether this tag is a leaf.
             },
         });
 

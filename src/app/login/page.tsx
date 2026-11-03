@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TurnstileWidget, useRegistrationStatus } from "@/components/turnstile-widget";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { ProjectFooter } from "@/components/project-footer";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -59,7 +60,7 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-gray-50 p-4">
             <Card className="w-full max-w-md">
                 <CardHeader><CardTitle className="text-2xl text-center">{t.auth?.login?.title || "Login"}</CardTitle></CardHeader>
                 <CardContent>
@@ -86,6 +87,7 @@ export default function LoginPage() {
                     </form>
                 </CardContent>
             </Card>
+            <ProjectFooter language={language} showSelfHosting className="max-w-md" />
         </div>
     );
 }

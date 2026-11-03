@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getServerSession } from "next-auth";
 import { unauthorized, internalError, badRequest, forbidden } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { AIRequestError, aiErrorResponse, readAIJson } from "@/lib/ai-access";
 
 const logger = createLogger('api:import');
 
@@ -117,12 +118,7 @@ export async function POST(req: Request) {
     }
 
     try {
-        const contentLength = req.headers.get('content-length');
-        if (contentLength && parseInt(contentLength, 10) > 50 * 1024 * 1024) {
-            return badRequest("Request body too large (max 50MB)");
-        }
-
-        const body = await req.json() as ImportData;
+        const body = await readAIJson(req, 50 * 1024 * 1024) as ImportData;
 
         // 验证数据格式
         if (!body.version || !body.user || !Array.isArray(body.errorItems)) {
@@ -354,6 +350,7 @@ export async function POST(req: Request) {
             stats,
         });
     } catch (error) {
+        if (error instanceof AIRequestError) return aiErrorResponse(error);
         logger.error({ error, userId: user.id }, 'Import failed');
         return internalError("Failed to import data");
     }

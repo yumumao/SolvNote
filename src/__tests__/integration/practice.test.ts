@@ -115,7 +115,8 @@ describe('/api/practice', () => {
         it('错题查询限定owner，不采用客户端伪造的userId', async () => {
             expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', userId: 'other-user' }))).status).toBe(202);
             expect(mocks.mockPrismaErrorItem.findFirst).toHaveBeenCalledExactlyOnceWith({
-                where: { id: 'error-item-1', userId: 'user-123' }, include: { subject: true },
+                where: { id: 'error-item-1', userId: 'user-123' },
+                include: { subject: { where: { userId: 'user-123' } } },
             });
             expect(mocks.mockPrismaErrorItem.findUnique).not.toHaveBeenCalled();
             const [owner, , input] = mocks.mockSubmitJob.mock.calls[0];

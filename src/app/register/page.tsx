@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TurnstileWidget, useRegistrationStatus } from "@/components/turnstile-widget";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { ProjectFooter } from "@/components/project-footer";
 import { Eye, EyeOff } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import type { RegisterRequest } from "@/types/api";
@@ -80,7 +81,7 @@ export default function RegisterPage() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-gray-50 p-4">
             <Card className="w-full max-w-md">
                 <CardHeader>
                     <CardTitle className="text-2xl text-center">
@@ -241,6 +242,7 @@ export default function RegisterPage() {
                     </form>
                 </CardContent>
             </Card>
+            <ProjectFooter language={language} showSelfHosting className="max-w-md" />
         </div>
     );
 }

@@ -139,6 +139,9 @@ describe('/api/error-items', () => {
         });
 
         it('应该成功创建错题并关联到科目', async () => {
+            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+                id: 'subject-math-id', name: 'Synthetic notebook', userId: mockUser.id,
+            });
             const errorItemData = {
                 questionText: '计算 1 + 1',
                 answerText: '2',
@@ -581,6 +584,10 @@ describe('/api/error-items', () => {
     });
 
     describe('PATCH /api/error-items/[id]/notes (更新笔记)', () => {
+        beforeEach(() => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValue({ id: 'error-item-1', userId: mockUser.id });
+        });
+
         it('应该成功更新用户笔记', async () => {
             const existingItem = {
                 id: 'error-item-1',

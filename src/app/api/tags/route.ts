@@ -144,6 +144,19 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Name and subject are required' }, { status: 400 });
         }
 
+        if (parentId) {
+            const parent = await prisma.knowledgeTag.findFirst({
+                where: {
+                    id: parentId,
+                    subject,
+                    OR: [{ isSystem: true }, { userId: session.user.id }],
+                },
+            });
+            if (!parent) {
+                return NextResponse.json({ error: 'Parent tag is not accessible' }, { status: 403 });
+            }
+        }
+
         // 检查是否已存在 (在同一父节点下)
         // 注意：Prisma对于可选字段的查询需要特殊处理。如果是null，必须显式指定。
         const existing = await prisma.knowledgeTag.findFirst({

@@ -39,7 +39,7 @@ export async function GET(req: Request) {
         const errorItemsWithSubject = await prisma.errorItem.findMany({
             where: { userId },
             include: {
-                subject: true
+                subject: { where: { userId } }
             }
         });
 
