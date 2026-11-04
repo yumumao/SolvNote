@@ -1,6 +1,7 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
 import Link from "next/link";
+import {AIModelOrderSettings} from "./ai-model-order-settings";
 import type {AIModel,AIProvider,PortableConfig} from "@/lib/ai-config/schema";
 type SafeProvider=Omit<AIProvider,"apiKey"> & {hasKey:boolean};
 type DraftProvider=SafeProvider & {newKey:string;clearKey:boolean};
@@ -36,6 +37,7 @@ export function PrivateAISettings(){
   {notice&&<p role="status" className="rounded border p-3">{notice}</p>}
   <button className={css} type="button" disabled={busy} onClick={()=>void load()}>重新加载</button>
   <section><h2 className="text-lg font-semibold">已授权站点模型</h2>{site.length?<ul>{site.map(m=><li key={m.id}>{m.name} · {m.providerName}</li>)}</ul>:<p>暂无站点授权；仍可添加自己的私有AI。</p>}</section>
+  {loaded&&<AIModelOrderSettings refreshKey={revision}/>}
   <fieldset disabled={busy||!loaded} className="space-y-4">
    <legend className="text-lg font-semibold">私有连接（最多10个）</legend>
    {providers.map(p=><section key={p.id} className="space-y-3 rounded border p-4">
@@ -51,7 +53,8 @@ export function PrivateAISettings(){
     {models.filter(m=>m.providerId===p.id).map(m=><div key={m.id} className="space-y-2 border-t pt-3">
      <label className="block">模型名称 <input className={css} value={m.name} maxLength={200} onChange={e=>model(m.id,{name:e.target.value})}/></label>
      <label className="block">上游模型ID <input className={css} value={m.model} maxLength={200} onChange={e=>model(m.id,{model:e.target.value})}/></label>
-     {(["text","vision"] as const).map(cap=><label key={cap} className="mr-4"><input type="checkbox" checked={m.capabilities.includes(cap)} onChange={e=>model(m.id,{capabilities:e.target.checked?[...m.capabilities,cap]:m.capabilities.filter(c=>c!==cap)})}/>{cap==="text"?"文本":"读图"}</label>)}
+     {m.capabilities.includes("text")?<span className="mr-4">文字 ✓（默认）</span>:<span className="mr-4">仅图片（旧配置保留） <button type="button" className={css} onClick={()=>model(m.id,{capabilities:["text",...m.capabilities]})}>允许文字输入</button></span>}
+     <label className="mr-4"><input type="checkbox" checked={m.capabilities.includes("vision")} disabled={!m.capabilities.includes("text")} onChange={e=>model(m.id,{capabilities:e.target.checked?[...m.capabilities,"vision"]:m.capabilities.filter(c=>c!=="vision")})}/>读图</label>
      <label><input type="checkbox" checked={m.enabled} onChange={e=>model(m.id,{enabled:e.target.checked})}/>启用模型</label>{" "}
      <button className={css} type="button" onClick={()=>setModels(ms=>ms.filter(x=>x.id!==m.id))}>删除模型</button>
     </div>)}

@@ -30,6 +30,8 @@ model User {
   mustChangePassword Boolean @default(false)
   revision Int @default(1)
   aiAccessInitialized Boolean @default(false)
+  aiModelOrder String?
+  aiOrderRevision Int @default(0)
   aiModelGrants AiUserModelGrant[]
   aiConfiguration UserAiConfiguration?
   inviteUse InvitationUse?
@@ -327,6 +329,7 @@ model AiAccessPolicy {
  id String @id
  revision Int @default(1)
  initialized Boolean @default(false)
+ defaultOrder String?
 }
 model AiSiteModelAccess {
  modelId String @id

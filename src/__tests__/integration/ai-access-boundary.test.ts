@@ -9,6 +9,7 @@ const s=vi.hoisted(()=>({db:null as unknown as PrismaClient,actor:"admin",send:v
 vi.mock("@/lib/prisma",()=>({get prisma(){return s.db;}}));
 vi.mock("@/lib/config",()=>({getAppConfig:()=>{throw Error("REAL_CONFIG_FORBIDDEN");}}));
 vi.mock("@/lib/auth",()=>({authOptions:{}}));
+vi.mock("@/lib/security/turnstile",()=>({verifyTurnstileToken:vi.fn(async()=>true),getTurnstilePublicConfig:()=>({turnstileConfigured:true,turnstileSiteKey:"synthetic-site-key"})}));
 vi.mock("@/lib/user-management/live-session",()=>({getLiveUser:async(id:string)=>{
  const u=await s.db.user.findUnique({where:{id}});return u?.isActive && (!u.expiresAt || u.expiresAt>new Date())?u:null;
 }}));
@@ -37,6 +38,9 @@ import { GET as POLICY_GET, PATCH as POLICY_PATCH } from "@/app/api/admin/ai/acc
 import { GET as GRANTS_GET, PATCH as GRANTS_PATCH } from "@/app/api/admin/ai/access/users/[id]/route";
 import { GET as PRIVATE_GET, PUT as PRIVATE_PUT } from "@/app/api/user/ai-config/route";
 import { POST as PRIVATE_IMPORT } from "@/app/api/user/ai-config/import/route";
+import { GET as MODEL_GET } from "@/app/api/user/ai-config/models/route";
+import { PATCH as ORDER_PATCH } from "@/app/api/user/ai-config/order/route";
+import { saveUserModelOrder } from "@/lib/ai-access/order-store";
 import type { PortableConfig } from "@/lib/ai-config/schema";
 const site=():PortableConfig=>({version:1,providers:[{id:"p",name:"Site provider",protocol:"chat",baseUrl:"https://example.com/v1",apiKey:"synthetic-site-only",enabled:true}],models:[1,2,3,4].map(n=>({id:`m${n}`,providerId:"p",name:`M${n}`,model:`m${n}`,enabled:true,capabilities:["text"]})),chains:{text:["m1","m2","m3","m4"],vision:[]}});
 const req=(method:string,body?:unknown,origin="https://example.com")=>new Request("https://example.com/api/ai",{method,headers:{origin,"content-type":"application/json"},...(body?{body:JSON.stringify(body)}:{})});
@@ -322,5 +326,148 @@ describe.sequential('stable history reads do not reconcile by writing on each po
   expect(writes).toEqual([]);
   await s.db.aiUserModelGrant.deleteMany({where:{userId:'alice'}});
   await expect(readJob('alice',job.id)).rejects.toThrow('AI_MODEL_ACCESS_REVOKED');
+ });
+});
+
+async function setupOrder(){
+ const config=site();config.models[0].capabilities=["text","vision"];config.models[1].capabilities=["text","vision"];config.chains.vision=["m1","m2"];
+ await saveAIConfig(config,1);await setPolicy();await s.db.$transaction(tx=>createInitialAiGrants(tx,"alice"));s.actor="alice";
+ return (await MODEL_GET(req("GET"))).json();
+}
+async function addPersonalOrderModel(){
+ const c:PortableConfig={version:1,providers:[{id:"personal",name:"Personal",protocol:"chat",baseUrl:"https://personal.example/v1",apiKey:"synthetic-personal-order",enabled:true}],models:[{id:"own",providerId:"personal",name:"Own",model:"own",capabilities:["text","vision"],enabled:true}],chains:{text:["own"],vision:["own"]}};
+ await savePrivateConfig("alice",c,0,0);
+ return (await loadEffectiveAIConfig("alice")).privateModelIds[0];
+}
+const orderBody=async(chains:{text:string[];vision:string[]})=>({revisions:(await loadEffectiveAIConfig("alice")).revisions,chains});
+describe.sequential("per-user text and vision order security",()=>{
+ it("sorts built-ins without personal AI, persists reload, and actually dispatches each category",async()=>{
+  const dto=await setupOrder();const chains={text:["m3","m2","m1"],vision:["m2","m1"]};
+  expect((await ORDER_PATCH(req("PATCH",{revisions:dto.revisions,chains}))).status).toBe(200);
+  const saved=await (await MODEL_GET(req("GET"))).json();expect(saved.chains).toEqual(chains);
+  expect(JSON.stringify(saved)).not.toMatch(/apiKey|baseUrl|synthetic-site-only/);
+  await run(()=>callChain("prompt","text",undefined,x=>x,{role:"solve"}));
+  expect(s.send.mock.calls[0][1].id).toBe("m3");expect(s.send.mock.calls[0][0].baseUrl).toBe("https://example.com/v1");
+  expect(s.send.mock.calls[0][0].apiKey).toBe("synthetic-site-only");
+  await run(()=>callChain("prompt","text","synthetic-image",x=>x,{role:"recognize"}));expect(s.send.mock.calls[1][1].id).toBe("m2");
+ });
+ it("mixes private models independently and never sends a site credential to the private recipient",async()=>{
+  await setupOrder();const own=await addPersonalOrderModel();
+  const chains={text:[own,"m2","m1","m3"],vision:["m1",own,"m2"]};
+  expect((await ORDER_PATCH(req("PATCH",await orderBody(chains)))).status).toBe(200);
+  await run(()=>callChain("p","t",undefined,x=>x));
+  expect(s.send.mock.calls[0][0]).toMatchObject({baseUrl:"https://personal.example/v1",apiKey:"synthetic-personal-order"});
+  expect((await loadEffectiveAIConfig("alice")).config.chains).toEqual(chains);
+  s.actor="bob";const other=await (await MODEL_GET(req("GET"))).json();expect(other.chains.text).not.toContain(own);
+ });
+ it("rejects undeclared fields, missing/duplicate/ungranted IDs, capability crossover and cross-origin writes",async()=>{
+  await setupOrder();const valid=await orderBody({text:["m1","m2","m3"],vision:["m1","m2"]});
+  for(const body of [{...valid,userId:"bob"},{...valid,apiKey:"synthetic-attack"},{...valid,baseUrl:"https://evil.example"},{...valid,chains:{...valid.chains,providers:[]}},{...valid,chains:{text:["m1","m1","m3"],vision:["m1","m2"]}},{...valid,chains:{text:["m4","m2","m3"],vision:["m1","m2"]}},{...valid,chains:{text:["m1"],vision:["m1","m2"]}},{...valid,chains:{text:valid.chains.text,vision:["m1","m3"]}}]){
+   const result=await ORDER_PATCH(req("PATCH",body));expect(result.status).toBe(400);expect(await result.text()).not.toMatch(/synthetic-site-only|synthetic-attack|evil.example/);
+  }
+  expect((await ORDER_PATCH(req("PATCH",valid,"https://evil.example"))).status).toBe(403);
+  expect((await s.db.user.findUniqueOrThrow({where:{id:"alice"}})).aiOrderRevision).toBe(valid.revisions.order);
+ });
+ it("rejects stale order/catalog/private revisions and a revoked session inside the mutation",async()=>{
+  await setupOrder();const body=await orderBody({text:["m3","m1","m2"],vision:["m2","m1"]});
+  expect((await ORDER_PATCH(req("PATCH",body))).status).toBe(200);
+  expect((await ORDER_PATCH(req("PATCH",body))).status).toBe(409);
+  const beforePrivate=await orderBody(body.chains);await addPersonalOrderModel();
+  expect((await ORDER_PATCH(req("PATCH",beforePrivate))).status).toBe(409);
+  const current=await loadEffectiveAIConfig("alice");await s.db.user.update({where:{id:"alice"},data:{sessionVersion:{increment:1}}});
+  await expect(saveUserModelOrder("alice",{revisions:current.revisions,chains:current.config.chains},0)).rejects.toMatchObject({status:403});
+ });
+ it("revoked and disabled models disappear even if old order records contain them",async()=>{
+  await setupOrder();await ORDER_PATCH(req("PATCH",await orderBody({text:["m3","m1","m2"],vision:["m2","m1"]})));
+  await s.db.aiUserModelGrant.deleteMany({where:{userId:"alice",modelId:"m3"}});
+  expect((await loadEffectiveAIConfig("alice")).config.chains.text).toEqual(["m1","m2"]);
+  const c=site();c.models[0].enabled=false;c.chains.text=c.chains.text.filter(id=>id!=="m1");await saveAIConfig(c,2);
+  expect((await loadEffectiveAIConfig("alice")).config.chains.text).toEqual(["m2"]);
+ });
+ it("rejects disabled, expired and password-reset accounts without changing preferences",async()=>{
+  await setupOrder();const body=await orderBody({text:["m1","m2","m3"],vision:["m1","m2"]});
+  for(const data of [{isActive:false},{isActive:true,expiresAt:new Date(0)},{expiresAt:null,mustChangePassword:true}]){
+   await s.db.user.update({where:{id:"alice"},data});expect((await ORDER_PATCH(req("PATCH",body))).status).toBe(403);
+  }
+  expect((await s.db.user.findUniqueOrThrow({where:{id:"alice"}})).aiOrderRevision).toBe(body.revisions.order);
+ });
+ it("snapshots separate administrator defaults for future users without rewriting existing users",async()=>{
+  await setupOrder();s.actor="admin";const p=await policy();
+  const chains={text:["m3","m1","m2"],vision:["m2","m1"]};
+  expect((await POLICY_PATCH(req("PATCH",{revision:p.revision,defaultModelIds:["m1","m2","m3"],allowedModelIds:["m1","m2","m3","m4"],defaultChains:chains}))).status).toBe(200);
+  await s.db.user.create({data:{id:"new",email:"new@example.invalid",password:"unused",aiAccessInitialized:true}});
+  await s.db.$transaction(tx=>createInitialAiGrants(tx,"new"));
+  expect((await loadEffectiveAIConfig("new")).config.chains).toEqual(chains);
+  expect((await loadEffectiveAIConfig("alice")).config.chains).toEqual({text:["m1","m2","m3"],vision:["m1","m2"]});
+  await setPolicy(["m4","m2","m3"]);expect((await loadEffectiveAIConfig("new")).config.chains).toEqual(chains);
+ });
+ it("admin reorders existing built-ins, keeps personal positions, hides private IDs and checks concurrent member edits",async()=>{
+  await setupOrder();const own=await addPersonalOrderModel();
+  const chains={text:["m1",own,"m2","m3"],vision:[own,"m1","m2"]};
+  await ORDER_PATCH(req("PATCH",await orderBody(chains)));s.actor="admin";
+  const before=await (await GRANTS_GET(req("GET"),ctx("alice"))).json();expect(JSON.stringify(before)).not.toContain(own);expect(JSON.stringify(before)).not.toMatch(/apiKey|baseUrl|synthetic-/);
+  const patch={revision:before.revision,modelIds:["m1","m2","m3"],orderRevision:before.orderRevision,chains:{text:["m3","m2","m1"],vision:["m2","m1"]}};
+  s.actor="alice";await ORDER_PATCH(req("PATCH",await orderBody(chains)));s.actor="admin";
+  expect((await GRANTS_PATCH(req("PATCH",patch),ctx("alice"))).status).toBe(409);
+  const fresh=await (await GRANTS_GET(req("GET"),ctx("alice"))).json();patch.orderRevision=fresh.orderRevision;
+  expect((await GRANTS_PATCH(req("PATCH",patch),ctx("alice"))).status).toBe(200);
+  expect((await loadEffectiveAIConfig("alice")).config.chains).toEqual({text:["m3",own,"m2","m1"],vision:[own,"m2","m1"]});
+  s.actor="alice";expect((await GRANTS_PATCH(req("PATCH",patch),ctx("alice"))).status).toBe(403);
+ });
+ it("admin can sort an inactive existing account and rejects private IDs in built-in defaults",async()=>{
+  await setupOrder();s.actor="admin";await s.db.user.update({where:{id:"alice"},data:{isActive:false}});
+  const dto=await (await GRANTS_GET(req("GET"),ctx("alice"))).json();
+  expect((await GRANTS_PATCH(req("PATCH",{revision:dto.revision,modelIds:["m1","m2"],orderRevision:dto.orderRevision,chains:{text:["m2","m1"],vision:["m1","m2"]}}),ctx("alice"))).status).toBe(200);
+  const p=await policy();expect((await POLICY_PATCH(req("PATCH",{revision:p.revision,defaultModelIds:["m1","m2","m3"],allowedModelIds:["m1","m2","m3","m4"],defaultChains:{text:["m1","m2","private/alien"],vision:["m1","m2"]}}))).status).toBe(400);
+ });
+});
+
+describe.sequential("ordering upgrade and stale-slot regressions",()=>{
+ it("admin cannot revive an invisible revoked slot ahead of personal models",async()=>{
+  await setupOrder();const own=await addPersonalOrderModel();
+  await ORDER_PATCH(req("PATCH",await orderBody({text:["m3",own,"m1","m2"],vision:[own,"m1","m2"]})));
+  await s.db.aiUserModelGrant.deleteMany({where:{userId:"alice",modelId:"m3"}});
+  expect((await loadEffectiveAIConfig("alice")).config.chains.text).toEqual([own,"m1","m2"]);
+  s.actor="admin";const dto=await (await GRANTS_GET(req("GET"),ctx("alice"))).json();
+  expect((await GRANTS_PATCH(req("PATCH",{revision:dto.revision,orderRevision:dto.orderRevision,modelIds:["m1","m2","m3"],chains:{text:["m3","m2","m1"],vision:["m2","m1"]}}),ctx("alice"))).status).toBe(200);
+  expect((await loadEffectiveAIConfig("alice")).config.chains.text).toEqual([own,"m3","m2","m1"]);
+ });
+ it("admin view matches live order for upgraded accounts without saved preferences",async()=>{
+  await setupOrder();await s.db.user.update({where:{id:"alice"},data:{aiModelOrder:null}});
+  for(const [i,id] of ["m3","m1","m2"].entries())await s.db.aiUserModelGrant.update({where:{userId_modelId:{userId:"alice",modelId:id}},data:{rank:i+1}});
+  s.actor="admin";const dto=await (await GRANTS_GET(req("GET"),ctx("alice"))).json();
+  expect(dto.chains).toEqual((await loadEffectiveAIConfig("alice")).config.chains);
+ });
+ it("newly enabled capabilities preserve the displayed new-user default order",async()=>{
+  await setPolicy();const before=await policy();expect(before.defaultChains.vision).toEqual([]);
+  const c=site();c.models[0].capabilities=["text","vision"];c.models[1].capabilities=["text","vision"];c.chains.vision=["m2","m1"];await saveAIConfig(c,1);
+  const displayed=await policy();expect(displayed.defaultChains.vision).toEqual(["m1","m2"]);
+  await s.db.$transaction(tx=>createInitialAiGrants(tx,"alice"));
+  expect((await loadEffectiveAIConfig("alice")).config.chains).toEqual(displayed.defaultChains);
+ });
+});
+
+describe.sequential("new personal models keep their current positions",()=>{
+ it("admin additions append after a newly added personal model even before member resaves order",async()=>{
+  await setupOrder();await ORDER_PATCH(req("PATCH",await orderBody({text:["m1","m2","m3"],vision:["m1","m2"]})));
+  const own=await addPersonalOrderModel();s.actor="admin";
+  const dto=await (await GRANTS_GET(req("GET"),ctx("alice"))).json();
+  expect((await GRANTS_PATCH(req("PATCH",{revision:dto.revision,orderRevision:dto.orderRevision,modelIds:["m1","m2","m3","m4"],chains:{text:["m1","m2","m3","m4"],vision:["m1","m2"]}}),ctx("alice"))).status).toBe(200);
+  expect((await loadEffectiveAIConfig("alice")).config.chains.text).toEqual(["m1","m2","m3",own,"m4"]);
+ });
+});
+
+describe.sequential("self-registration snapshots channel order",()=>{
+ it("the real registration service copies defaults and later edits leave the snapshot unchanged",async()=>{
+  await setupOrder();s.actor="admin";const p=await policy();
+  const chains={text:["m2","m3","m1"],vision:["m2","m1"]};
+  expect((await POLICY_PATCH(req("PATCH",{revision:p.revision,allowedModelIds:["m1","m2","m3","m4"],defaultModelIds:["m1","m2","m3"],defaultChains:chains}))).status).toBe(200);
+  await s.db.registrationSettings.upsert({where:{id:"site"},create:{id:"site",enabled:true,inviteRequired:false},update:{enabled:true,inviteRequired:false}});
+  const {registerUser}=await import("@/lib/user-management/registration");
+  const user=await registerUser({email:"new-self@example.invalid",name:"Synthetic",password:"synthetic-only-password",turnstileToken:"synthetic-token"});
+  expect((await loadEffectiveAIConfig(user.id)).config.chains).toEqual(chains);
+  await setPolicy(["m4","m1","m3"]);
+  expect((await loadEffectiveAIConfig(user.id)).config.chains).toEqual(chains);
+  expect(s.network).not.toHaveBeenCalled();
  });
 });

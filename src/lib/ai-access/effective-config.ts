@@ -9,6 +9,7 @@ import { initializeLegacyAiGrants } from "./registration";
 import { unprotectUserConfig } from "./private-vault";
 import { mergeEffectiveConfig, privateRuntimeConfig } from "./compose";
 import { listConfiguredSiteModels, siteModelFingerprint } from "./policy";
+import { applyOrder, readOrder } from "./model-order";
 /** Server-only. Never pass this result into a response or a client component. No process cache. */
 export async function loadEffectiveAIConfig(userId:string){
     await requireLiveAiUser(userId);
@@ -33,7 +34,9 @@ export async function loadEffectiveAIConfigInTx(tx:AiAccessTx,userId:string){
         const privateRow=await tx.userAiConfiguration.findUnique({where:{userId}});
         const privateConfig=privateRuntimeConfig(userId,privateRow?unprotectUserConfig(userId,privateRow.payload):emptyConfig());
         const config=mergeEffectiveConfig(site,allowed,privateConfig);
-        return {config,revision:row.revision,revisions:{site:row.revision,policy:policy.revision,private:privateRow?.revision??0},siteModelIds:config.models.filter(m=>!m.id.startsWith("private/")).map(m=>m.id),privateModelIds:config.models.filter(m=>m.id.startsWith("private/")).map(m=>m.id)};
+        const order=await tx.user.findUniqueOrThrow({where:{id:userId},select:{aiModelOrder:true,aiOrderRevision:true}});
+        config.chains=applyOrder(config.chains,readOrder(order.aiModelOrder));
+        return {config,revision:row.revision,revisions:{site:row.revision,policy:policy.revision,private:privateRow?.revision??0,order:order.aiOrderRevision},siteModelIds:config.models.filter(m=>!m.id.startsWith("private/")).map(m=>m.id),privateModelIds:config.models.filter(m=>m.id.startsWith("private/")).map(m=>m.id)};
 }
 export async function assertModelAllowedForUser(userId:string,modelId:string):Promise<void>{
     const {config}=await loadEffectiveAIConfig(userId);

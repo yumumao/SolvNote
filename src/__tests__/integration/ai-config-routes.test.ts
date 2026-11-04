@@ -244,7 +244,7 @@ beforeAll(async () => {
     await shared.db.$executeRawUnsafe(
         'CREATE TABLE "AiConfiguration" ("id" TEXT NOT NULL PRIMARY KEY, "revision" INTEGER NOT NULL DEFAULT 1, "payload" TEXT NOT NULL, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL)',
     );
-    await shared.db.$executeRawUnsafe('CREATE TABLE "AiAccessPolicy" ("id" TEXT NOT NULL PRIMARY KEY, "revision" INTEGER NOT NULL DEFAULT 1, "initialized" BOOLEAN NOT NULL DEFAULT false)');
+    await shared.db.$executeRawUnsafe('CREATE TABLE "AiAccessPolicy" ("id" TEXT NOT NULL PRIMARY KEY, "revision" INTEGER NOT NULL DEFAULT 1, "initialized" BOOLEAN NOT NULL DEFAULT false, "defaultOrder" TEXT)');
     await shared.db.$executeRawUnsafe('CREATE TABLE "AiSiteModelAccess" ("modelId" TEXT NOT NULL PRIMARY KEY, "fingerprint" TEXT NOT NULL, "isAllowed" BOOLEAN NOT NULL DEFAULT true, "defaultRank" INTEGER, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME NOT NULL)');
     await shared.db.$executeRawUnsafe(`CREATE TABLE "User" ("id" TEXT NOT NULL PRIMARY KEY, "role" TEXT NOT NULL DEFAULT 'user', "isActive" BOOLEAN NOT NULL DEFAULT true, "expiresAt" DATETIME, "mustChangePassword" BOOLEAN NOT NULL DEFAULT false, "sessionVersion" INTEGER NOT NULL DEFAULT 0)`);
     [envelope, otherEnvelope, overlappingEnvelope] = await Promise.all([

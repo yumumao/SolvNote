@@ -16,7 +16,8 @@ export async function ensureInitialAiPolicy(): Promise<void> {
         const allowed = new Set(rows.map(m => m.modelId));
         const defaults = [...new Set([...config.chains.text,...config.chains.vision,...config.models.map(m => m.id)])].filter(id => allowed.has(id)).slice(0,3);
         if (!defaults.length) return;
-        const changed = await tx.aiAccessPolicy.updateMany({where:{id:"site",initialized:false,revision:policy.revision},data:{initialized:true,revision:{increment:1}}});
+        const order=(kind:"text"|"vision")=>[...new Set([...config.chains[kind],...defaults])].filter(id=>defaults.includes(id)&&config.models.some(m=>m.id===id&&m.capabilities.includes(kind)));
+        const changed = await tx.aiAccessPolicy.updateMany({where:{id:"site",initialized:false,revision:policy.revision},data:{initialized:true,revision:{increment:1},defaultOrder:JSON.stringify({text:order("text"),vision:order("vision")})}});
         if (changed.count !== 1) return;
         await tx.aiSiteModelAccess.updateMany({data:{defaultRank:null}});
         for (const [i,modelId] of defaults.entries()) await tx.aiSiteModelAccess.update({where:{modelId},data:{defaultRank:i+1}});
