@@ -405,7 +405,7 @@ export function SettingsDialog() {
                 </DialogHeader>
 
                 <Tabs defaultValue="general" className="w-full">
-                    <TabsList className={`grid w-full grid-cols-4 ${(session?.user as any)?.role === 'admin' ? 'sm:grid-cols-7' : 'sm:grid-cols-4'} gap-1 h-auto`}>
+                    <TabsList className={`grid w-full grid-cols-4 ${(session?.user as any)?.role === 'admin' ? 'sm:grid-cols-7' : 'sm:grid-cols-5'} gap-1 h-auto`}>
                         <TabsTrigger value="general" className="px-2 sm:px-3">
                             <Languages className="h-4 w-4 sm:mr-2" />
                             <span className="hidden sm:inline">{t.settings?.tabs?.general || "General"}</span>
@@ -414,12 +414,12 @@ export function SettingsDialog() {
                             <User className="h-4 w-4 sm:mr-2" />
                             <span className="hidden sm:inline">{t.settings?.tabs?.account || "Account"}</span>
                         </TabsTrigger>
+                        <TabsTrigger value="ai" className="px-2 sm:px-3" aria-label={language === "en" ? "AI settings" : "AI设置"}>
+                            <Bot className="h-4 w-4 sm:mr-2" />
+                            <span className="hidden sm:inline">{language === "en" ? "AI settings" : "AI设置"}</span>
+                        </TabsTrigger>
                         {(session?.user as any)?.role === 'admin' && (
                             <>
-                                <TabsTrigger value="ai" className="px-2 sm:px-3">
-                                    <Bot className="h-4 w-4 sm:mr-2" />
-                                    <span className="hidden sm:inline">{t.settings?.tabs?.ai || "AI Provider"}</span>
-                                </TabsTrigger>
                                 <TabsTrigger value="prompts" className="px-2 sm:px-3">
                                     <MessageSquareText className="h-4 w-4 sm:mr-2" />
                                     <span className="hidden sm:inline">{t.settings?.tabs?.prompts || "Prompts"}</span>
@@ -576,9 +576,9 @@ export function SettingsDialog() {
 
                     {/* AI Tab */}
                     <TabsContent value="ai" className="space-y-4 py-4">
-                        <p>AI配置已升级为持久化多供应商配置。旧设置首次使用时自动迁移，后续请在新页面管理。</p>
-                        {session?.user?.role === "admin" && <a className="underline" href="/admin/ai">管理站点AI配置、模型顺序与导入</a>}
-                        <p><a className="underline" href="/ai-settings">管理我的AI与私有配置</a></p>
+                        <p>{language === "en" ? "Add your own AI connections and models, or import a JSON configuration file. Your personal configuration is available only to your account." : "添加自己的AI连接和模型，或导入JSON配置文件。个人配置仅当前账户可用。"}</p>
+                        <p><a className="underline" href="/ai-settings">{language === "en" ? "Manage or import my AI configuration" : "设置或导入我的AI配置"}</a></p>
+                        {session?.user?.role === "admin" && <p><a className="underline" href="/admin/ai">管理站点AI配置、模型顺序与导入</a></p>}
                         <p><a className="underline" href="/ai-tasks">查看我的AI任务</a></p>
                     </TabsContent>
 

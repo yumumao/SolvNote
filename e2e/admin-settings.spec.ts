@@ -18,7 +18,7 @@ test('Admin saves two-layer connections, models and capabilities without exposin
     await page.goto('/');
 
     await page.getByRole('button', { name: '设置' }).click();
-    await page.getByRole('tab', { name: /AI Provider|AI 提供商/ }).click();
+    await page.getByRole('tab', { name: /AI settings|AI设置/ }).click();
     await page.getByRole('link', { name: '管理站点AI配置、模型顺序与导入' }).click();
     await expect(page.getByRole('heading', { name: 'AI设置', exact: true })).toBeVisible();
     await expect(page.getByLabel('AI设置保存栏', { exact: true }).getByRole('status')).toContainText('配置仅管理员可见');
