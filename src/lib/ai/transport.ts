@@ -305,13 +305,14 @@ export async function sendAI(
     let responseReceived = false;
     const start=Date.now();
     const elapsed=()=>Math.max(0,Date.now()-start);
-    const timing:AITransportDiagnostics={protocol:p.protocol,requestedStream:request.body.stream===true,receivedBytes:0,elapsedMs:0};
+    const body = JSON.stringify(request.body);
+    const timing:AITransportDiagnostics={protocol:p.protocol,requestedStream:request.body.stream===true,requestBytes:Buffer.byteLength(body,"utf8"),receivedBytes:0,elapsedMs:0};
     try {
         const { withSafeAIResponse } = await import("../ai-url");
         return await withSafeAIResponse(request.url, {
             method: "POST",
             headers: request.headers,
-            body: JSON.stringify(request.body),
+            body,
             signal,
             redirect: "error",
         }, async (res) => {
@@ -343,6 +344,9 @@ export async function sendAI(
             });
             assertNoCredentialReflection(output, p.apiKey);
             return output;
+        }, "text", phase => {
+            const field = {dns:"dnsMs",requestCreated:"requestCreatedMs",requestHeaders:"requestHeadersMs",requestSent:"requestSentMs"} as const;
+            timing[field[phase]] ??= elapsed();
         });
     } catch (e) {
         // Only the URL gate proves rejection before dispatch. Network failures remain unknown.

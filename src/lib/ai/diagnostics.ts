@@ -36,6 +36,11 @@ export type AITransportDiagnostics = {
     protocol: "chat" | "azure" | "responses" | "responses_codex" | "gemini";
     requestedStream: boolean;
     responseFormat?: "sse" | "json";
+    requestBytes?: number;
+    dnsMs?: number;
+    requestCreatedMs?: number;
+    requestHeadersMs?: number;
+    requestSentMs?: number;
     headersMs?: number;
     firstByteMs?: number;
     lastByteMs?: number;
@@ -49,6 +54,7 @@ export function safeTransportDiagnostics(value: unknown): AITransportDiagnostics
     if(!["chat","azure","responses","responses_codex","gemini"].includes(String(v.protocol)) || typeof v.requestedStream!=="boolean" || !bounded(v.receivedBytes,32*1024*1024) || !bounded(v.elapsedMs,3600000))return;
     const out:AITransportDiagnostics={protocol:v.protocol as AITransportDiagnostics["protocol"],requestedStream:v.requestedStream,receivedBytes:v.receivedBytes,elapsedMs:v.elapsedMs};
     if(v.responseFormat==="sse" || v.responseFormat==="json")out.responseFormat=v.responseFormat;
-    for(const key of ["headersMs","firstByteMs","lastByteMs"] as const)if(bounded(v[key],3600000))out[key]=v[key];
+    if(bounded(v.requestBytes,128*1024*1024))out.requestBytes=v.requestBytes;
+    for(const key of ["dnsMs","requestCreatedMs","requestHeadersMs","requestSentMs","headersMs","firstByteMs","lastByteMs"] as const)if(bounded(v[key],3600000))out[key]=v[key];
     return out;
 }

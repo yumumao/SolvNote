@@ -7,6 +7,7 @@ import {
 } from "undici";
 
 import { localAIProxy, pinnedProxyRequest, proxyPublicDNS } from "./ai-local-proxy";
+import { traceAIRequest, type AIRequestPhase } from "./ai-request-trace";
 
 type Address = { address: string; family: number };
 
@@ -181,9 +182,11 @@ export async function withSafeAIResponse<T>(
     init: RequestInit,
     consume: (response: Response) => Promise<T>,
     responseKind: "text" | "image" = "text",
+    onPhase?: (phase: AIRequestPhase) => void,
 ): Promise<T> {
     init.signal?.throwIfAborted();
     const { url, addresses, proxy } = await vettedTarget(input, init.signal ?? undefined);
+    try { onPhase?.("dns"); } catch { /* Diagnostics must not alter a request. */ }
     const proxied = proxy ? pinnedProxyRequest(proxy, url, addresses[0].address) : undefined;
     const agent = proxied?.agent ?? new Agent({
         connect: {
@@ -217,14 +220,14 @@ export async function withSafeAIResponse<T>(
                 ? AbortSignal.any([init.signal, deadline])
                 : deadline;
             signal.throwIfAborted();
-            const response = await undiciFetch(proxied?.target ?? url, {
+            const response = await traceAIRequest(() => undiciFetch(proxied?.target ?? url, {
                 method: init.method,
                 headers: Array.from(headers.entries()),
                 body: init.body as UndiciRequestInit["body"],
                 signal,
                 redirect: "error",
                 dispatcher: agent,
-            });
+            }), onPhase);
             if (response.status >= 300 && response.status < 400)
                 throw new AITransportError();
             const limit = (responseKind === "image" ? 16 : 2) * 1024 * 1024;

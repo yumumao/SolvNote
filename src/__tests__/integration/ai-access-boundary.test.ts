@@ -341,6 +341,23 @@ async function addPersonalOrderModel(){
 }
 const orderBody=async(chains:{text:string[];vision:string[]})=>({revisions:(await loadEffectiveAIConfig("alice")).revisions,chains});
 describe.sequential("per-user text and vision order security",()=>{
+ it("changing new-user defaults leaves the administrator's exact vision request unchanged",async()=>{
+  await setupOrder();s.actor="admin";
+  const {buildRequest}=await import("@/lib/ai/transport");
+  const send=()=>aiRun.run({userId:"admin",signal:new AbortController().signal,deadline:Date.now()+10000,attempts:0,maxAttempts:3},
+    ()=>callChain("synthetic prompt","synthetic text","data:image/png;base64,eA==",x=>x,{role:"recognize"}));
+  await send();
+  const before=s.send.mock.calls[0];
+  const p=await policy();
+  expect((await POLICY_PATCH(req("PATCH",{revision:p.revision,defaultModelIds:["m1","m2","m3"],allowedModelIds:["m1","m2","m3","m4"],defaultChains:{text:["m3","m2","m1"],vision:["m2","m1"]}}))).status).toBe(200);
+  await send();
+  const after=s.send.mock.calls[1];
+  expect(after.slice(0,5)).toEqual(before.slice(0,5));
+  expect(after[7]).toBe("transcription");
+  expect(buildRequest(after[0],after[1],after[2],after[3],after[4],after[6],after[7]))
+    .toEqual(buildRequest(before[0],before[1],before[2],before[3],before[4],before[6],before[7]));
+  expect((await loadEffectiveAIConfig("admin")).config.chains.vision).toEqual(["m1","m2"]);
+ });
  it("sorts built-ins without personal AI, persists reload, and actually dispatches each category",async()=>{
   const dto=await setupOrder();const chains={text:["m3","m2","m1"],vision:["m2","m1"]};
   expect((await ORDER_PATCH(req("PATCH",{revisions:dto.revisions,chains}))).status).toBe(200);

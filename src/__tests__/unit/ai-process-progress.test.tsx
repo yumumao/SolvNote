@@ -13,3 +13,13 @@ it('selects only newest step by time even with older running snapshots in unsort
 it.each(['success','failed','cancelled','unknown'])('does not animate older running records if the latest is %s',async state=>{await render([step('1'),step('2',state)]);expect(host.querySelector('[role=progressbar]')).toBeNull();});
 it('stops after parent becomes inactive, cancellation, or poll error even with a stale running record',async()=>{await render([step('1')]);expect(host.querySelector('[role=progressbar]')).not.toBeNull();await render([step('1')],false);expect(host.querySelector('[role=progressbar]')).toBeNull();});
 it('does not animate finished running records, empty lists or inactive history by default',async()=>{await render([step('1','running','2026-10-03T00:00:02Z')]);expect(host.querySelector('[role=progressbar]')).toBeNull();await render([]);expect(host.querySelector('[role=progressbar]')).toBeNull();await act(async()=>root.render(<AIProcess steps={[step('1')]} messages={[]}/>));expect(host.querySelector('[role=progressbar]')).toBeNull();});
+it('shows send evidence without claiming upstream acceptance and keeps old records compatible',async()=>{
+ const record={...step('1','unknown','2026-10-03T00:03:00Z'),transport:{protocol:'chat' as const,requestedStream:true,receivedBytes:0,elapsedMs:180000,requestBytes:2048,dnsMs:12,requestCreatedMs:13,requestHeadersMs:20,requestSentMs:22}};
+ await render([record],false);
+ expect(host.textContent).toContain('发送诊断：请求2048字节');
+ expect(host.textContent).toContain('不代表上游已受理');
+ expect(host.textContent).toContain('响应头未收到');
+ await render([{...record,transport:{protocol:'chat',requestedStream:true,receivedBytes:0,elapsedMs:180000}}],false);
+ expect(host.textContent).not.toContain('发送诊断');
+ expect(host.textContent).toContain('响应头未收到');
+});
