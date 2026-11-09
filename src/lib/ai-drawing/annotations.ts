@@ -40,13 +40,16 @@ export function diagramConditionLines(annotations:DiagramAnnotation[],notes:Diag
 }
 export type LabelLayout={annotation:DiagramAnnotation;x:number;y:number;width:number;path?:string;bounds:Point[];hidden:boolean};
 /** Layout uses the already locked screen mapping, never changes source coordinates or scale. */
-export function layoutDiagramAnnotations(annotations:DiagramAnnotation[],get:(id:string)=>Point,pointLabels:Array<Point & {id:string}>,mapText:(p:Point)=>Point=p=>p):LabelLayout[]{
+export function layoutDiagramAnnotations(annotations:DiagramAnnotation[],get:(id:string)=>Point,pointLabels:Array<Point & {id:string}>,mapText:(p:Point)=>Point=p=>p,textFrame?:{left:number;right:number;top:number;bottom:number}):LabelLayout[]{
  const occupied=pointLabels.map(p=>({left:p.x-6,top:p.y-31,right:p.x+11+p.id.length*18,bottom:p.y+7}));
  return annotations.map(annotation=>{
   if(annotation.kind==='text'){
    const {x,y}=mapText(annotation),width=Math.max(18,[...annotation.text].length*18);
-   // Explicit source text must remain visible, even when it overlaps a point label.
-   return {annotation,x,y,width,hidden:false,bounds:[{x:x-width/2-4,y:y-14},{x:x+width/2+4,y:y+14}]};
+   const bounds=[{x:x-width/2-4,y:y-14},{x:x+width/2+4,y:y+14}];
+   // Remote prose belongs in the complete caption, not in the viewport bounds.
+   // Do not guess a new anchor/region or change the saved source coordinates.
+   const gap=64,hidden=!!textFrame&&(bounds[1].x<textFrame.left-gap||bounds[0].x>textFrame.right+gap||bounds[1].y<textFrame.top-gap||bounds[0].y>textFrame.bottom+gap);
+   return {annotation,x,y,width,hidden,bounds:hidden?[]:bounds};
   }
   const a=get(annotation.a),b=get(annotation.b),width=Math.max(18,[...annotation.text].length*18);
   let x:number,y:number,path:string|undefined,hidden=false;

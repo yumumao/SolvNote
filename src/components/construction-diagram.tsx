@@ -27,16 +27,17 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
     const circleBounds=(c:Geometry["circles"][number]|Geometry["derivedCircles"][number])=>{const p=map(c),r=c.radius*scale;return [{x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r}];};
     const points=new Map(allPoints.map(p=>[p.id,p]));
     const originals=new Map(geometry.basePoints.map(p=>[p.id,p]));
-    const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})),map);
+    const topLeft=map({x:minX,y:maxY}),bottomRight=map({x:maxX,y:minY});
+    const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})),map,{left:topLeft.x,right:bottomRight.x,top:topLeft.y,bottom:bottomRight.y});
     const labelBounds=labels.flatMap(l=>l.bounds);
     const captionLines=diagramConditionLines(geometry.annotations||[],geometry.notes||[]);
-    const hiddenLabels=labels.some(l=>l.hidden);
+    const hiddenLabels=labels.some(l=>l.hidden&&l.annotation.kind!=='text');
     const crowdedLabelNote="部分标记因图内拥挤或角区过小，仅在图注保留，请对照原图核验位置。";
     // A shared document may already show these source conditions under its redraw.
     // Compare complete display lines (including status), not keywords or geometry.
     const shown=new Set(shownConditionLines);
     const remainingLines=captionLines.filter(line=>!shown.has(line));
-    const hiddenUnshown=labels.some(l=>l.hidden&&diagramConditionLines([l.annotation],[]).some(line=>!shown.has(line)));
+    const hiddenUnshown=labels.some(l=>l.hidden&&l.annotation.kind!=='text'&&diagramConditionLines([l.annotation],[]).some(line=>!shown.has(line)));
     const displayedCaptionLines=hiddenUnshown?[...remainingLines,crowdedLabelNote]:remainingLines;
     // Standalone SVGs must remain self-contained even if their embedding hid duplicates.
     const allCaptionLines=hiddenLabels?[...captionLines,crowdedLabelNote]:captionLines;

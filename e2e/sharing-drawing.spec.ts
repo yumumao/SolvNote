@@ -13,7 +13,8 @@ for(const device of [{name:'desktop',width:1280,height:900,dpr:1},{name:'phone',
    await context.route('**/*',route=>{if(new URL(route.request().url()).origin!==baseURL){blocked.push('external');return route.abort();}return route.continue();});
    const pixels=await sharp({create:{width:80,height:60,channels:3,background:'white'}}).png().toBuffer(),image='data:image/png;base64,'+pixels.toString('base64');
    const plan={title:'合成阴影扇形',points:[{id:'O',x:0,y:0},{id:'A',x:4,y:0},{id:'B',x:0,y:4}],segments:[['O','A'],['O','B']],arcs:[{center:'O',start:'A',end:'B',direction:'ccw'}],regions:[{contours:[{start:'O',edges:[{kind:'segment',to:'A'},{kind:'arc',center:'O',to:'B',direction:'ccw'},{kind:'segment',to:'O'}]}]}],annotations:[{kind:'text',x:1.3,y:1.3,text:'阴影甲：12cm²'}],steps:[]};
-   const analysis=Array.from({length:16},(_,i)=>`### 第${i+1}步\n\n先核对题目条件，再分割拼补并比较面积。$12+8=20$。`).join('\n\n');
+   plan.annotations.push({kind:'text',x:60,y:40,text:'远处说明：甲表示阴影区域，单位为平方厘米'});
+   const analysis=Array.from({length:16},(_,i)=>`### 第${i+1}步\n\n先核对题目条件，再分割拼补并比较面积。$12+8=20$。${i===0?'\n\n$$1+2+3+4+5+6+7+8+9+10+11+12=78$$':''}`).join('\n\n');
    const result=ParsedQuestionSchema.parse({questionText:'合成扇形题目',answerText:'合成答案',analysis,subject:'数学',knowledgePoints:[],requiresImage:true});
    const view:DialogueView={id:'synthetic-share',state:'answered',revision:2,roundsUsed:1,roundLimit:10,roundOpen:false,roundAttempts:1,attemptLimit:6,roundElapsedMs:0,timeLimitMs:600000,isAdmin:false,activeJobId:null,input:JobInputSchema.parse({questionText:result.questionText,imageBase64:image,originalImageBase64:image}),messages:[],questions:[],steps:[],result,updatedAt:new Date().toISOString()};
    await context.route('**/api/ai/conversations/synthetic-share*',r=>r.fulfill({json:view}));
@@ -29,10 +30,14 @@ for(const device of [{name:'desktop',width:1280,height:900,dpr:1},{name:'phone',
    expect(drawingCalls).toBe(2);
    await page.getByRole('button',{name:'分享解题过程',exact:true}).click();
    const dialog=page.locator('dialog[data-solution-dialog]');
+   await expect(dialog.locator('button[aria-pressed]')).toHaveAttribute('aria-pressed',String(device.name==='phone'));
+   await expect(dialog.locator('[data-solution-document]')).toHaveAttribute('data-fit-width',String(device.name==='phone'));
    await dialog.getByLabel('附带题干',{exact:true}).check();
    await expect(dialog.getByLabel('附带原题重绘（第一步）',{exact:true})).toBeChecked();
    await expect(dialog.locator('[data-base-review-note]')).toContainText('尚未按新纠正说明更新');
    await expect(dialog.locator('[data-diagram-annotation="text"]')).toContainText('阴影甲：12cm²');
+   await expect(dialog.locator('[data-diagram-caption]')).toContainText('远处说明：甲表示阴影区域，单位为平方厘米');
+   const compactBox=await dialog.locator('svg').getAttribute('viewBox');expect(Number(compactBox!.split(' ')[2])).toBeLessThan(850);
    const width=await dialog.locator('[data-solution-document]').evaluate(e=>e.getBoundingClientRect().width);
    await dialog.getByRole('button',{name:'生成分享长图',exact:true}).click();
    await expect(dialog.locator('[data-solution-image-stack] img')).toHaveCount(1);

@@ -10,8 +10,9 @@ import {parseSolutionSnapshot} from "@/lib/solution-snapshot";
 import type { SolutionImage } from "@/lib/solution-images";
 
 type PreviewImage=SolutionImage&{url:string};
+const narrowScreen=()=>typeof window!=='undefined'&&window.matchMedia?.('(max-width: 767px)').matches===true;
 export function SolutionShare({analysis,questionText,answerText,originalImage,basePlan,baseNeedsReview,auxiliaryPlan,initialSelection,allowNewReader=true,inline=false,fitWidth=false}:{analysis:string;initialSelection?:SolutionSnapshot;allowNewReader?:boolean;inline?:boolean;fitWidth?:boolean}&SolutionContext){
- const makeSnapshot=()=>parseSolutionSnapshot({analysis,questionText,answerText,originalImage,basePlan,baseNeedsReview,auxiliaryPlan,fitWidth:initialSelection?.fitWidth??fitWidth,includeLatex:initialSelection?.includeLatex??true,includeQuestion:initialSelection?.includeQuestion??false,includeAnswer:initialSelection?.includeAnswer??true,includeOriginal:initialSelection?.includeOriginal??false,includeBase:initialSelection?.includeBase??false,includeAuxiliary:initialSelection?.includeAuxiliary??true});
+ const makeSnapshot=(useDeviceWidth=false)=>parseSolutionSnapshot({analysis,questionText,answerText,originalImage,basePlan,baseNeedsReview,auxiliaryPlan,fitWidth:initialSelection?.fitWidth??(fitWidth||(useDeviceWidth&&narrowScreen())),includeLatex:initialSelection?.includeLatex??true,includeQuestion:initialSelection?.includeQuestion??false,includeAnswer:initialSelection?.includeAnswer??true,includeOriginal:initialSelection?.includeOriginal??false,includeBase:initialSelection?.includeBase??false,includeAuxiliary:initialSelection?.includeAuxiliary??true});
  const [snapshot,setSnapshot]=useState<SolutionSnapshot|null>(()=>inline?makeSnapshot():null);
  const [busy,setBusy]=useState(false),[message,setMessage]=useState(''),[text,setText]=useState<string|null>(null),[images,setImages]=useState<PreviewImage[]>([]);
  const [fileShare,setFileShare]=useState(false);
@@ -22,7 +23,7 @@ export function SolutionShare({analysis,questionText,answerText,originalImage,ba
  useEffect(()=>{const d=dialog.current;if(!d)return;if(snapshot&&!d.open){if(d.showModal)d.showModal();else d.setAttribute('open','')}else if(!snapshot&&d.open){if(d.close)d.close();else d.removeAttribute('open')}},[snapshot]);
  const close=()=>{operation.current++;lock.current=false;setBusy(false);setSnapshot(null);setText(null);clearImages()};
 
- const open=()=>{clearImages();setMessage('');setText(null);setSnapshot(makeSnapshot())};
+ const open=()=>{clearImages();setMessage('');setText(null);setSnapshot(makeSnapshot(true))};
  const select=(field:'includeQuestion'|'includeAnswer'|'includeOriginal'|'includeBase'|'includeAuxiliary'|'fitWidth'|'includeLatex',checked:boolean)=>{
   if(lock.current)return;clearImages();setMessage('');
   setSnapshot(s=>{
@@ -67,7 +68,7 @@ export function SolutionShare({analysis,questionText,answerText,originalImage,ba
      {snapshot.auxiliaryPlan&&<label className="flex items-center gap-2"><input type="checkbox" checked={!!snapshot.includeAuxiliary} onChange={e=>select('includeAuxiliary',e.target.checked)}/>附带辅助线图（第二步）</label>}
     </fieldset>
     <div className="flex flex-wrap items-center gap-2 mb-3">{!inline&&allowNewReader&&<Button type="button" size="sm" variant="outline" onClick={()=>read(snapshot)}>在新标签预览</Button>}<ReadingModeButton fitWidth={!!snapshot.fitWidth} disabled={busy} onChange={value=>select('fitWidth',value)}/><Button type="button" size="sm" disabled={busy} onClick={generate}>生成分享长图</Button><div role="group" aria-label="文字分享选项" className="inline-flex h-8 shrink-0 items-stretch rounded-md"><Button type="button" size="sm" variant="outline" className="rounded-r-none" aria-expanded={textOpen} onClick={prepareText}>{textOpen?'收起分享文字':'准备分享文字'}</Button><label className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-r-md border border-l-0 bg-background px-2.5 text-sm shadow-xs"><input type="checkbox" checked={snapshot.includeLatex!==false} disabled={busy} onChange={e=>select('includeLatex',e.target.checked)}/>保留LaTeX标记</label></div></div>
-    <p className="text-xs text-muted-foreground mb-3">优先生成一张长图，按当前预览宽度和设备像素密度保持清晰；超过安全尺寸时才按步骤拆分。修改勾选后需要重新生成。公式可切换适合宽度模式。</p>
+    <p className="text-xs text-muted-foreground mb-3">优先生成一张长图，按当前预览宽度和设备像素密度保持清晰；超过安全尺寸时才按步骤拆分。小屏幕默认适合宽度，图片沿用当前阅读模式，可手动切换。修改勾选后需要重新生成。</p>
     <AIWorkProgress active={busy} label="本地分享图片生成" compact/>
     {message&&<p role="status" className="my-3 text-sm">{message}</p>}
     {text!==null&&<section className="space-y-2 my-4" aria-label="分享文字"><textarea aria-label="可复制的分享文字" readOnly value={text} className="w-full min-h-48 rounded-md border p-3 text-sm" onFocus={e=>e.currentTarget.select()}/><div className="flex flex-wrap gap-2"><Button type="button" size="sm" onClick={copy}>复制文字</Button>{typeof navigator!=='undefined'&&!!navigator.share&&<Button type="button" size="sm" variant="outline" onClick={shareText}>系统分享文字</Button>}<Button type="button" size="sm" variant="outline" onClick={()=>saveBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),'solvnote-solution.txt')}>下载文本</Button></div></section>}
@@ -94,7 +95,7 @@ export function SolutionShare({analysis,questionText,answerText,originalImage,ba
  if(inline)return <div data-solution-actions data-solution-inline className="min-w-0 space-y-3">{workspace}</div>;
  if(!analysis.trim())return null;
  return <div data-solution-actions className="space-y-2">
-  <div className="flex flex-wrap gap-2">{allowNewReader&&<Button type="button" size="sm" variant="outline" onClick={()=>read(makeSnapshot())}>新标签阅读</Button>}<Button type="button" size="sm" variant="outline" onClick={open}>分享解题过程</Button></div>
+  <div className="flex flex-wrap gap-2">{allowNewReader&&<Button type="button" size="sm" variant="outline" onClick={()=>read(makeSnapshot(true))}>新标签阅读</Button>}<Button type="button" size="sm" variant="outline" onClick={open}>分享解题过程</Button></div>
   {!snapshot&&message&&<p role="status" className="text-xs text-muted-foreground">{message}</p>}
   <dialog data-solution-dialog ref={dialog} aria-labelledby={title} onCancel={e=>{e.preventDefault();e.stopPropagation();close()}} onKeyDown={e=>{if(e.key==='Escape')e.stopPropagation()}} className="fixed inset-0 m-auto hidden w-[calc(100%-1rem)] max-w-4xl max-h-[90dvh] flex-col overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/50 open:flex">
    {snapshot&&<>
