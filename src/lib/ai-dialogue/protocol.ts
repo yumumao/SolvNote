@@ -3,6 +3,7 @@ import type { FollowUpMode } from "./types";
 import { JSON_OUTPUT_RULES, parseModelJSON } from "./json";
 import { generateGradeInstruction, geometryConstructionInstruction } from "../ai/prompts";
 import { AIError } from "../ai/transport";
+import type { AIDiagnostic } from "../ai/diagnostics";
 import { AngleSchema, GeometrySchema, RegionSchema } from "./geometry-schema";
 const questions = z.array(z.string().trim().min(1).max(1000)).min(1).max(8);
 export const TranscriptSchema = z.object({
@@ -23,19 +24,23 @@ export function angleLabelKey(value: string) {
 function normalizeGeometryAngle(value: unknown) {
     if (!record(value)) return value;
     let vertex = typeof value.vertex === "string" ? value.vertex.trim() : value.vertex;
-    let arms = value.arms ?? value.rays;
-    const name = value.angleName ?? value.angle;
-    const named = typeof name === "string"
-        ? name.trim().match(/^∠?([A-Za-z])([A-Za-z])([A-Za-z])$/)
-        : null;
-    const invalid = () => { throw new AIError("AI_RESPONSE_ERROR", true, 0, "GEOMETRY_INVALID"); };
+    const invalid = (diagnostic: AIDiagnostic = "GEOMETRY_CONFLICT"): never => { throw new AIError("AI_RESPONSE_ERROR", true, 0, diagnostic); };
+    const sameArms = (a: unknown, b: unknown) => Array.isArray(a) && Array.isArray(b) && a.length === 2 && b.length === 2 &&
+        ((a[0] === b[0] && a[1] === b[1]) || (a[0] === b[1] && a[1] === b[0]));
+    const names = [value.angleName, value.angle].filter(name => name !== undefined).map(name => {
+        const match = typeof name === "string" ? name.trim().match(/^∠?([A-Za-z])([A-Za-z])([A-Za-z])$/) : null;
+        if (!match) return invalid("GEOMETRY_SCHEMA_FIELDS");
+        return {vertex:match[2],arms:[match[1],match[3]]};
+    });
+    const named = names[0];
+    if (names.some(name => name.vertex !== named.vertex || !sameArms(name.arms, named.arms))) invalid();
     if (named) {
-        if (vertex !== undefined && vertex !== named[2]) invalid();
-        if (vertex === undefined) vertex = named[2];
-        if (arms === undefined) arms = [named[1], named[3]];
+        if (vertex !== undefined && vertex !== named.vertex) invalid();
+        if (vertex === undefined) vertex = named.vertex;
     }
-    if (Array.isArray(arms)) {
-        arms = arms.map(arm => {
+    const normalizeArms = (input: unknown, wholeRays: boolean) => {
+        if (!Array.isArray(input)) return input;
+        return input.map(arm => {
             if (typeof arm !== "string") return arm;
             const point = arm.trim();
             const explicitRay = point.match(/^(?:射线\s*|ray\s+)([A-Za-z])([A-Za-z])$/i);
@@ -46,17 +51,26 @@ function normalizeGeometryAngle(value: unknown) {
             // Bare multi-letter arms may be real point names. Convert only a rays
             // field or a whole-ray spelling corroborated by the explicit angle name.
             if (typeof vertex === "string" && vertex.length === 1 && /^[A-Za-z]{2}$/.test(point)) {
-                if (value.arms === undefined && value.rays !== undefined) {
+                if (wholeRays) {
                     if (point[0] !== vertex) invalid();
                     return point[1];
                 }
-                if (named && point[0] === vertex && (point[1] === named[1] || point[1] === named[3])) return point[1];
+                if (named && point[0] === vertex && named.arms.includes(point[1])) return point[1];
             }
             return point;
         });
+    };
+    // Every supplied semantic spelling must agree. Null or contradictory aliases
+    // must not disappear behind a preferred field or a valid angle name.
+    const rays = normalizeArms(value.rays, true);
+    const arms = value.arms !== undefined ? normalizeArms(value.arms, false)
+        : value.rays !== undefined ? rays : named?.arms;
+    if (named || (value.arms !== undefined && value.rays !== undefined)) {
+        if (!Array.isArray(arms) || arms.length !== 2 || arms.some(arm => typeof arm !== "string")) invalid("GEOMETRY_SCHEMA_ARMS");
+        if (value.rays !== undefined && (!Array.isArray(rays) || rays.length !== 2 || rays.some(ray => typeof ray !== "string"))) invalid("GEOMETRY_SCHEMA_ARMS");
+        if (value.rays !== undefined && !sameArms(arms, rays)) invalid();
+        if (named && !sameArms(arms, named.arms)) invalid();
     }
-    if (named && (!Array.isArray(arms) || arms.length !== 2 ||
-        !((arms[0] === named[1] && arms[1] === named[3]) || (arms[0] === named[3] && arms[1] === named[1])))) invalid();
     // Optional crop hints/extra commentary are not mathematical evidence. Preserve
     // only validated crops; all semantic fields still pass the strict stored schema.
     return {
@@ -126,6 +140,19 @@ const DecisionPayloadSchema = z.preprocess(value => {
     }),
 ]));
 export const DecisionSchema = DecisionPayloadSchema;
+/** Only fixed diagnostic codes leave the parser; issue values/keys stay private. */
+function geometryDiagnostic(issues: z.ZodError["issues"]): AIDiagnostic {
+    const geometryIssues = issues.filter(issue => ["geometry", "angles", "geometryUncertainties"].includes(String(issue.path[0])));
+    if (!geometryIssues.length) return "JSON_SCHEMA_INVALID";
+    if (geometryIssues.some(issue => issue.message === "DUPLICATE_ANGLE_LABEL")) return "GEOMETRY_DUPLICATE_LABEL";
+    if (geometryIssues.some(issue => issue.message === "DEGENERATE_ANGLE")) return "GEOMETRY_DEGENERATE_ANGLE";
+    if (geometryIssues.some(issue => issue.path.includes("vertex"))) return "GEOMETRY_SCHEMA_VERTEX";
+    if (geometryIssues.some(issue => issue.path.includes("arms"))) return "GEOMETRY_SCHEMA_ARMS";
+    if (geometryIssues.some(issue => issue.path.includes("label"))) return "GEOMETRY_SCHEMA_LABEL";
+    if (geometryIssues.some(issue => issue.code === "too_big")) return "GEOMETRY_SCHEMA_LIMIT";
+    if (geometryIssues.some(issue => issue.path.includes("geometryUncertainties"))) return "GEOMETRY_SCHEMA_UNCERTAINTIES";
+    return "GEOMETRY_SCHEMA_FIELDS";
+}
 export function parseJSON<T>(raw: string, schema: z.ZodType<T>): T {
     if (raw.length > 180000) throw new AIError("AI_RESPONSE_ERROR", true, 0, "JSON_TOO_LARGE");
     let value: unknown;
@@ -133,17 +160,16 @@ export function parseJSON<T>(raw: string, schema: z.ZodType<T>): T {
     catch { throw new AIError("AI_RESPONSE_ERROR", true, 0, "JSON_INVALID"); }
     const result = schema.safeParse(value);
     if (!result.success) {
-        throw new AIError("AI_RESPONSE_ERROR", true, 0,
-            result.error.issues.some(issue => issue.path[0] === "geometry" || issue.path[0] === "angles" || issue.path[0] === "geometryUncertainties") ? "GEOMETRY_INVALID" : "JSON_SCHEMA_INVALID");
+        throw new AIError("AI_RESPONSE_ERROR", true, 0, geometryDiagnostic(result.error.issues));
     }
     return result.data;
 }
 /** AI ingress only: crop coordinates are optional hints, NOT angle evidence.
- * Never coerce/drop semantic angles; the strict stored schema validates them.
+ * Normalize only unambiguous notation; the strict stored schema validates it.
  * Invalid crops fall back to the full original image in the existing check.
  */
 // Auxiliary lists are optional in model output, but canonical once persisted.
-// Preserve textual facts without inventing image/text provenance. Never repair angles.
+// Preserve textual facts without inventing image/text provenance or angle evidence.
 const list = (v: unknown) => v == null || v === "" ? [] : typeof v === "string" ? [v] : v;
 const AITranscriptSchema = z.preprocess(value => {
     if (!record(value)) return value;
@@ -165,12 +191,12 @@ const AITranscriptSchema = z.preprocess(value => {
     return { ...normalized, geometry: {
         ...geometry,
         regions: Array.isArray(geometry.regions) ? geometry.regions.filter(r => RegionSchema.safeParse(r).success) : [],
-        angles: Array.isArray(geometry.angles) ? geometry.angles.map(angle => {
-            if (!record(angle) || angle.region === undefined || RegionSchema.safeParse(angle.region).success) return angle;
-            const copy = { ...angle }; delete copy.region; return copy;
-        }) : geometry.angles,
+        angles: Array.isArray(geometry.angles) ? geometry.angles.map(normalizeGeometryAngle) : geometry.angles,
     } };
-}, TranscriptSchema.extend({ text: z.string().trim().min(1).max(40000) }));
+}, TranscriptSchema.extend({ text: z.string().trim().min(1).max(40000) }).refine(
+    value => !value.geometry || new Set(value.geometry.angles.map(angle => angleLabelKey(angle.label))).size === value.geometry.angles.length,
+    { message: "DUPLICATE_ANGLE_LABEL", path: ["geometry", "angles"] },
+));
 export function parseTranscript(raw: string): z.infer<typeof TranscriptSchema> {
     return parseJSON(raw, AITranscriptSchema);
 }
@@ -194,6 +220,7 @@ ${DIAGRAM_EVIDENCE}
 仅缺少图示关系的文字说明不是missingInformation。可通过再看现有图片解决的疑点写入uncertainties；missingInformation只记录确实在材料之外的信息，并说明缺失依据，不把未读懂等同于原题未提供。
 【几何局部与编号角】
 有几何图时JSON必须另含geometry:{"regions":[],"angles":[]}；有可辨认编号角时angles逐项写label（图中编号的字符串）、vertex（图上顶点名称）、arms（恰好两个射线经过点名称）；点名须照图填写，不要照抄字段说明，没编号角则angles为空。最多24个角、3个局部；region格式为x、y、width、height四个数值。坐标只是可选的局部裁剪提示，无法可靠定位时regions可为空、角的region可省略；不要因此省略可辨认的角定义。坐标仅为相对于整张原图宽高的0到1比例，regions覆盖整个几何图和周围点名，角的region保留相关射线和点名。不把示例值当实际坐标。逐个列出实际可见编号角，两条arms不含顶点且互异；没读清的角不要编造，写入uncertainties。不是几何图可以省略geometry。
+格式示例：若编号角1确为∠ABC，写{"label":"1","vertex":"B","arms":["A","C"]}；arms写经过点名，不写整条射线BA、BC。label用字符串，不用数字；不另加angleName、rays或解释字段。示例只说明格式，不能照抄成当前题设。
 【转录格式与作答证据】
 text用Markdown完整保留原题各小问、选项、表格的所有行列、单位与注释；公式用LaTeX，行内$...$、独立公式$$...$$。复杂表格可加结构说明，不得省略单元格。
 将学生作答、草稿、圈选和批改痕迹与原题分开标注并忠实记录到text/facts，供文字解题模型判断错因；不要把学生写下的内容混入题目已知条件，不在转录阶段评判对错或推断未写的步骤。确实可见空白才记未作答，无法辨认则说明不确定。

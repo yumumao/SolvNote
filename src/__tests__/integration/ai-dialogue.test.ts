@@ -410,6 +410,33 @@ describe.sequential("bounded drawing routes and jobs",()=>{
 // Only synthetic config, SQLite and provider replies. This tests the durable trace,
 // not a real model or the user's currently running preview.
 describe.sequential("safe failure diagnostics survive the persistent worker",()=>{
+ it("accepts equivalent angle notation at initial recognition without a fallback dispatch",async()=>{
+  const angle={label:"1",vertex:"B",arms:["A","C"]};
+  shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,geometry:{regions:[],angles:[{...angle,angleName:"∠ABC",rays:["BA","BC"],note:"synthetic comment"}]}}))
+   .mockResolvedValueOnce(JSON.stringify({angles:[angle],geometryUncertainties:[]})).mockResolvedValueOnce(JSON.stringify(solved));
+  const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
+  const id=await createConversation("alice",{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());
+  await processOne();const c=await view(id);
+  expect(c.state).toBe("answered");expect(c.transcript?.geometry?.angles).toEqual([angle]);
+  expect(c.steps.map(s=>[s.stage,s.state])).toEqual([["recognize","success"],["geometry_check","success"],["solve","success"]]);
+  expect(shared.send).toHaveBeenCalledTimes(3);
+ });
+ it("retains the specific geometry failure after a successful fallback on the same input",async()=>{
+  const isolation=await captureAiIsolation(),previous=await loadAIConfig({persist:false});
+  try{
+   const first=previous.config.models.find(m=>m.id==="v")!;
+   await saveAIConfig({...previous.config,models:[...previous.config.models,{...first,id:"v2",name:"Second fixture reader",model:"second-vision"}],chains:{...previous.config.chains,vision:["v","v2"]}},previous.revision);
+   shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,geometry:{regions:[],angles:[{label:"1",vertex:"PRIVATE-VERTEX",arms:["A","C"]}]}}))
+    .mockResolvedValueOnce(JSON.stringify(transcript)).mockResolvedValueOnce(JSON.stringify(solved));
+   const id=await create("admin");await processOne();const c=await view(id,"admin");
+   expect(c.state).toBe("answered");expect(c.steps[0]).toMatchObject({state:"failed",stage:"recognize",diagnostic:"GEOMETRY_SCHEMA_VERTEX",modelName:"Image reader"});
+   expect(c.steps[1]).toMatchObject({state:"success",stage:"recognize",modelName:"Second fixture reader"});
+   expect(shared.send.mock.calls.map(call=>call[1].id)).toEqual(["v","v2","t"]);
+   for(const i of [2,3,4,6,7])expect(shared.send.mock.calls[1][i]).toEqual(shared.send.mock.calls[0][i]);
+   expect(JSON.stringify(c)).not.toContain("PRIVATE-VERTEX");
+   const attempt=await shared.db.aiAttempt.findFirstOrThrow({where:{modelId:"v"}});expect(attempt.metadata).not.toContain("GEOMETRY_SCHEMA_VERTEX");
+  }finally{await restoreAiIsolation(isolation);}
+ });
  it("persists a fixed parse diagnostic encrypted and retains model/round metadata",async()=>{
   shared.send.mockResolvedValueOnce("not-json PRIVATE-RESPONSE");
   const id=await create();await processOne();const c=await view(id);

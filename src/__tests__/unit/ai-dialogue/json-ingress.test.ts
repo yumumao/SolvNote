@@ -73,7 +73,7 @@ describe("bounded LaTeX escaping at the AI ingress", () => {
     it("still validates schema and geometric evidence after wrapper/escape normalization", () => {
         expect(() => parseTranscript('结果：{"facts":[]}')).toThrow(expect.objectContaining({ diagnostic: "JSON_SCHEMA_INVALID" }));
         const bad = { ...transcript, geometry: { angles: [{ label: "1", vertex: "B", arms: ["B", "C"] }] } };
-        expect(() => parseTranscript(`结果：${JSON.stringify(bad)}`)).toThrow(expect.objectContaining({ diagnostic: "GEOMETRY_INVALID" }));
+        expect(() => parseTranscript(`结果：${JSON.stringify(bad)}`)).toThrow(expect.objectContaining({ diagnostic: "GEOMETRY_DEGENERATE_ANGLE" }));
     });
     it("rejects oversized replies before recovery and never leaks response details", () => {
         expect(() => parseTranscript("x".repeat(180001))).toThrow(expect.objectContaining({ diagnostic: "JSON_TOO_LARGE" }));

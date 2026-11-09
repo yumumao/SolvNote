@@ -3,6 +3,7 @@ import {createRoot,type Root} from "react-dom/client";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {AIProcess} from "@/components/ai-process";
 import type {ProcessStep} from "@/lib/ai-dialogue/types";
+import {diagnosticMessage} from "@/lib/ai/diagnostics";
 let host:HTMLDivElement,root:Root;
 const step=(id:string,state='running',finishedAt:string|null=null):ProcessStep=>({id,modelId:'synthetic',stage:'solve',state,startedAt:`2026-10-03T00:00:0${id}.000Z`,finishedAt});
 beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);host=document.createElement('div');document.body.append(host);root=createRoot(host)});
@@ -22,4 +23,11 @@ it('shows send evidence without claiming upstream acceptance and keeps old recor
  await render([{...record,transport:{protocol:'chat',requestedStream:true,receivedBytes:0,elapsedMs:180000}}],false);
  expect(host.textContent).not.toContain('发送诊断');
  expect(host.textContent).toContain('响应头未收到');
+});
+it('keeps the specific recognition failure visible after the next model succeeds',async()=>{
+ await render([{...step('1','failed','2026-10-03T00:00:02Z'),stage:'recognize',modelName:'First fixture',errorCode:'AI_RESPONSE_ERROR',diagnostic:'GEOMETRY_SCHEMA_ARMS'},{...step('3','success','2026-10-03T00:00:04Z'),stage:'recognize',modelName:'Second fixture'}],false);
+ expect(host.textContent).toContain(diagnosticMessage('GEOMETRY_SCHEMA_ARMS'));
+ expect(host.textContent).toContain('First fixture');expect(host.textContent).toContain('Second fixture');
+ await render([{...step('1','failed'),diagnostic:'GEOMETRY_INVALID'}],false);
+ expect(host.textContent).toContain(diagnosticMessage('GEOMETRY_INVALID'));
 });

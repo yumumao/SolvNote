@@ -28,12 +28,12 @@ describe("bounded AI JSON compatibility without changing geometric evidence",()=
   expect(parseTranscript(JSON.stringify({...plain,geometry:{angles:[angle]}})).geometry).toEqual({regions:[],angles:[angle]});
  });
  it.each([
-  {...geometry,angles:[{...angle,arms:["E","B"]}]},
-  {...geometry,angles:[angle,angle]},
-  {...geometry,angles:[{...angle,vertex:"?"}]},
-  {...geometry,angles:[{label:"1"}]},
- ])("never repairs or silently drops invalid angle evidence %#",g=>{
-  expect(()=>parseTranscript(JSON.stringify({...plain,geometry:g}))).toThrow(expect.objectContaining({diagnostic:"GEOMETRY_INVALID"}));
+  [{...geometry,angles:[{...angle,arms:["E","B"]}]},"GEOMETRY_DEGENERATE_ANGLE"],
+  [{...geometry,angles:[angle,angle]},"GEOMETRY_DUPLICATE_LABEL"],
+  [{...geometry,angles:[{...angle,vertex:"?"}]},"GEOMETRY_SCHEMA_VERTEX"],
+  [{...geometry,angles:[{label:"1"}]},"GEOMETRY_SCHEMA_VERTEX"],
+ ])("never repairs or silently drops invalid angle evidence %#",(g,diagnostic)=>{
+  expect(()=>parseTranscript(JSON.stringify({...plain,geometry:g}))).toThrow(expect.objectContaining({diagnostic}));
  });
  it("classifies JSON syntax separately from required-field validation",()=>{
   expect(()=>parseJSON("synthetic invalid JSON",TranscriptSchema)).toThrow(expect.objectContaining({code:"AI_RESPONSE_ERROR",fallback:true,diagnostic:"JSON_INVALID"}));
