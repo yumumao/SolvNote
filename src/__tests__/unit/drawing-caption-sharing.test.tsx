@@ -75,3 +75,34 @@ it('exports a self-contained standalone SVG even when embedded source captions a
 it('renders no auxiliary descriptions when only the redraw is selected',()=>mount(async(host,render)=>{
  await render(<SolutionDocument snapshot={snapshot({includeAuxiliary:false})}/>);expect(host.querySelector('[data-auxiliary-caption]')).toBeNull();expect(host.querySelectorAll('[data-diagram-caption]')).toHaveLength(1);
 }));
+it('keeps original caption text compact, inert and present once in combined sharing',()=>mount(async(host,render)=>{
+ const sourceCaptions=['图1：甲为草地，乙为道路。','长图注'.repeat(80)+'完整结尾','<script>literal caption</script>'];
+ const value=snapshot({basePlan:{...base,sourceCaptions},auxiliaryPlan:{...auxiliary,sourceCaptions}});
+ await render(<SolutionDocument snapshot={snapshot()}/>);
+ const originalViewBox=sourceSection(host).querySelector('svg')!.getAttribute('viewBox');
+ await render(<SolutionDocument snapshot={value}/>);
+ expect(sourceSection(host).querySelector('svg')!.getAttribute('viewBox')).toBe(originalViewBox);
+ expect(host.querySelector('script')).toBeNull();
+ for(const text of sourceCaptions){expect(sourceSection(host).textContent).toContain(text);expect(auxSection(host).textContent).not.toContain(text);}
+ const plain=solutionPlainText(host,{includeLatex:false});expect(plain.match(/图1：甲为草地/g)).toHaveLength(1);expect(plain).toContain('完整结尾');
+ await render(<SolutionDocument snapshot={{...value,includeBase:false}}/>);
+ expect(auxSection(host).textContent).toContain('完整结尾');expect(auxSection(host).textContent).toContain('原图识读文字（待核对）');
+}));
+it('exports the full wrapped source caption inside the standalone SVG without widening geometry',()=>mount(async(host,render)=>{
+ const caption='图注原文'.repeat(75)+'最终单位平方厘米';
+ const create=vi.fn<(blob:Blob)=>string>(()=>'blob:caption');vi.stubGlobal('URL',{createObjectURL:create,revokeObjectURL:vi.fn()});vi.spyOn(window,'open').mockReturnValue(null);
+ const exported=async(index:number)=>{
+  const raw=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=()=>reject(r.error);r.readAsText(create.mock.calls[index][0]);});
+  return new DOMParser().parseFromString(raw,'image/svg+xml');
+ };
+ await render(<ConstructionDiagram geometry={compileConstruction(base).geometry} visible={0} title="synthetic"/>);
+ await act(async()=>{(host.querySelector('[data-open-full-image]') as HTMLButtonElement).click();});
+ const withoutCaption=await exported(0);
+ await render(<ConstructionDiagram geometry={compileConstruction({...base,sourceCaptions:[caption]}).geometry} visible={0} title="synthetic"/>);
+ const initial=host.querySelector('svg')!.getAttribute('viewBox');
+ await act(async()=>{(host.querySelector('[data-open-full-image]') as HTMLButtonElement).click();});
+ const doc=await exported(1);
+ expect(doc.querySelector('[data-export-caption]')!.textContent).toContain(caption);expect(doc.querySelector('parsererror')).toBeNull();
+ expect(doc.documentElement.getAttribute('viewBox')!.split(' ')[2]).toBe(withoutCaption.documentElement.getAttribute('viewBox')!.split(' ')[2]);
+ expect(host.querySelector('svg')!.getAttribute('viewBox')).toBe(initial);
+}));

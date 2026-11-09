@@ -30,7 +30,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
     const topLeft=map({x:minX,y:maxY}),bottomRight=map({x:maxX,y:minY});
     const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})),map,{left:topLeft.x,right:bottomRight.x,top:topLeft.y,bottom:bottomRight.y});
     const labelBounds=labels.flatMap(l=>l.bounds);
-    const captionLines=diagramConditionLines(geometry.annotations||[],geometry.notes||[]);
+    const captionLines=diagramConditionLines(geometry.annotations||[],geometry.notes||[],geometry.sourceCaptions||[]);
     const hiddenLabels=labels.some(l=>l.hidden&&l.annotation.kind!=='text');
     const crowdedLabelNote="部分标记因图内拥挤或角区过小，仅在图注保留，请对照原图核验位置。";
     // A shared document may already show these source conditions under its redraw.

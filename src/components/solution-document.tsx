@@ -12,7 +12,7 @@ export function SolutionDocument({snapshot}:{snapshot:SolutionSnapshot}){
  const section=(title:string,content:string):ReactNode=><section data-solution-section>{heading(title)}<MarkdownRenderer content={content} fitWidth={snapshot.fitWidth} localShare/></section>;
  // Only suppress conditions actually rendered in this snapshot, never mutate either plan.
  const sourceConditions=snapshot.includeBase&&snapshot.basePlan
-  ?diagramConditionLines(snapshot.basePlan.annotations||[],snapshot.basePlan.notes||[]):[];
+  ?diagramConditionLines(snapshot.basePlan.annotations||[],snapshot.basePlan.notes||[],snapshot.basePlan.sourceCaptions||[]):[];
  const drawing=(title:string,plan:ConstructionPlan,auxiliary=false)=><section data-solution-section>{heading(title)}<div>
   {!auxiliary&&snapshot.baseNeedsReview&&<p data-base-review-note style={{fontSize:13,color:'#92400e'}}>此图为最后成功生成的版本，尚未按新纠正说明更新，请对照原图核验。</p>}
   <ConstructionDiagram geometry={compileConstruction(plan).geometry} visible={plan.steps.length} title={title} attachmentTitle={title} shownConditionLines={auxiliary?sourceConditions:undefined} readOnly compact/>

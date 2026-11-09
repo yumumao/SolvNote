@@ -8,6 +8,8 @@ export const DiagramAnnotationSchema=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('segment'),a:id,b:id,side:z.enum(['left','right']).optional(),text:text(24)}).strict(),
 ]);
 export const DiagramNoteSchema=z.object({text:text(300),status:z.enum(['confirmed','uncertain'])}).strict();
+// Separate capacity for previously recognized image text; never promote it to a condition.
+export const SourceCaptionSchema=text(1000);
 export type DiagramAnnotation=z.infer<typeof DiagramAnnotationSchema>;
 export type DiagramNote=z.infer<typeof DiagramNoteSchema>;
 type Point={x:number;y:number};
@@ -32,10 +34,24 @@ function displayedNoteText(text:string):string{
  if(!source)return text;
  return text.slice(source[0].length)+(source[1]?'（此处为摘要，完整内容见角标核对区）':'');
 }
-export function diagramConditionLines(annotations:DiagramAnnotation[],notes:DiagramNote[]):string[]{
+export function diagramConditionLines(annotations:DiagramAnnotation[],notes:DiagramNote[],sourceCaptions:readonly string[]=[]):string[]{
+ const oneLine=(s:string)=>s.replace(/\s+/g,' ').trim();
+ const noteText=notes.map(n=>oneLine(displayedNoteText(n.text)));
+ const represented=new Set([...annotations.map(a=>oneLine(a.text)),...noteText]);
+ // The model may split long prose to meet the per-note limit. Only join adjacent
+ // notes with the same status; do not guess coverage from keywords or substrings.
+ for(let i=0;i<notes.length;i++){
+  let joined=noteText[i],spaced=noteText[i];
+  for(let j=i+1;j<notes.length&&notes[j].status===notes[i].status;j++){
+   joined+=noteText[j];spaced+=' '+noteText[j];
+   represented.add(joined);represented.add(spaced);
+  }
+ }
+ const missing=[...new Set(sourceCaptions.map(oneLine))].filter(s=>s&&!represented.has(s));
  return [
   ...annotations.map(a=>a.kind==='text'?`原图文字 ${a.text}`:a.kind==='angle'?`原图标注 ${a.text}：∠${a.a}${a.vertex}${a.b}（从${a.vertex}${a.a}到${a.vertex}${a.b}${a.direction==='ccw'?'逆时针':'顺时针'}的角区，标记原样保留）`:`原图标注 ${a.text}：线段${a.a}${a.b}`),
   ...notes.map(n=>`${n.status==='uncertain'?'待核对（不作为已知条件）：':''}${displayedNoteText(n.text)}`),
+  ...missing.map(s=>`原图识读文字（待核对）：${s}`),
  ];
 }
 export type LabelLayout={annotation:DiagramAnnotation;x:number;y:number;width:number;path?:string;bounds:Point[];hidden:boolean};

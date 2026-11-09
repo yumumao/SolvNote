@@ -8,19 +8,22 @@ export const DrawingEvidenceSchema=z.object({
  angles:z.array(AngleSchema).max(24),
  uncertainties:z.array(clean(1000)).max(24),
  clarifications:z.array(clean(10000)).max(100),
-}).strict().refine(e=>JSON.stringify(e).length<=100000,'Evidence too large');
+ // Source image facts can contain captions that are absent from the prose transcript.
+ imageFacts:z.array(clean(1000)).max(100).optional(),
+}).strict().refine(e=>JSON.stringify({...e,imageFacts:undefined}).length<=100000,'Evidence too large');
 export type DrawingEvidence=z.infer<typeof DrawingEvidenceSchema>;
 type EvidenceSource=Pick<DialogueView,'transcript'|'geometryChecked'|'userCorrectedTranscript'|'transcriptClarifications'>;
 /** Capture evidence together with its answer/image, never a newer polling state. */
 export function drawingEvidenceFromDialogue(view:EvidenceSource):DrawingEvidence|undefined{
  if(!view.transcript)return;
  const t=view.transcript;
- const parsed=DrawingEvidenceSchema.safeParse({authority:view.transcriptClarifications?.length?'user_clarified':view.userCorrectedTranscript?'user_corrected':view.geometryChecked?'verified':'machine',transcription:t.text,angles:t.geometry?.angles||[],uncertainties:t.geometryUncertainties??t.uncertainties,clarifications:view.transcriptClarifications||[]});
+ const imageFacts=[...new Set(t.facts.filter(f=>f.source==='image').map(f=>f.detail.trim()).filter(s=>s&&clean(1000).safeParse(s).success))];
+ const parsed=DrawingEvidenceSchema.safeParse({authority:view.transcriptClarifications?.length?'user_clarified':view.userCorrectedTranscript?'user_corrected':view.geometryChecked?'verified':'machine',transcription:t.text,angles:t.geometry?.angles||[],uncertainties:t.geometryUncertainties??t.uncertainties,clarifications:view.transcriptClarifications||[],...(imageFacts.length?{imageFacts}:{})});
  return parsed.success?prepareDrawingEvidence(parsed.data):undefined;
 }
 /** Human corrections supersede old structured machine labels; authority is evidence, not permission. */
 export function prepareDrawingEvidence(input:DrawingEvidence):DrawingEvidence{
  const e=DrawingEvidenceSchema.parse(input);
- if(e.authority==='user_corrected'||e.authority==='user_clarified')e.angles=[];
+ if(e.authority==='user_corrected'||e.authority==='user_clarified'){e.angles=[];delete e.imageFacts;}
  return e;
 }
