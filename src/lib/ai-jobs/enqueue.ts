@@ -59,7 +59,11 @@ export async function enqueue(
                 );
             body.subject = subject.name;
         }
-        if (!media && !body.gradeSemester) {
+        // Capture the normalized request before profile enrichment. Changing a profile
+        // must not turn recovery of the same submission into a new/conflicting task.
+        const submitted = JobInputSchema.parse(body);
+        // Practice may explicitly target another grade; explanations follow the learner.
+        if (!media && (kind !== "practice" || !body.gradeSemester)) {
             const profile = await prisma.user.findUnique({
                 where: { id: user.id },
                 select: { educationStage: true, enrollmentYear: true },
@@ -76,7 +80,9 @@ export async function enqueue(
         if(kind === "construction" || kind === "image_edit")await validateDrawingInput(kind,input,user.id);
         const key = req.headers.get("x-request-id") || crypto.randomUUID();
         if (!/^[A-Za-z0-9_-]{8,100}$/.test(key)) throw Error("INVALID_REQUEST");
-        const job = await submitJob(user.id, kind, input, key);
+        const job = media
+            ? await submitJob(user.id, kind, input, key)
+            : await submitJob(user.id, kind, input, key, submitted);
         return NextResponse.json(
             {
                 jobId: job.id,

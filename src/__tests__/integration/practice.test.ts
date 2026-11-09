@@ -105,7 +105,7 @@ describe('/api/practice', () => {
                     errorItemId: 'error-item-1', questionText: mockErrorItem.questionText,
                     answerText: 'x = 3', analysis: '移项求解', subject: '数学', gradeSemester: '初二上',
                     tags: ['一元一次方程', '移项'], imageBase64: IMAGE, difficulty: 'medium', language: 'zh',
-                }), 'practice-request-1');
+                }), 'practice-request-1', expect.any(Object));
             expect(mocks.mockAIService.generateSimilarQuestion).not.toHaveBeenCalled();
             expect(mocks.mockPrismaUser.findUnique).toHaveBeenCalledWith({
                 where: { id: 'user-123' }, select: { id: true, role: true, isActive: true, expiresAt: true, sessionVersion: true, mustChangePassword: true, revision: true, aiAccessInitialized: true },
@@ -141,7 +141,7 @@ describe('/api/practice', () => {
         it.each(['easy', 'medium', 'hard', 'harder'])('保留目标难度%s', async (difficulty) => {
             expect((await GENERATE_POST(generateRequest({ errorItemId: 'error-item-1', difficulty }))).status).toBe(202);
             expect(mocks.mockSubmitJob).toHaveBeenCalledWith('user-123', 'practice',
-                expect.objectContaining({ difficulty }), 'practice-request-1');
+                expect.objectContaining({ difficulty }), 'practice-request-1', expect.any(Object));
         });
 
         it('保留英文与用户校正文本，使用错题保存的年级和知识点', async () => {
@@ -153,7 +153,7 @@ describe('/api/practice', () => {
             expect(mocks.mockSubmitJob).toHaveBeenCalledWith('user-123', 'practice', expect.objectContaining({
                 language: 'en', questionText: 'Corrected question', subject: '数学',
                 gradeSemester: '初二上', tags: ['一元一次方程', '移项'],
-            }), 'practice-request-1');
+            }), 'practice-request-1', expect.any(Object));
         });
 
         it('显式图片和原图保留，不能丢弃为纯文字任务', async () => {
@@ -161,7 +161,7 @@ describe('/api/practice', () => {
             const body = { errorItemId: 'error-item-1', imageBase64: image, originalImageBase64: IMAGE };
             expect((await GENERATE_POST(generateRequest(body))).status).toBe(202);
             expect(mocks.mockSubmitJob).toHaveBeenCalledWith('user-123', 'practice',
-                expect.objectContaining(body), 'practice-request-1');
+                expect.objectContaining(body), 'practice-request-1', expect.any(Object));
         });
 
         it('原错题没有图片时可以提交纯文字练习', async () => {
@@ -336,7 +336,7 @@ describe('/api/practice', () => {
             vi.mocked(getServerSession).mockResolvedValue({
                 user: undefined,
                 expires: '2025-12-31',
-            } as any);
+            } as unknown as Awaited<ReturnType<typeof getServerSession>>);
 
             const request = new Request('http://localhost/api/practice/record', {
                 method: 'POST',

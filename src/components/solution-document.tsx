@@ -14,6 +14,7 @@ export function SolutionDocument({snapshot}:{snapshot:SolutionSnapshot}){
  const sourceConditions=snapshot.includeBase&&snapshot.basePlan
   ?diagramConditionLines(snapshot.basePlan.annotations||[],snapshot.basePlan.notes||[]):[];
  const drawing=(title:string,plan:ConstructionPlan,auxiliary=false)=><section data-solution-section>{heading(title)}<div>
+  {!auxiliary&&snapshot.baseNeedsReview&&<p data-base-review-note style={{fontSize:13,color:'#92400e'}}>此图为最后成功生成的版本，尚未按新纠正说明更新，请对照原图核验。</p>}
   <ConstructionDiagram geometry={compileConstruction(plan).geometry} visible={plan.steps.length} title={title} attachmentTitle={title} shownConditionLines={auxiliary?sourceConditions:undefined} readOnly compact/>
   {auxiliary&&plan.steps.length>0&&<aside data-auxiliary-caption style={{fontSize:14,lineHeight:1.6,marginTop:4,overflowWrap:"anywhere",textAlign:"left",color:"#334155"}}>
    <p style={{margin:0,fontWeight:600}}>辅助线图注（辅助构造，不是原题条件）</p>
@@ -31,6 +32,6 @@ export function SolutionDocument({snapshot}:{snapshot:SolutionSnapshot}){
   {snapshot.includeAnswer&&snapshot.answerText?.trim()&&section('参考答案',snapshot.answerText)}
   {snapshot.includeAuxiliary&&snapshot.auxiliaryPlan&&drawing('辅助线图',snapshot.auxiliaryPlan,true)}
   {section('解题过程',snapshot.analysis)}
-  <footer style={{fontSize:12,color:'#64748b',marginTop:24}}>SolvNote · 解题过程快照，请核对公式、推导与示意图。</footer>
+  <footer data-solution-watermark style={{fontSize:12,color:'#64748b',marginTop:24}}>SolvNote · solvnote.n29.net · 解题过程快照，请核对公式、推导与示意图。</footer>
  </article>;
 }

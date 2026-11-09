@@ -57,8 +57,8 @@ it('restores full-size single lines on a wider screen and leaves ordinary formul
 it('also reflows an oversized inline formula without adding another semantic copy',()=>{
  render('A=12345=67890=12345',false);fitMarkdownWidth(root);expect(lines().length).toBeGreaterThan(1);expect(root.querySelectorAll('math')).toHaveLength(1);
 });
-it('keeps export width preference unchanged',()=>{
- expect(solutionImageWidth(root)).toBe(760);root.dataset.fitWidth='true';expect(solutionImageWidth(root)).toBeGreaterThanOrEqual(160);
+it('keeps device width independent of formula reflow',()=>{
+ const width=solutionImageWidth(root);expect(width).toBeGreaterThanOrEqual(160);root.dataset.fitWidth='true';expect(solutionImageWidth(root)).toBe(width);
 });
 
 it('reflows inline math even when native KaTeX bases already wrap after equals',()=>{

@@ -3,6 +3,7 @@ const id=z.string().regex(/^[A-Z][0-9]{0,3}$/);
 // Plain, single-line text only. It never enters GeoGebra commands or markup parsers.
 const text=(limit:number)=>z.string().trim().min(1).max(limit).refine(s=>![...s].some(c=>{const n=c.codePointAt(0)!;return n<32||(n>=127&&n<=159)||(n>=0x202a&&n<=0x202e)||(n>=0x2066&&n<=0x2069);}), 'Invalid control character');
 export const DiagramAnnotationSchema=z.discriminatedUnion('kind',[
+ z.object({kind:z.literal('text'),x:z.number().finite().min(-10000).max(10000),y:z.number().finite().min(-10000).max(10000),text:text(80)}).strict(),
  z.object({kind:z.literal('angle'),a:id,vertex:id,b:id,direction:z.enum(['ccw','cw']),text:text(24)}).strict(),
  z.object({kind:z.literal('segment'),a:id,b:id,side:z.enum(['left','right']).optional(),text:text(24)}).strict(),
 ]);
@@ -12,6 +13,7 @@ export type DiagramNote=z.infer<typeof DiagramNoteSchema>;
 type Point={x:number;y:number};
 export function validateDiagramAnnotations(annotations:DiagramAnnotation[],get:(id:string)=>Point){
  for(const a of annotations){
+  if(a.kind==='text')continue;
   const p=get(a.a),q=get(a.b);
   const distance=(p:Point,q:Point)=>Math.hypot(p.x-q.x,p.y-q.y);
   if(distance(p,q)<1e-6)throw Error('INVALID_CONSTRUCTION');
@@ -32,15 +34,20 @@ function displayedNoteText(text:string):string{
 }
 export function diagramConditionLines(annotations:DiagramAnnotation[],notes:DiagramNote[]):string[]{
  return [
-  ...annotations.map(a=>a.kind==='angle'?`原图标注 ${a.text}：∠${a.a}${a.vertex}${a.b}（从${a.vertex}${a.a}到${a.vertex}${a.b}${a.direction==='ccw'?'逆时针':'顺时针'}的角区，标记原样保留）`:`原图标注 ${a.text}：线段${a.a}${a.b}`),
+  ...annotations.map(a=>a.kind==='text'?`原图文字 ${a.text}`:a.kind==='angle'?`原图标注 ${a.text}：∠${a.a}${a.vertex}${a.b}（从${a.vertex}${a.a}到${a.vertex}${a.b}${a.direction==='ccw'?'逆时针':'顺时针'}的角区，标记原样保留）`:`原图标注 ${a.text}：线段${a.a}${a.b}`),
   ...notes.map(n=>`${n.status==='uncertain'?'待核对（不作为已知条件）：':''}${displayedNoteText(n.text)}`),
  ];
 }
 export type LabelLayout={annotation:DiagramAnnotation;x:number;y:number;width:number;path?:string;bounds:Point[];hidden:boolean};
 /** Layout uses the already locked screen mapping, never changes source coordinates or scale. */
-export function layoutDiagramAnnotations(annotations:DiagramAnnotation[],get:(id:string)=>Point,pointLabels:Array<Point & {id:string}>):LabelLayout[]{
+export function layoutDiagramAnnotations(annotations:DiagramAnnotation[],get:(id:string)=>Point,pointLabels:Array<Point & {id:string}>,mapText:(p:Point)=>Point=p=>p):LabelLayout[]{
  const occupied=pointLabels.map(p=>({left:p.x-6,top:p.y-31,right:p.x+11+p.id.length*18,bottom:p.y+7}));
  return annotations.map(annotation=>{
+  if(annotation.kind==='text'){
+   const {x,y}=mapText(annotation),width=Math.max(18,[...annotation.text].length*18);
+   // Explicit source text must remain visible, even when it overlaps a point label.
+   return {annotation,x,y,width,hidden:false,bounds:[{x:x-width/2-4,y:y-14},{x:x+width/2+4,y:y+14}]};
+  }
   const a=get(annotation.a),b=get(annotation.b),width=Math.max(18,[...annotation.text].length*18);
   let x:number,y:number,path:string|undefined,hidden=false;
   if(annotation.kind==='angle'){

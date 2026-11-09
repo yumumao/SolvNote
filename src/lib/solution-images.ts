@@ -1,4 +1,4 @@
-import {fitMarkdownWidth,fitMarkdownImagePage,solutionImageWidth} from "./markdown-fit";
+import {fitMarkdownImagePage,solutionImageWidth} from "./markdown-fit";
 import { toBlob } from "html-to-image";
 import {localSolutionImage} from "./solution-snapshot";
 import { localStyleText, solutionUnits } from "./solution-share";
@@ -31,41 +31,60 @@ export async function waitForSolutionImages(element:HTMLElement):Promise<void>{
   if(image.decode)await image.decode().catch(()=>{throw Error('原图解码失败，请重新选择图片。')});
  }));
 }
+// Bound actual raster allocation, not an arbitrary number of CSS-height pages.
+const MAX_CANVAS_PIXELS=16*1024*1024,MAX_CANVAS_EDGE=16384;
 export async function renderSolutionImages(source:HTMLElement):Promise<SolutionImage[]>{
  const fit=source.dataset.fitWidth==='true',initialWidth=solutionImageWidth(source);
+ const pixelRatio=Math.max(1,Math.min(3,window.devicePixelRatio||1));
  const host=document.createElement('div');host.style.cssText=`position:fixed;left:-100000px;top:0;width:${initialWidth}px;pointer-events:none;`;document.body.append(host);
  try{
   const page=source.cloneNode(false) as HTMLElement;page.style.width=initialWidth+'px';page.style.maxWidth='none';page.style.boxSizing='border-box';host.append(page);
   await document.fonts.ready;
-  const units=solutionUnits(source),groups:HTMLElement[][]=[];let group:HTMLElement[]=[];
+  const allUnits=solutionUnits(source),footer=allUnits.find(n=>n.matches('footer[data-solution-watermark]'));
+  const units=allUnits.filter(n=>n!==footer);
+  page.append(...allUnits.map(n=>n.cloneNode(true)));await waitForSolutionImages(page);
+  const fontEmbedCSS=await embedFonts(page);
+  const groups:HTMLElement[][]=[];let group:HTMLElement[]=[];
+  const fillPage=(nodes:HTMLElement[])=>{page.replaceChildren(...nodes);if(footer)page.append(footer.cloneNode(true));};
+  const measure=()=>{
+   page.style.width=initialWidth+'px';let width=fit?fitMarkdownImagePage(page,initialWidth):initialWidth;
+   // PNG has no horizontal scrolling. Expand only for content that cannot fit.
+   const pageLeft=page.getBoundingClientRect().left,rightPadding=parseFloat(getComputedStyle(page).paddingRight)||0;
+   page.querySelectorAll<HTMLElement>('.katex-display,pre,table').forEach(n=>{
+    // A table can be intrinsically wider than its scroll wrapper while its own
+    // clientWidth equals scrollWidth. Measure its full right edge in page space.
+    width=Math.max(width,Math.ceil(n.scrollWidth+Math.max(0,n.getBoundingClientRect().left-pageLeft)+rightPadding));
+   });
+   if(width>2048)throw Error('某条公式或表格过宽，请分行后导出，或使用文字分享。');
+   page.style.width=width+'px';
+   const height=Math.max(1,page.scrollHeight),w=Math.ceil(width*pixelRatio),h=Math.ceil(height*pixelRatio);
+   return {width,height,safe:w<=MAX_CANVAS_EDGE&&h<=MAX_CANVAS_EDGE&&w*h<=MAX_CANVAS_PIXELS};
+  };
   for(let i=0;i<units.length;i++){
    const heading=(node:HTMLElement)=>/^H[1-6]$/.test(node.tagName)||(node.children.length===1&&/^H[1-6]$/.test(node.firstElementChild!.tagName));
    const chunk=[units[i]];while(heading(units[i])&&i+1<units.length)chunk.push(units[++i]);
-   page.append(...chunk);
-   await waitForSolutionImages(page);
-   if(fit)fitMarkdownWidth(page);
-   if(page.scrollHeight>1800&&group.length){groups.push(group);page.replaceChildren(...chunk);group=[]}
+   fillPage([...group,...chunk]);await waitForSolutionImages(page);
+   if(!measure().safe&&group.length){groups.push(group);group=[];fillPage(chunk);await waitForSolutionImages(page);}
+   if(!measure().safe)throw Error('单个步骤或图形过大，请分段后导出，或使用文字分享。');
    group.push(...chunk);
   }
   if(group.length)groups.push(group);
   if(groups.length>32)throw Error('内容过长，请按章节分别分享，或使用文字分享。');
-  // Measure/export sequentially, never allocate one unbounded full-length canvas.
   const images:SolutionImage[]=[];
-  page.replaceChildren(...units.map(n=>n.cloneNode(true)));
-  await document.fonts.ready;
-  await waitForSolutionImages(page);
-  const fontEmbedCSS=await embedFonts(page);
   for(let i=0;i<groups.length;i++){
-   page.replaceChildren(...groups[i]);page.style.width=initialWidth+'px';
-   await waitForSolutionImages(page);
-   let width=fit?fitMarkdownImagePage(page,initialWidth):initialWidth;
-   if(!fit)page.querySelectorAll<HTMLElement>('.katex-display,pre,table').forEach(n=>{width=Math.max(width,n.scrollWidth+100)});
-   if(width>2048)throw Error('某条公式或表格过宽，请分行后导出，或使用文字分享。');
-   page.style.width=width+'px';
-   const height=page.scrollHeight;
-   if(height>4096)throw Error('单个步骤过长，请分段后导出，或使用文字分享。');
-   const blob=await toBlob(page,{backgroundColor:'#fff',pixelRatio:1.5,width,height,fontEmbedCSS,cacheBust:false});
-   if(!blob||!blob.size)throw Error('图片生成失败，请重试或使用文字分享。');
+   fillPage(groups[i]);await waitForSolutionImages(page);const {width,height,safe}=measure();
+   if(!safe)throw Error('图片超过安全尺寸，请分段后导出。');
+   const blob=await toBlob(page,{backgroundColor:'#fff',pixelRatio,width,height,fontEmbedCSS,cacheBust:false});
+   if(!blob||!blob.size){
+    // Some mobile canvases have lower limits. Only retry local rasterization,
+    // with strictly smaller groups; no AI request or partial result is emitted.
+    const current=groups[i];
+    let cut=Math.floor(current.length/2);
+    const heading=(node:HTMLElement)=>/^H[1-6]$/.test(node.tagName)||(node.children.length===1&&/^H[1-6]$/.test(node.firstElementChild!.tagName));
+    while(cut>0&&heading(current[cut-1]))cut--;
+    if(!cut||groups.length>=32)throw Error('当前设备无法生成此尺寸图片，请减少附带内容后重试。');
+    groups.splice(i,1,current.slice(0,cut),current.slice(cut));i--;continue;
+   }
    images.push({blob,name:`solvnote-solution-${i+1}.png`});
   }
   return images;

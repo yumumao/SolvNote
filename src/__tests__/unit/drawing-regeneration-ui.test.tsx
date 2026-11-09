@@ -21,6 +21,14 @@ async function correct(value="A应移到右上角，B、C不动"){
 }
 const svg=()=>host.querySelector('[data-drawing-stage="base"] [data-layer="base"]')!.outerHTML;
 describe("base regeneration is a new first-stage job",()=>{
+ it("keeps the last successful same-question base shareable after failed correction, with a warning",async()=>{
+  const share=vi.fn();const post=vi.spyOn(apiClient,"post").mockRejectedValue(Error("synthetic failure"));
+  await render({onShareDrawings:share});await correct();await click(regenerate());
+  expect(share.mock.lastCall?.[0]).toMatchObject({basePlan:base,baseNeedsReview:true});
+  expect(share.mock.lastCall?.[0].auxiliaryPlan).toBeUndefined();expect(post).toHaveBeenCalledTimes(1);
+  await render({onShareDrawings:share,questionText:"A different problem"});
+  expect(share.mock.lastCall?.[0].basePlan).toBeUndefined();
+ });
  it("sends the editable previous base and replaces actual SVG points, not just the caption",async()=>{
   const post=vi.spyOn(apiClient,"post").mockResolvedValue({type:"construction",plan:corrected});
   await render();const before=svg();await correct();await click(regenerate());

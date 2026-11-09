@@ -488,6 +488,20 @@ describe.sequential("supplemental text completes human evidence review",()=>{
    for(const call of shared.send.mock.calls){expect(call[2]).toContain("小学奥数");expect(call[2]).toContain("sin/cos/tan");}
   }finally{await shared.db.user.update({where:{id:"alice"},data:{educationStage:null,enrollmentYear:null}});}
  });
+ it("prioritizes the current account grade over an old submitted grade and refreshes it on a new question",async()=>{
+  await shared.db.user.update({where:{id:'alice'},data:{educationStage:'primary',enrollmentYear:new Date().getFullYear()-4}});
+  try{
+   const raw={questionText:'synthetic grade conflict',gradeSemester:'高二上'},k=key();
+   const id=await createConversation('alice',raw,k);
+   expect(await createConversation('alice',raw,k)).toBe(id);
+   expect((await view(id)).input.gradeSemester).toMatch(/[四五]年级/);
+   await processOne();
+   await shared.db.user.update({where:{id:'alice'},data:{enrollmentYear:new Date().getFullYear()-3}});
+   await act(id,'ask',{text:'Please explain this again',followUpMode:'update'});
+   expect((await view(id)).input.gradeSemester).toMatch(/[三四]年级/);
+   await processOne();expect((await view(id)).state).toBe('answered');
+  }finally{await shared.db.user.update({where:{id:'alice'},data:{educationStage:null,enrollmentYear:null}});}
+ });
 });
 
 describe.sequential("bounded JSON compatibility in the persistent dialogue worker",()=>{

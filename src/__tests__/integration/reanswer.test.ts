@@ -42,7 +42,7 @@ describe('POST /api/reanswer (202持久任务契约)', () => {
             jobId: 'job-reanswer-1', state: 'pending', statusUrl: '/api/ai/jobs/job-reanswer-1',
         });
         expect(mocks.submitJob).toHaveBeenCalledExactlyOnceWith('user-123', 'reanswer',
-            expect.objectContaining({ questionText: '求解 x + 2 = 5', language: 'zh' }), 'reanswer-request-1');
+            expect.objectContaining({ questionText: '求解 x + 2 = 5', language: 'zh' }), 'reanswer-request-1', expect.any(Object));
         expect(mocks.user.findUnique).toHaveBeenCalledWith({
             where: { id: 'user-123' }, select: { id: true, role: true, isActive: true, expiresAt: true, sessionVersion: true, mustChangePassword: true, revision: true, aiAccessInitialized: true },
         });
@@ -51,19 +51,19 @@ describe('POST /api/reanswer (202持久任务契约)', () => {
     it('几何图与原始图片保留，不能降级为纯文字', async () => {
         const body = { questionText: '根据附图求角度', imageBase64: IMAGE, originalImageBase64: ORIGINAL_IMAGE, mimeType: 'image/png' };
         expect((await POST(request(body))).status).toBe(202);
-        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining(body), 'reanswer-request-1');
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining(body), 'reanswer-request-1', expect.any(Object));
     });
 
     it('纯图片也可提交重解任务', async () => {
         expect((await POST(request({ imageBase64: IMAGE }))).status).toBe(202);
         expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer',
-            expect.objectContaining({ imageBase64: IMAGE, questionText: '' }), 'reanswer-request-1');
+            expect.objectContaining({ imageBase64: IMAGE, questionText: '' }), 'reanswer-request-1', expect.any(Object));
     });
 
     it('英文、年级与校正文本传入队列', async () => {
         const body = { questionText: 'Solve x + 2 = 5', language: 'en', gradeSemester: 'primary_3', subject: '数学' };
         expect((await POST(request(body))).status).toBe(202);
-        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining(body), 'reanswer-request-1');
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining(body), 'reanswer-request-1', expect.any(Object));
     });
 
     it('按owner校验学科，不信任客户端学科名称', async () => {
@@ -71,7 +71,7 @@ describe('POST /api/reanswer (202持久任务契约)', () => {
         expect((await POST(request({ questionText: 'q', subjectId: 'physics-1', subject: '伪造名称' }))).status).toBe(202);
         expect(mocks.subject.findFirst).toHaveBeenCalledWith({ where: { id: 'physics-1', userId: 'user-123' } });
         expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer',
-            expect.objectContaining({ subject: '物理' }), 'reanswer-request-1');
+            expect.objectContaining({ subject: '物理' }), 'reanswer-request-1', expect.any(Object));
     });
 
     it('其他用户的学科返回404，不入队', async () => {
@@ -120,7 +120,7 @@ describe('POST /api/reanswer (202持久任务契约)', () => {
         ['LaTeX', String.raw`求解 $\frac{x+1}{2}=3$，保留 $\sqrt{x}$。`],
     ])('完整保留%s，不在提交时改写题目', async (_name, questionText) => {
         expect((await POST(request({ questionText }))).status).toBe(202);
-        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining({ questionText }), 'reanswer-request-1');
+        expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'reanswer', expect.objectContaining({ questionText }), 'reanswer-request-1', expect.any(Object));
     });
 
     it('已存在的任务仍返回202和真实状态，不重复同步解题', async () => {

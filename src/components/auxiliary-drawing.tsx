@@ -35,6 +35,7 @@ export function ConstructionPreview({plan,onUseCommands,originalImage}:{plan:Con
         <OriginalImage image={originalImage}/>
         <ConstructionDiagram geometry={compiled.geometry} visible={visible} title={plan.title}/>
         <Button variant="outline" onClick={()=>setDynamic(v=>!v)}>{dynamic?"关闭GeoGebra动态演示":"打开GeoGebra动态演示（需联网）"}</Button>
+        {dynamic&&((plan.regions?.length||0)>0||plan.annotations?.some(a=>a.kind==='text'))&&<p className="text-sm text-muted-foreground">GeoGebra演示构造步骤；原图阴影和文字标注请对照上方静态示意图。</p>}
         {dynamic && <GeogebraDemo commands={commands}/> }
         {onUseCommands && <Button variant="outline" onClick={()=>onUseCommands(JSON.stringify([...compiled.base,...compiled.steps.flatMap(s=>s.commands)]))}>保留全部步骤到当前题目</Button>}
     </div>;
@@ -72,6 +73,8 @@ function EditedImagePreview({result:r}:{result:Extract<DrawingResult,{type:"imag
 export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrection="",drawingEvidence,image,onUseCommands,disabled,initialBase,onShareDrawings,baseDrawingCache,baseDrawingVersion=0}:{baseDrawingCache?:BaseDrawingCache;baseDrawingVersion?:number;questionText:string;answerText:string;analysis:string;drawingCorrection?:string;drawingEvidence?:DrawingEvidence;image?:string|null;onUseCommands?:(commands:string)=>void;disabled?:boolean;initialBase?:ConstructionPlan;onShareDrawings?:(state:DrawingShareState|null)=>void}){
     const [correction,setCorrection]=useState(drawingCorrection);
     const baseIdentity={questionText,image,drawingEvidence};
+    const identity=JSON.stringify(baseIdentity);
+    const [baseIdentityKey,setBaseIdentityKey]=useState(initialBase?identity:"");
     const sourceFor=(value:string)=>JSON.stringify({questionText,image,drawingCorrection:value,drawingEvidence});
     const source=sourceFor(correction),solution=JSON.stringify({questionText,answerText,analysis,image});
     const [base,setBase]=useState<ConstructionPlan|undefined>(initialBase),[baseSource,setBaseSource]=useState(initialBase?source:""),[baseImage,setBaseImage]=useState(image);
@@ -101,7 +104,8 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
     const [progressLabel,setProgressLabel]=useState("作图");
     const [baseFeedbackAt,setBaseFeedbackAt]=useState<"initial"|"correction">("initial");
     const pending=useRef(false),baseStale=!!base && baseSource!==source,stale=!!plan && planSource!==solution;
-    useEffect(()=>{onShareDrawings?.({questionText,answerText,analysis,image,basePlan:!baseStale?base:undefined,auxiliaryPlan:!baseStale&&!stale?plan:undefined})},[onShareDrawings,questionText,answerText,analysis,image,base,plan,baseStale,stale]);
+    const sameQuestion=baseIdentityKey===identity;
+    useEffect(()=>{onShareDrawings?.({questionText,answerText,analysis,image,basePlan:sameQuestion?base:undefined,baseNeedsReview:sameQuestion&&baseStale,auxiliaryPlan:!baseStale&&!stale?plan:undefined})},[onShareDrawings,questionText,answerText,analysis,image,base,plan,baseStale,stale,sameQuestion]);
     useEffect(()=>()=>onShareDrawings?.(null),[onShareDrawings]);
     const usableBase=!!base&&!baseStale&&baseConfirmed;
     async function settingsLoad(){try{setSettings(await apiClient.get<EditorSettings>("/api/ai/drawing-settings"));}catch{setMessage("无法读取图片编辑设置，请刷新后重试。");}}
@@ -113,7 +117,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         if(phase==="base" && !fromCorrection && !base){
             const reused=baseDrawingCache?.lookup(baseIdentity,correction);
             if(reused){
-                setCorrection(reused.correction);setBase(reused.plan);setBaseSource(sourceFor(reused.correction));setBaseImage(image);
+                setCorrection(reused.correction);setBase(reused.plan);setBaseSource(sourceFor(reused.correction));setBaseImage(image);setBaseIdentityKey(identity);
                 setBaseConfirmed(false);setPlan(undefined);setPlanSource("");setConfirmed(false);setEdited(undefined);
                 setBaseFeedbackAt("initial");setProgressLabel("原题底图生成");setJobId("");
                 setMessage("已复用同一原题的已有底图及纠正说明，本次未调用AI、未产生新的作图费用。请核对并锁定后，再按当前新题解生成第二步辅助线；旧辅助线不会复用。");
@@ -136,7 +140,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
                     if(parsed.steps.length)throw new Error("Unexpected source operations");
                     unchangedBase=!!base&&sameBaseDrawing(base,parsed);
                     baseDrawingCache?.remember(baseIdentity,{plan:parsed,correction},baseDrawingVersion);
-                    setBase(parsed);setBaseSource(source);setBaseImage(image);setBaseConfirmed(false);setPlan(undefined);setPlanSource("");
+                    setBase(parsed);setBaseSource(source);setBaseImage(image);setBaseIdentityKey(identity);setBaseConfirmed(false);setPlan(undefined);setPlanSource("");
                 }else{
                     // Defense in depth: even a malformed successful HTTP response cannot replace the visible base.
                     if(!base||JSON.stringify({...parsed,steps:[]})!==JSON.stringify(ConstructionSchema.parse(base)))throw new Error("Source changed");
@@ -159,7 +163,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         <div data-drawing-stage="base" className="space-y-3">
             <Button variant="outline" disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base")}>第一步：生成原题底图</Button>
             {progressLabel==="原题底图生成" && baseFeedbackAt==="initial" && workFeedback}
-            {baseStale && <p role="alert">原题、原图或底图纠正说明已修改，下面的底图属于旧版本。请先根据纠正说明重新生成并核对，不能套用旧底图。</p>}
+            {baseStale && <p role="alert">原题、原图或底图纠正说明已修改，下面的底图属于旧版本。请先根据纠正说明重新生成并核对，再添加辅助线。{sameQuestion?"分享时仍可选择这张最后成功生成的底图，并注明尚未按新纠正说明更新。":"当前题目已变，分享不会附带这张旧底图。"}</p>}
             {base && <ConstructionPreview key={baseSource+"base"} plan={base} originalImage={baseImage} onUseCommands={!plan&&!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}
             <label className="block space-y-1"><span className="text-sm font-medium">原题底图纠正说明（可选）</span><textarea data-drawing-correction value={correction} onChange={e=>{baseDrawingCache?.invalidate(baseIdentity,baseDrawingVersion);setCorrection(e.target.value);}} maxLength={10000} rows={3} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="例如：A应在左上角，AB是竖直边；不要把原图整体旋转。"/><span className="text-xs text-muted-foreground">这里只纠正原题图的方向、点位、标签和已有边；输入后必须重新生成并核对底图，不会直接当作解题步骤。</span></label>
             {base && (baseStale||correction.trim()||baseFeedbackAt==="correction") && <Button variant="outline" data-regenerate-base disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base",true)}>根据纠正说明重新生成原题底图</Button>}

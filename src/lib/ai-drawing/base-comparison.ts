@@ -17,6 +17,7 @@ function signature(plan: ConstructionPlan): string {
         circles: sorted(plan.circles ?? []),
         arcs: sorted(plan.arcs ?? []),
         annotations: sorted(plan.annotations ?? []),
+        regions: sorted(plan.regions ?? []),
     });
 }
 export function sameBaseDrawing(previous: ConstructionPlan, next: ConstructionPlan): boolean {

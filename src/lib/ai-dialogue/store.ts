@@ -74,7 +74,7 @@ export async function createConversation(userId: string, raw: unknown, key: stri
             if(!subject) dialogueError("NOT_FOUND",404);
             input.subject=subject.name;
         }
-        if(!input.gradeSemester && user.educationStage && user.enrollmentYear)
+        if(user.educationStage && user.enrollmentYear)
             input.gradeSemester=calculateGrade(user.educationStage,user.enrollmentYear,new Date(),"zh");
         const defaults=await tx.aiDialogueSettings.findUnique({where:{id:"site"}});
         const payload:DialoguePayload={input,messages:[],questions:[],rereads:0};
@@ -193,6 +193,10 @@ export async function actConversation(userId:string,id:string,raw:unknown,key:st
             if(action.kind!=="save"){
                 if(action.kind!=="ask" && (c.roundAttempts>=c.attemptLimit || c.roundElapsedMs>=c.timeLimitMs))dialogueError("DIALOGUE_CALL_LIMIT");
                 await queueRoom(tx,userId);
+                // A new user-requested run uses the current profile, not a grade
+                // frozen when this conversation (or an old notebook item) began.
+                if(user.educationStage && user.enrollmentYear)
+                    p.input.gradeSemester=calculateGrade(user.educationStage,user.enrollmentYear,new Date(),"zh");
                 const job=await tx.aiJob.create({data:{userId,conversationId:id,kind:"dialogue",requestKey:`dlg:${id}:${key}`,input:protect({questionText:"conversation"}),expiresAt:forever()}});
                 data.activeJobId=job.id;data.state="active";
             }

@@ -38,8 +38,7 @@ export function fitMarkdownImagePage(page: HTMLElement, initialWidth: number): n
  }
  throw Error('某条公式无法在可读字号下安全换行，请手动分行，或使用LaTeX文字分享。');
 }
-/** The exported bitmap follows the current reading width only when explicitly selected. */
+/** Use the current device layout; formula reflow remains a separate reading preference. */
 export function solutionImageWidth(source: HTMLElement): number {
- if (source.dataset.fitWidth !== 'true') return 760;
  return Math.min(2048, Math.max(160, Math.round(source.getBoundingClientRect().width || source.clientWidth || 760)));
 }

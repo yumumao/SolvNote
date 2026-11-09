@@ -1,6 +1,7 @@
 "use client";
 import {useRef} from "react";
 import type {compileConstruction} from "@/lib/ai-drawing/construction";
+import {diagramRegionPath} from '@/lib/ai-drawing/regions';
 import {layoutDiagramAnnotations,diagramConditionLines,appendDiagramCaption} from "@/lib/ai-drawing/annotations";
 import {Button} from "./ui/button";
 type Geometry=ReturnType<typeof compileConstruction>["geometry"];
@@ -17,15 +18,16 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
     const visibleDerivedPoints=geometry.derivedPoints.filter(p=>p.step<=visible);
     const visibleDerivedCircles=geometry.derivedCircles.filter(c=>c.step<=visible);
     const allPoints=[...geometry.basePoints,...visibleDerivedPoints];
-    const xs=[...geometry.basePoints.map(p=>p.x),...rounds.flatMap(c=>[c.x-c.radius,c.x+c.radius])];
-    const ys=[...geometry.basePoints.map(p=>p.y),...rounds.flatMap(c=>[c.y-c.radius,c.y+c.radius])];
+    const regionBounds=(geometry.regions||[]).flatMap(r=>r.bounds);
+    const xs=[...geometry.basePoints.map(p=>p.x),...rounds.flatMap(c=>[c.x-c.radius,c.x+c.radius]),...regionBounds.map(p=>p.x)];
+    const ys=[...geometry.basePoints.map(p=>p.y),...rounds.flatMap(c=>[c.y-c.radius,c.y+c.radius]),...regionBounds.map(p=>p.y)];
     const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
     const scale=Math.min(720/Math.max(maxX-minX,1e-6),420/Math.max(maxY-minY,1e-6));
     const map=(p:{x:number;y:number})=>({x:400+(p.x-(minX+maxX)/2)*scale,y:250-(p.y-(minY+maxY)/2)*scale});
     const circleBounds=(c:Geometry["circles"][number]|Geometry["derivedCircles"][number])=>{const p=map(c),r=c.radius*scale;return [{x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r}];};
     const points=new Map(allPoints.map(p=>[p.id,p]));
     const originals=new Map(geometry.basePoints.map(p=>[p.id,p]));
-    const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})));
+    const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})),map);
     const labelBounds=labels.flatMap(l=>l.bounds);
     const captionLines=diagramConditionLines(geometry.annotations||[],geometry.notes||[]);
     const hiddenLabels=labels.some(l=>l.hidden);
@@ -54,6 +56,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
             {x:0,y:0},{x:SVG_WIDTH,y:SVG_HEIGHT},
             ...allPoints.flatMap(pointBounds),
             ...labelBounds,
+            ...regionBounds.map(map),
             ...[...geometry.circles,...visibleDerivedCircles].flatMap(circleBounds),
             ...geometry.arcs.flatMap(a=>{const start=map(a.start),end=map(a.end),r=a.radius*scale;return [{x:start.x-r,y:start.y-r},{x:start.x+r,y:start.y+r},{x:end.x-r,y:end.y-r},{x:end.x+r,y:end.y+r}];}),
         ];
@@ -70,7 +73,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
         const q=map(p);return [{x:q.x-4,y:q.y-30},{x:q.x+8+p.id.length*18+3,y:q.y+4}];
     }
     function compactViewBox(cropPoints=allPoints,cropCircles=visibleDerivedCircles){
-        const bounds=[...cropPoints.flatMap(pointBounds),...labelBounds];
+        const bounds=[...cropPoints.flatMap(pointBounds),...labelBounds,...regionBounds.map(map)];
         for(const c of [...geometry.circles,...cropCircles]){
             const p=map(c),r=c.radius*scale;
             bounds.push({x:p.x-r,y:p.y-r},{x:p.x+r,y:p.y+r});
@@ -140,6 +143,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
             <title>{title}（示意图，不作为证明）</title>
             <rect x={bounds.left} y={bounds.top} width={bounds.width} height={bounds.height} fill="white"/>
             <g data-layer="base">
+            {(geometry.regions||[]).map((r,i)=><path key={i} data-base-region="true" d={diagramRegionPath(r,map,scale)} fill="#64748b" fillOpacity={0.3} fillRule="evenodd" stroke="none"/>)}
             {geometry.circles.map((c,i)=>{const p=map(c);return <circle key={i} data-base-circle="true" cx={p.x} cy={p.y} r={c.radius*scale} fill="none" stroke="#334155" strokeWidth={2.5}/>;})}
             {geometry.arcs.map((a,i)=>{const start=map(a.start),end=map(a.end),radius=a.radius*scale;return <path key={i} data-base-arc="true" d={`M ${start.x} ${start.y} A ${radius} ${radius} 0 ${a.span>Math.PI?1:0} ${a.direction==="cw"?1:0} ${end.x} ${end.y}`} fill="none" stroke="#334155" strokeWidth={2.5}/>;})}
             {geometry.baseSegments.map((s,i)=>renderSegment(s,i,false))}

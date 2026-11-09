@@ -298,9 +298,9 @@ describe('AI Prompts', () => {
             const instruction = generateGradeInstruction('初二上');
             expect(instruction).toContain('年级讲解偏好');
             expect(instruction).toContain('初中二年级');
-            expect(instruction).toContain('不是解题方法的上限');
+            expect(instruction).toContain('当前年级及以下');
             expect(instruction).toContain('正确性始终优先');
-            expect(instruction).toContain('必须使用必要的更高年级知识');
+            expect(instruction).toContain('最接近、引入新概念最少');
             expect(instruction).toContain('解释新增概念、使用原因和每一步推理');
             expect(instruction).not.toContain('禁止使用超纲知识');
         });
@@ -315,7 +315,7 @@ describe('AI Prompts', () => {
             const prompt = generateAnalyzePrompt('zh', 8, '数学', undefined, '初二上');
             expect(prompt).toContain('年级讲解偏好');
             expect(prompt).toContain('正确性始终优先');
-            expect(prompt).toContain('必须使用必要的更高年级知识');
+            expect(prompt).toContain('最接近、引入新概念最少');
             expect(prompt).not.toContain('禁止使用超纲知识');
             expect(prompt).toContain('初中二年级');
         });
@@ -330,7 +330,7 @@ describe('AI Prompts', () => {
             const prompt = generateSimilarQuestionPrompt('zh', '1+1=?', ['算术'], 'medium', undefined, 'primary_3');
             expect(prompt).toContain('年级讲解偏好');
             expect(prompt).toContain('正确性始终优先');
-            expect(prompt).toContain('必须使用必要的更高年级知识');
+            expect(prompt).toContain('最接近、引入新概念最少');
             expect(prompt).not.toContain('禁止使用超纲知识');
             expect(prompt).toContain('小学三年级');
             expect(prompt).toContain('必须验证题目可解、答案正确且解析一致');
@@ -346,7 +346,7 @@ describe('AI Prompts', () => {
             const prompt = generateReanswerPrompt('zh', '1+1=?', '数学', undefined, '高一');
             expect(prompt).toContain('年级讲解偏好');
             expect(prompt).toContain('正确性始终优先');
-            expect(prompt).toContain('必须使用必要的更高年级知识');
+            expect(prompt).toContain('最接近、引入新概念最少');
             expect(prompt).not.toContain('禁止使用超纲知识');
             expect(prompt).toContain('高中一年级');
         });

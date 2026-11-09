@@ -66,7 +66,7 @@ const contracts = {
     zh: {
         heading: "【正确性优先】",
         grade: "初中一年级",
-        preference: /年级仅.*讲解.*偏好/,
+        preference: /主解法优先使用当前年级及以下/,
         escalation:
             /当前年级[\s\S]*(?:无法|不能)[\s\S]*正确[\s\S]*(?:更高|进阶|超纲)/,
         explain: /解释.*(?:新增|必要).*概念/,
@@ -77,7 +77,7 @@ const contracts = {
     en: {
         heading: "[Correctness first]",
         grade: "Junior high school year 1",
-        preference: /grade is only an explanation preference/i,
+        preference: /correct main solution using the current grade and below/i,
         escalation:
             /current.grade[\s\S]*cannot[\s\S]*correctly[\s\S]*(?:advanced|higher.level)/i,
         explain: /explain.*(?:new|necessary).*concepts/i,

@@ -10,8 +10,8 @@ import {parseSolutionSnapshot} from "@/lib/solution-snapshot";
 import type { SolutionImage } from "@/lib/solution-images";
 
 type PreviewImage=SolutionImage&{url:string};
-export function SolutionShare({analysis,questionText,answerText,originalImage,basePlan,auxiliaryPlan,initialSelection,allowNewReader=true,inline=false,fitWidth=false}:{analysis:string;initialSelection?:SolutionSnapshot;allowNewReader?:boolean;inline?:boolean;fitWidth?:boolean}&SolutionContext){
- const makeSnapshot=()=>parseSolutionSnapshot({analysis,questionText,answerText,originalImage,basePlan,auxiliaryPlan,fitWidth:initialSelection?.fitWidth??fitWidth,includeLatex:initialSelection?.includeLatex??true,includeQuestion:initialSelection?.includeQuestion??false,includeAnswer:initialSelection?.includeAnswer??true,includeOriginal:initialSelection?.includeOriginal??false,includeBase:initialSelection?.includeBase??false,includeAuxiliary:initialSelection?.includeAuxiliary??true});
+export function SolutionShare({analysis,questionText,answerText,originalImage,basePlan,baseNeedsReview,auxiliaryPlan,initialSelection,allowNewReader=true,inline=false,fitWidth=false}:{analysis:string;initialSelection?:SolutionSnapshot;allowNewReader?:boolean;inline?:boolean;fitWidth?:boolean}&SolutionContext){
+ const makeSnapshot=()=>parseSolutionSnapshot({analysis,questionText,answerText,originalImage,basePlan,baseNeedsReview,auxiliaryPlan,fitWidth:initialSelection?.fitWidth??fitWidth,includeLatex:initialSelection?.includeLatex??true,includeQuestion:initialSelection?.includeQuestion??false,includeAnswer:initialSelection?.includeAnswer??true,includeOriginal:initialSelection?.includeOriginal??false,includeBase:initialSelection?.includeBase??false,includeAuxiliary:initialSelection?.includeAuxiliary??true});
  const [snapshot,setSnapshot]=useState<SolutionSnapshot|null>(()=>inline?makeSnapshot():null);
  const [busy,setBusy]=useState(false),[message,setMessage]=useState(''),[text,setText]=useState<string|null>(null),[images,setImages]=useState<PreviewImage[]>([]);
  const [fileShare,setFileShare]=useState(false);
@@ -44,7 +44,6 @@ export function SolutionShare({analysis,questionText,answerText,originalImage,ba
   const el=preview.current?.querySelector<HTMLElement>('[data-solution-document]');
   if(!textOpen||!el)return;
   // Synchronize derived text with the committed preview DOM, not an older selection.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   setText(solutionPlainText(el,{includeLatex:snapshot?.includeLatex}));
  },[snapshot,textOpen]);
  const prepareText=()=>{if(textOpen){setText(null);setMessage('');return}const el=documentNode();if(el){setText(solutionPlainText(el,{includeLatex:snapshot?.includeLatex}));setMessage('文字已准备好。图片内容请使用图片分享；可切换是否保留LaTeX标记。')}};
@@ -68,7 +67,7 @@ export function SolutionShare({analysis,questionText,answerText,originalImage,ba
      {snapshot.auxiliaryPlan&&<label className="flex items-center gap-2"><input type="checkbox" checked={!!snapshot.includeAuxiliary} onChange={e=>select('includeAuxiliary',e.target.checked)}/>附带辅助线图（第二步）</label>}
     </fieldset>
     <div className="flex flex-wrap items-center gap-2 mb-3">{!inline&&allowNewReader&&<Button type="button" size="sm" variant="outline" onClick={()=>read(snapshot)}>在新标签预览</Button>}<ReadingModeButton fitWidth={!!snapshot.fitWidth} disabled={busy} onChange={value=>select('fitWidth',value)}/><Button type="button" size="sm" disabled={busy} onClick={generate}>生成分享长图</Button><div role="group" aria-label="文字分享选项" className="inline-flex h-8 shrink-0 items-stretch rounded-md"><Button type="button" size="sm" variant="outline" className="rounded-r-none" aria-expanded={textOpen} onClick={prepareText}>{textOpen?'收起分享文字':'准备分享文字'}</Button><label className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-r-md border border-l-0 bg-background px-2.5 text-sm shadow-xs"><input type="checkbox" checked={snapshot.includeLatex!==false} disabled={busy} onChange={e=>select('includeLatex',e.target.checked)}/>保留LaTeX标记</label></div></div>
-    <p className="text-xs text-muted-foreground mb-3">长内容自动按步骤分成多张图，避免截断公式；过长的单一步骤请先分段。修改勾选后需要重新生成。适合宽度模式会按当前阅读宽度生成图片。</p>
+    <p className="text-xs text-muted-foreground mb-3">优先生成一张长图，按当前预览宽度和设备像素密度保持清晰；超过安全尺寸时才按步骤拆分。修改勾选后需要重新生成。公式可切换适合宽度模式。</p>
     <AIWorkProgress active={busy} label="本地分享图片生成" compact/>
     {message&&<p role="status" className="my-3 text-sm">{message}</p>}
     {text!==null&&<section className="space-y-2 my-4" aria-label="分享文字"><textarea aria-label="可复制的分享文字" readOnly value={text} className="w-full min-h-48 rounded-md border p-3 text-sm" onFocus={e=>e.currentTarget.select()}/><div className="flex flex-wrap gap-2"><Button type="button" size="sm" onClick={copy}>复制文字</Button>{typeof navigator!=='undefined'&&!!navigator.share&&<Button type="button" size="sm" variant="outline" onClick={shareText}>系统分享文字</Button>}<Button type="button" size="sm" variant="outline" onClick={()=>saveBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),'solvnote-solution.txt')}>下载文本</Button></div></section>}

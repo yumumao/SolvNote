@@ -107,6 +107,27 @@ describe.sequential("durable SQLite integration", () => {
         ).rejects.toThrow("REQUEST_CONFLICT");
         expect((await cancelJob("alice", a.id))?.state).toBe("cancelled");
     });
+    it("keeps the submitted receipt stable when the current profile grade changes", async () => {
+        const submitted = { questionText: "synthetic profile replay", gradeSemester: "高二上" };
+        const a = await submitJob("alice", "analyze", { ...submitted, gradeSemester: "五年级上" }, "profile-replay", submitted);
+        try {
+            const b = await submitJob("alice", "analyze", { ...submitted, gradeSemester: "六年级上" }, "profile-replay", submitted);
+            expect(b.id).toBe(a.id);
+            expect(await shared.db.aiJob.count({ where: { userId: "alice", requestKey: "profile-replay" } })).toBe(1);
+            const restored = (await readJob("alice", a.id, true))!.input;
+            expect(restored).toMatchObject({ questionText: submitted.questionText, gradeSemester: "五年级上" });
+            expect(restored).not.toHaveProperty("_submissionHash");
+            await expect(submitJob("alice", "analyze", { ...submitted, questionText: "changed" }, "profile-replay", { ...submitted, questionText: "changed" })).rejects.toThrow("REQUEST_CONFLICT");
+            await expect(submitJob("alice", "analyze", submitted, "profile-replay", { ...submitted, gradeSemester: "初二上" })).rejects.toThrow("REQUEST_CONFLICT");
+            await expect(submitJob("alice", "reanswer", submitted, "profile-replay", submitted)).rejects.toThrow("REQUEST_CONFLICT");
+        } finally { await cancelJob("alice", a.id); }
+        const legacy = await submitJob("alice", "analyze", submitted, "profile-legacy");
+        try {
+            expect((await submitJob("alice", "analyze", { ...submitted, gradeSemester: "五年级上" }, "profile-legacy", submitted)).id).toBe(legacy.id);
+            await expect(submitJob("alice", "analyze", { ...submitted, questionText: "other", gradeSemester: "五年级上" }, "profile-legacy", { ...submitted, questionText: "other" })).rejects.toThrow("REQUEST_CONFLICT");
+        }
+        finally { await cancelJob("alice", legacy.id); }
+    });
     it("claims globally once and marks interrupted requests unknown on recovery", async () => {
         const a = await submitJob(
             "alice",

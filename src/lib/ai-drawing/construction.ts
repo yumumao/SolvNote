@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {DiagramRegionSchema,compileDiagramRegions,type CompiledRegion} from './regions';
 import {DiagramAnnotationSchema,DiagramNoteSchema,validateDiagramAnnotations,type DiagramAnnotation,type DiagramNote} from "./annotations";
 // Identifiers are intentionally narrower than GeoGebra's language. No free-form commands.
 const id = z.string().regex(/^[A-Z][0-9]{0,3}$/);
@@ -20,6 +21,7 @@ export const ConstructionSchema = z.object({
     circles:z.array(z.object({center:id,through:id}).strict()).max(16).optional(),
     arcs:z.array(z.object({center:id,start:id,end:id,direction:z.enum(["ccw","cw"]),sector:z.boolean().optional()}).strict()).max(24).optional(),
     annotations:z.array(DiagramAnnotationSchema).max(32).optional(),
+    regions:z.array(DiagramRegionSchema).max(12).optional(),
     notes:z.array(DiagramNoteSchema).max(24).optional(),
     steps:z.array(z.object({description:z.string().trim().min(1).max(1000),operation}).strict()).min(0).max(16),
 }).strict();
@@ -35,7 +37,7 @@ export function compileConstruction(raw:ConstructionPlan){
     // Reuse validated coordinates for a local preview; never evaluate model-supplied code.
     const basePoints=plan.points.map(p=>({...p,step:0 as const}));
     const baseSegments=plan.segments.map(([a,b])=>({a,b,step:0 as const}));
-    const geometry:{basePoints:Array<Point & {id:string;step:0}>;derivedPoints:Array<Point & {id:string;step:number}>;baseSegments:Array<{a:string;b:string;step:0}>;derivedSegments:Array<{a:string;b:string;step:number}>;points:Array<Point & {id:string;step:number}>;segments:Array<{a:string;b:string;step:number}>;circles:Array<Point & {radius:number;step:0}>;derivedCircles:Array<Point & {radius:number;step:number}>;arcs:Arc[];annotations:DiagramAnnotation[];notes:DiagramNote[]}={basePoints,derivedPoints:[],baseSegments,derivedSegments:[],points:[...basePoints],segments:[...baseSegments],circles:[],derivedCircles:[],arcs:[],annotations:plan.annotations||[],notes:plan.notes||[]};
+    const geometry:{basePoints:Array<Point & {id:string;step:0}>;derivedPoints:Array<Point & {id:string;step:number}>;baseSegments:Array<{a:string;b:string;step:0}>;derivedSegments:Array<{a:string;b:string;step:number}>;points:Array<Point & {id:string;step:number}>;segments:Array<{a:string;b:string;step:number}>;circles:Array<Point & {radius:number;step:0}>;derivedCircles:Array<Point & {radius:number;step:number}>;arcs:Arc[];regions:CompiledRegion[];annotations:DiagramAnnotation[];notes:DiagramNote[]}={basePoints,derivedPoints:[],baseSegments,derivedSegments:[],points:[...basePoints],segments:[...baseSegments],circles:[],derivedCircles:[],arcs:[],regions:[],annotations:plan.annotations||[],notes:plan.notes||[]};
     const base:string[]=[];
     for(const p of plan.points){define(p.id,p);base.push(`${p.id}=(${p.x},${p.y})`);}
     for(const [i,[a,b]] of plan.segments.entries()){line(a,b);base.push(`base${i}=Segment(${a},${b})`);}
@@ -55,6 +57,7 @@ export function compileConstruction(raw:ConstructionPlan){
     }
     // Validate against original points BEFORE auxiliary points can be introduced.
     validateDiagramAnnotations(geometry.annotations,get);
+    geometry.regions=compileDiagramRegions(plan.regions||[],get);
     // GeoGebra receives the same frozen originals; auxiliary operations may only add objects.
     for(const command of [...base]){
         const name=command.match(/^([A-Za-z][A-Za-z0-9]*)=/)?.[1];
@@ -89,20 +92,22 @@ export const constructionExamples: ConstructionPlan[] = [
     {"title":"旋转复制但保留原图","points":[{"id":"A","x":0,"y":0},{"id":"B","x":0,"y":6},{"id":"C","x":4,"y":3}],"segments":[["A","B"],["B","C"],["C","A"]],"circles":[],"arcs":[],"steps":[{"description":"利用等边三角形可作60度角，将B绕A逆时针旋转60度得到辅助点R，原点B保持不动","operation":{"kind":"rotate","id":"R","point":"B","center":"A","degrees":60}},{"description":"复制同一60度角，将C绕A逆时针旋转60度得到辅助点S，原点C保持不动","operation":{"kind":"rotate","id":"S","point":"C","center":"A","degrees":60}},{"description":"连接旋转后的辅助三角形","operation":{"kind":"segment","a":"A","b":"R"}},{"description":"连接旋转后的辅助三角形","operation":{"kind":"segment","a":"R","b":"S"}},{"description":"连接旋转后的辅助三角形","operation":{"kind":"segment","a":"S","b":"A"}}]},
     {"title":"由两条直线构造交点","points":[{"id":"A","x":0,"y":0},{"id":"B","x":6,"y":0},{"id":"C","x":6,"y":4},{"id":"D","x":0,"y":4}],"segments":[["A","B"],["B","C"],["C","D"],["D","A"]],"circles":[],"arcs":[],"steps":[{"description":"连接对角线AC","operation":{"kind":"segment","a":"A","b":"C"}},{"description":"连接对角线BD","operation":{"kind":"segment","a":"B","b":"D"}},{"description":"作直线AC与BD的交点E","operation":{"kind":"intersection","id":"E","a":"A","b":"C","c":"B","d":"D"}}]}
 ];
-const DRAWING_SOURCE_RULES = "不得整体旋转、镜像或翻转原题底图。坐标轴固定为x向右、y向上。按原图保持点的上下左右位置、边的朝向与图形的整体布局，不能把斜边摆平或把旋转后的副本冒充原图。原图同时提供布局和明确标出的题目条件：角号、角值、长度、直角符号、等长刻痕、平行箭头等，即使文字题干未写也要保留；但不得从外观推断未经明确标记或题设确认的等长、垂直或其他几何关系。阴影位置以原图为准，不要求精确涂色。";
+const DRAWING_SOURCE_RULES = "不得整体旋转、镜像或翻转原题底图。坐标轴固定为x向右、y向上。按原图保持点的上下左右位置、边的朝向与图形的整体布局，不能把斜边摆平或把旋转后的副本冒充原图。原图同时提供布局和明确标出的题目条件：角号、角值、长度、直角符号、等长刻痕、平行箭头等，即使文字题干未写也要保留；但不得从外观推断未经明确标记或题设确认的等长、垂直或其他几何关系。必须保留原图明确可见的阴影边界、孔洞与文字标注；阴影是原题信息，不得省略或用整圆、整扇形替换局部阴影。";
 const DRAWING_LAYOUT_RULES = "原题底图是不可变的源图层，不能平移、缩放或改写原有点的坐标。"+DRAWING_SOURCE_RULES;
 export const BASE_CONSTRUCTION_PROMPT = `你是原题底图重建助手。这是独立的第一阶段，只读取原题与原图，不读取答案或解法，不设计辅助线。${DRAWING_SOURCE_RULES}第一阶段尚未锁定，允许按纠正说明修改错误点位、方向和已有连线；方向保护针对原题原图，不锁死previousBase中已画错的坐标。
-只返回严格JSON，不套type/plan/result外壳，不加额外说明字段。请求JSON包含question和correction；correction是用户针对原题底图的视觉/结构纠正说明（例如方向、点位、标签或已有边），优先按其修订底图，但不要把它当作新增题设、答案或辅助线指令。若correction与原图冲突，以用户明确纠正为优先；仍无法确认时只返回{"unsupported":true}，不能猜测。请求可带previousBase：这是用户正在纠正的旧绘图数据，不是题设、不是已核对的lockedBase，也不是必须保持不变的层。以原题、原图和较新人工纠正为准，对照旧图查找错误，并把修正落实到points、segments、circles、arcs、annotations中的相关字段；不能只改title或notes来表示已修图。其余无关且正确的结构尽量保持；如果原题已变，旧图仅供参考，不沿用不相关结构。不提前添加解法辅助线。输出完整的新底图而非差量补丁；请求确实无需改变图形时可保留，不得为制造变化而任意移点。示例：
+只返回严格JSON，不套type/plan/result外壳，不加额外说明字段。请求JSON包含question和correction；correction是用户针对原题底图的视觉/结构纠正说明（例如方向、点位、标签或已有边），优先按其修订底图，但不要把它当作新增题设、答案或辅助线指令。若correction与原图冲突，以用户明确纠正为优先；仍无法确认时只返回{"unsupported":true}，不能猜测。请求可带previousBase：这是用户正在纠正的旧绘图数据，不是题设、不是已核对的lockedBase，也不是必须保持不变的层。以原题、原图和较新人工纠正为准，对照旧图查找错误，并把修正落实到points、segments、circles、arcs、regions、annotations中的相关字段；不能只改title或notes来表示已修图。其余无关且正确的结构尽量保持；如果原题已变，旧图仅供参考，不沿用不相关结构。不提前添加解法辅助线。输出完整的新底图而非差量补丁；请求确实无需改变图形时可保留，不得为制造变化而任意移点。示例：
 {"title":"原题底图","points":[{"id":"A","x":0,"y":4},{"id":"B","x":0,"y":0},{"id":"C","x":4,"y":0},{"id":"D","x":4,"y":4}],"segments":[["A","B"],["B","C"],["C","D"],["D","A"]],"circles":[],"arcs":[],"steps":[]}
 
-原图标记使用可选annotations数组（最多32项），图下注释使用可选notes数组（最多24项）；没有则写[]。先逐一检查原图文字和符号，再输出，不能因题干未描述而忽略。annotations只存能明确识别并可靠定位的原题标注，不存推导结论，不用计算值替换原图数值；text为1到24字纯单行文本，按原图保留，例如角号只写"1"而非猜为"1°"。
+阴影使用可选regions数组（最多12项），每项为{"contours":[{"start":"O","edges":[{"kind":"segment","to":"A"},{"kind":"arc","center":"O","to":"B","direction":"ccw"},{"kind":"segment","to":"O"}]}]}。这是沿OA、弧AB、BO闭合的扇形示例，不能直接套用当前图。每个轮廓从start出发，segment直线至to；arc绕center沿direction行至to，起终点必须等距于圆心。最后to必须回到start；一个同起终点的arc表示整圆。每区最多4个闭合轮廓、每轮廓最多24条边，偶奇填充可表示内孔；多个圆弧可围出弓形或月牙。只引用原题已有边界点，必要时给原图中确实存在但未命名的边界点命名，不添加几何假设。不能准确确认的阴影在notes标uncertain，不能猜测填满。
+自由文字使用annotations中的{"kind":"text","x":1,"y":2,"text":"阴影甲 / 12cm²"}，坐标与points同一坐标系，文字1到80字单行纯文本，按原图位置放置；适用于区域名称、面积、图内说明等不附着单一角或边的标注。不能把全部文字移到图注代替图内还原。
+原图标记使用可选annotations数组（最多32项），图下注释使用可选notes数组（最多24项）；没有则写[]。先逐一检查原图文字和符号，再输出，不能因题干未描述而忽略。annotations只存能明确识别并可靠定位的原题标注，不存推导结论，不用计算值替换原图数值；角/边标注的text为1到24字纯单行文本，按原图保留，例如角号只写"1"而非猜为"1°"。
 角标格式为{"kind":"angle","a":"A","vertex":"O","b":"B","direction":"ccw","text":"1"}，表示从OA到OB逆时针的角区标1；vertex是真实顶点，a/b分别位于两条边，cw顺时针，必须选对角区，不能把角号画到邻角。边长标格式为{"kind":"segment","a":"A","b":"B","side":"left","text":"4 cm"}，side可省略或为left/right，指从A到B方向的左/右侧。所有引用只能是原题points已有点；不要为了放标签编造新点。角标不是arcs中的几何圆弧。
 notes格式为{"text":"AB与CD有相同的等长刻痕","status":"confirmed"}或{"text":"右上角的角值看不清，请核对原图","status":"uncertain"}，text为1到300字单行纯文本。复杂符号、其他图示条件或不能可靠定位的标记用图注兜底，尽量说明在哪个点/哪条边/图的哪个位置；confirmed仅用于原图或原题明确给出的条件，uncertain表示待核对，不作为已知条件或辅助构造依据。若角号本身看清但定位不清，把角号原文和定位待核对写入notes，不丢弃也不猜坐标；不能用图注伪造无法重建的原图结构，整体结构仍不能可靠表达时返回unsupported。等长刻痕、平行箭头、直角等能辨清就把对应关系写入confirmed图注，不根据外观补全。第一步输出前复查是否漏掉图内编号、数值、单位与关系符号。
 steps必须为空数组。points只能包含原题已有点，不得提前放入解法新增点。必须保留原题全部边、线段、圆和弧。坐标须满足题设且保持原图方向，不能编造条件。点名为一个大写字母加0到3位数字；最多24点、36线段、16圆、24弧。坐标为-10000到10000之间的有限数值，不写表达式或数字字符串；title为1到160字。segments每项恰为两个点名的数组。
 circles格式为{"center":"O","through":"A"}，through须为圆上点而非圆内点。arcs格式为{"center":"O","start":"A","end":"B","direction":"ccw","sector":true}，start/end为半径等长的不同端点；ccw逆时针、cw顺时针，sector=true绘制两条半径边界。圆弧不能用完整圆替代。缺圆心名时允许给原有圆心命名，不增加几何假设。线段、圆、弧只能引用points中已定义的点，禁止退化关系。空数组写[]，不写null。无法可靠表达原题结构或保持题设与布局时，只返回{"unsupported":true}，不能伪造。`;
 
 export const CONSTRUCTION_PROMPT = `你是几何辅助线构造助手。这是第二阶段：用户已核对并锁定lockedBase。只提炼当前解答实际需要的辅助构造，不重新求解、不重建原图。${DRAWING_LAYOUT_RULES}
-只返回{"steps":[...]}，不得返回title、points、segments、circles、arcs、annotations、notes或任何底图字段；底图和原图标记、图注由程序原样保留。读取lockedBase.annotations和notes中的明确条件，但uncertain仅为待核对内容，不能作为已知条件；不把解题推导补写成原图条件。不要输出GeoGebra代码。新点不得提前放入points，也不得与lockedBase或先前步骤中任何点重名。新增点只能通过下列白名单操作定义，依赖必须先定义。步骤最少1步、最多16步；description为1到1000字。操作中点名严格匹配一个大写字母加0到3位数字。
+只返回{"steps":[...]}，不得返回title、points、segments、circles、arcs、regions、annotations、notes或任何底图字段；底图和原图标记、图注由程序原样保留。读取lockedBase.annotations和notes中的明确条件，但uncertain仅为待核对内容，不能作为已知条件；不把解题推导补写成原图条件。不要输出GeoGebra代码。新点不得提前放入points，也不得与lockedBase或先前步骤中任何点重名。新增点只能通过下列白名单操作定义，依赖必须先定义。步骤最少1步、最多16步；description为1到1000字。操作中点名严格匹配一个大写字母加0到3位数字。
 操作格式：segment(a,b)只连接已存在的点，不加id；circle(center,through)以已存在的center点为圆心、经过已存在且不重合的through点作辅助圆，不加id或radius，不修改lockedBase.circles；midpoint(id,a,b)新建中点；foot(id,point,a,b)作点到直线的垂足；reflect(id,point,a,b)作点关于直线ab的对称副本；rotate(id,point,center,degrees)逆时针旋转副本，degrees为-360到360的有限数值；intersection(id,a,b,c,d)为两条不平行直线交点。每步只使用对应操作的字段。解答需要以已知线段AB为直径的圆时，先用midpoint构造新中点，再用circle以此中点为圆心经过A（或B）；需要两个辅助圆时分别构造，不得因原图没有这些圆就判为unsupported，也不得塞入底图。辅助圆只用于表达当前解答实际需要的构造，不据示意坐标猜测共圆关系或精确证明；若需要圆与线或两圆交点，当前intersection仅支持直线交点，不能伪造交点。新点不自动画连线，需要另加segment步骤。旋转只产生旋转后的副本，原点原边原圆弧均保持不动。
 尺规教学须先构造，再证明性质：使用已知线段与圆的交点、作垂线、取中点、轴对称、复制已知角等合法依据，不得把指定一个任意数值角当作尺规步骤。rotate的degrees仅是程序绘图参数，描述必须交代题设中可复制的角或合法构造依据；优先用reflect表达轴对称，不要把从对称关系推导出的角度反过来当作构造前提。若解答只写按某角度放一个点而没有合法依据，不能自行伪造证明，应返回unsupported。白名单确实无法表达、底图有误或不需要辅助构造时只返回{"unsupported":true}。
 以下是独立格式示例，每组先给已锁定的输入底图，下一行才是模型应返回的steps；这些不是当前题设，不得照抄输入底图到输出：

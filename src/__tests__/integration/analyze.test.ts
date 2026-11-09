@@ -50,7 +50,7 @@ describe('POST /api/analyze (202持久任务契约)', () => {
         });
         expect(mocks.submitJob).toHaveBeenCalledExactlyOnceWith('user-123', 'analyze',
             expect.objectContaining({ questionText: '求解 x + 2 = 5', mode: 'text', language: 'zh', tags: [] }),
-            'analyze-request-1');
+            'analyze-request-1', expect.any(Object));
         expect(mocks.user.findUnique).toHaveBeenCalledWith({
             where: { id: 'user-123' }, select: { id: true, role: true, isActive: true, expiresAt: true, sessionVersion: true, mustChangePassword: true, revision: true, aiAccessInitialized: true },
         });
@@ -64,7 +64,7 @@ describe('POST /api/analyze (202持久任务契约)', () => {
     ])('图片/图文/转写输入原样交给队列：%j', async (body) => {
         expect((await POST(request(body))).status).toBe(202);
         expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'analyze',
-            expect.objectContaining(body), 'analyze-request-1');
+            expect.objectContaining(body), 'analyze-request-1', expect.any(Object));
     });
 
     it('以实时用户为owner，丢弃客户端伪造的owner、状态和输出', async () => {
@@ -81,7 +81,7 @@ describe('POST /api/analyze (202持久任务契约)', () => {
         expect((await POST(request({ questionText: 'q', subjectId: 'physics-1', subject: '伪造名称' }))).status).toBe(202);
         expect(mocks.subject.findFirst).toHaveBeenCalledExactlyOnceWith({ where: { id: 'physics-1', userId: 'user-123' } });
         expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'analyze',
-            expect.objectContaining({ subjectId: 'physics-1', subject: '物理' }), 'analyze-request-1');
+            expect.objectContaining({ subjectId: 'physics-1', subject: '物理' }), 'analyze-request-1', expect.any(Object));
     });
 
     it('不存在或不属于当前用户的学科返回404，不入队', async () => {
@@ -100,15 +100,35 @@ describe('POST /api/analyze (202持久任务契约)', () => {
         expect((await POST(request({ questionText: 'q' }))).status).toBe(202);
         expect(mocks.calculateGrade).toHaveBeenCalledWith('junior_high', 2025, expect.any(Date), 'zh');
         expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'analyze',
-            expect.objectContaining({ gradeSemester: '初二上' }), 'analyze-request-1');
+            expect.objectContaining({ gradeSemester: '初二上' }), 'analyze-request-1', expect.any(Object));
     });
 
-    it('显式年级保留，不跳过实时身份检查', async () => {
+    it('当前档案年级覆盖旧题目随请求提交的年级', async () => {
+        mocks.user.findUnique.mockResolvedValue({id:'user-123',role:'user',isActive:true,expiresAt:null,sessionVersion:0,mustChangePassword:false,educationStage:'primary',enrollmentYear:2022});
+        mocks.calculateGrade.mockReturnValue('五年级上');
+        expect((await POST(request({questionText:'synthetic',gradeSemester:'高二上'}))).status).toBe(202);
+        expect(mocks.submitJob.mock.calls[0][2].gradeSemester).toBe('五年级上');
+        expect(mocks.submitJob.mock.calls[0][4].gradeSemester).toBe('高二上');
+    });
+
+    it('原始回执独立于用户档案变化，并丢弃客户端伪造的回执指纹', async () => {
+        const body={questionText:'synthetic receipt',_submissionHash:'f'.repeat(64)};
+        await POST(request(body));
+        const submitted=mocks.submitJob.mock.calls[0][4];
+        expect(submitted).not.toHaveProperty('_submissionHash');
+        mocks.user.findUnique.mockResolvedValue({id:'user-123',role:'user',isActive:true,expiresAt:null,sessionVersion:0,mustChangePassword:false,educationStage:'primary',enrollmentYear:2022});
+        mocks.calculateGrade.mockReturnValue('五年级上');
+        await POST(request(body));
+        expect(mocks.submitJob.mock.calls[1][4]).toEqual(submitted);
+        expect(mocks.submitJob.mock.calls[1][2].gradeSemester).toBe('五年级上');
+    });
+
+    it('档案未设置时保留输入年级，不跳过实时身份检查', async () => {
         expect((await POST(request({ questionText: 'q', gradeSemester: 'primary_3' }))).status).toBe(202);
-        expect(mocks.user.findUnique).toHaveBeenCalledTimes(1);
+        expect(mocks.user.findUnique).toHaveBeenCalledTimes(2);
         expect(mocks.calculateGrade).not.toHaveBeenCalled();
         expect(mocks.submitJob).toHaveBeenCalledWith('user-123', 'analyze',
-            expect.objectContaining({ gradeSemester: 'primary_3' }), 'analyze-request-1');
+            expect.objectContaining({ gradeSemester: 'primary_3' }), 'analyze-request-1', expect.any(Object));
     });
 
     it.each([null, { user: {} }])('未登录或缺少session用户id返回401：%j', async (session) => {
