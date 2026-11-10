@@ -37,7 +37,7 @@ describe("corrected-base UI handoff audit",()=>{
   const post=vi.spyOn(apiClient,"post").mockResolvedValueOnce({type:"construction",plan:corrected}).mockRejectedValueOnce(new ApiError(422,"AI task stopped",{message:"AI_DRAWING_UNSUPPORTED",diagnostic:"DRAWING_UNSUPPORTED"}));
   await render();await correct();await relock();const locked=svg();await act(async()=>second().click());
   expect(post).toHaveBeenCalledTimes(2);expect(svg()).toBe(locked);expect(host.querySelector('[role="progressbar"]')).toBeNull();
-  expect(host.textContent).toContain("白名单");expect(host.textContent).not.toContain("未自动换模型重试");
+  expect(host.textContent).toContain("未提供具体原因");expect(host.textContent).not.toContain("未自动换模型重试");
   expect(host.querySelector('[data-drawing-stage="auxiliary"] [role="alert"]')?.textContent).toContain("辅助线生成失败");
   expect(host.querySelector('[data-drawing-stage="auxiliary"] [data-layer="base"]')).toBeNull();
  });

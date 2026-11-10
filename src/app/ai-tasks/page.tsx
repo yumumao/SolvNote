@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose} from "@/components/ui/dialog";
 import {Button} from "@/components/ui/button";
-import { diagnosticMessage } from "@/lib/ai/diagnostics";
+import { diagnosticMessage, finalAttemptDiagnostic } from "@/lib/ai/diagnostics";
+import { drawingFailureMessage } from "@/lib/ai-drawing/diagnostics";
 import {IllustrationDescriptionPreview} from "@/components/illustration-composer";
 import {DrawingResultPreview} from "@/components/auxiliary-drawing";
 import {AIWorkProgress} from "@/components/ai-work-progress";
@@ -193,10 +194,14 @@ export default function AITasks() {
                     </DialogHeader>
                     <div data-task-detail-scroll className="min-h-0 min-w-0 overflow-y-auto overscroll-contain p-4 space-y-3">
                         {message && <p role="status">{message}</p>}
-                        {detail?.errorCode === "AI_DRAWING_UNSUPPORTED" && <p role="alert">{diagnosticMessage("DRAWING_UNSUPPORTED")}</p>}
+                        {detail?.state === "failed" && ["construction","image_edit"].includes(detail.kind) && <p role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-destructive">{drawingFailureMessage(detail.errorCode,finalAttemptDiagnostic(detail.errorCode,detail.attemptsLog))}</p>}
                         {detail && <>
                     <p className="font-medium">{detail.kind} · {labels[detail.state] || detail.state}</p>
                     <AIWorkProgress active={!message && ["pending","running"].includes(detail.state) && ["construction","image_edit","illustration","illustration_describe"].includes(detail.kind)} label={detail.kind==="illustration_describe"?"原图识别":detail.kind==="image_edit"?"整图编辑":detail.kind==="illustration"?"创作配图":"作图"}/>
+                    {Array.isArray(detail.attemptsLog) && <ol data-attempt-diagnostics className="space-y-2 text-sm">{detail.attemptsLog.map((attempt,index)=>{
+                        if(!attempt || typeof attempt!=="object" || !["failed","unknown"].includes(attempt.state) || !diagnosticMessage(attempt.diagnostic))return null;
+                        return <li key={index}>第{index+1}次尝试{typeof attempt.modelName==="string"?` · ${attempt.modelName}`:""}：{diagnosticMessage(attempt.diagnostic)}</li>;
+                    })}</ol>}
                     <pre className="whitespace-pre-wrap break-words text-sm overflow-auto">
                         {JSON.stringify(
                             {

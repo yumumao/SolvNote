@@ -1,4 +1,4 @@
-import { diagnosticMessage } from "./ai/diagnostics";
+import { finalAttemptDiagnostic } from "./ai/diagnostics";
 type RequestOptions=RequestInit&{params?:Record<string,string>;timeout?:number;onJobAccepted?:(jobId:string)=>void};
 export class ApiError extends Error{constructor(public status:number,public statusText:string,public data:unknown){super(`API Error: ${status} ${statusText}`);this.name='ApiError'}}
 export async function waitForAIJob<T>(id:string,signal?:AbortSignal):Promise<T>{
@@ -10,10 +10,7 @@ export async function waitForAIJob<T>(id:string,signal?:AbortSignal):Promise<T>{
  if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('ai-job-progress',{detail:{id,state:job.state}}));
  if(job.state==='success')return job.result;
  if(['failed','cancelled','unknown'].includes(job.state)){
- // Carry only the final matching terminal diagnostic (or final parse failure wrapped by budget exhaustion).
- // Never reuse an earlier failure after access revocation/cancellation or echo upstream text.
- const last=Array.isArray(job.attemptsLog)?job.attemptsLog.at(-1):undefined;
- const diagnostic=job.errorCode && last && ['failed','unknown'].includes(last.state||'') && (last.errorCode===job.errorCode || (job.errorCode==='AI_BUDGET_EXHAUSTED' && last.state==='failed' && ['AI_RESPONSE_ERROR','AI_DRAWING_INVALID'].includes(last.errorCode||''))) && diagnosticMessage(last.diagnostic)?last.diagnostic:undefined;
+ const diagnostic=finalAttemptDiagnostic(job.errorCode,job.attemptsLog);
  throw new ApiError(422,'AI task stopped',{message:job.errorCode||`AI_${job.state.toUpperCase()}`,jobId:id,...(diagnostic?{diagnostic}:{})});
  }
  await new Promise(r=>setTimeout(r,2000));

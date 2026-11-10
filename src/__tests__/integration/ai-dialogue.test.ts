@@ -462,6 +462,16 @@ describe.sequential("bounded drawing routes and jobs",()=>{
   expect(job?.input?.drawingPlan).toEqual(base);expect(job?.attemptsLog).toHaveLength(2);
   await processOne();expect(shared.send).toHaveBeenCalledTimes(2);
  });
+ it('persists distinct structured refusal reasons without raw model text or repeated terminal dispatch',async()=>{
+  const base={...construction,steps:[]};
+  shared.send.mockResolvedValueOnce('{"unsupported":true,"reason":"circle_intersection"}').mockResolvedValueOnce('{"unsupported":true,"reason":"missing_base_point"}');
+  const response=await DRAW(req('/api/ai/drawing/construction',{questionText:'synthetic question',answerText:'synthetic construction',drawingPlan:base}),{params:Promise.resolve({kind:'construction'})});
+  const {jobId}=await response.json();await processOne();const job=await readJob('alice',jobId,true);
+  expect(job?.state).toBe('failed');expect(job?.errorCode).toBe('AI_DRAWING_UNSUPPORTED');
+  expect(job?.attemptsLog.map(a=>a.diagnostic)).toEqual(['DRAWING_CIRCLE_INTERSECTION','DRAWING_MISSING_BASE_POINT']);
+  expect(job?.input?.drawingPlan).toEqual(base);expect(job).not.toHaveProperty('result');
+  await processOne();expect(shared.send).toHaveBeenCalledTimes(2);
+ });
  it("still rejects a fallback model that tries to replace the locked base",async()=>{
   const base={...construction,steps:[]};shared.send.mockResolvedValueOnce('{"unsupported":true}').mockResolvedValueOnce(JSON.stringify({...construction,points:[{id:"Q",x:900,y:100},{id:"R",x:0,y:0}]}));
   const response=await DRAW(req("/api/ai/drawing/construction",{questionText:"synthetic question",answerText:"synthetic answer",drawingPlan:base}),{params:Promise.resolve({kind:"construction"})});

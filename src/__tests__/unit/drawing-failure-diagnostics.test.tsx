@@ -43,6 +43,10 @@ describe("construction prompt matches the strict executable contract", () => {
 });
 
 describe("durable task polling keeps safe final-attempt diagnostics", () => {
+    it('retains an explicit refusal reason when the attempt budget is exhausted',async()=>{
+        vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(response({jobId:'synthetic-budget'},202)).mockResolvedValueOnce(response({state:'failed',errorCode:'AI_BUDGET_EXHAUSTED',attemptsLog:[{state:'failed',errorCode:'AI_DRAWING_UNSUPPORTED',diagnostic:'DRAWING_MISSING_BASE_POINT'}]})));
+        await expect(apiClient.post('/api/ai/drawing/construction',{})).rejects.toMatchObject({data:{message:'AI_BUDGET_EXHAUSTED',diagnostic:'DRAWING_MISSING_BASE_POINT'}});
+    });
     it("retains a whitelisted diagnostic, but no provider/private output", async () => {
         const fetchMock=vi.fn().mockResolvedValueOnce(response({jobId:"synthetic-drawing"},202)).mockResolvedValueOnce(response({state:"failed",errorCode:"AI_RESPONSE_ERROR",attemptsLog:[{state:"failed",errorCode:"AI_RESPONSE_ERROR",diagnostic:"JSON_SCHEMA_INVALID",raw:"private-provider-body",providerUrl:"https://private.invalid"}]}));
         vi.stubGlobal("fetch",fetchMock);
@@ -81,7 +85,7 @@ describe("drawing failures are actionable without automatic paid resubmission", 
         ["AI_IMAGE_EDIT_NO_IMAGE","没有返回可用图片"],
         ["AI_IMAGE_EDIT_INVALID_IMAGE","图片无法解码"],
         ["AI_ACCEPTANCE_UNKNOWN","不要重复提交"],
-        ["AI_DRAWING_UNSUPPORTED","白名单"],
+        ["AI_DRAWING_UNSUPPORTED","未提供具体原因"],
     ])("shows a safe specific message for %s", async (code,text) => {
         const fetchMock=failedFetch(code);await submit();expect(host.querySelector('[role="status"]')?.textContent).toContain(text);expect(fetchMock).toHaveBeenCalledTimes(2);
     });

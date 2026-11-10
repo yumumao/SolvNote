@@ -1,6 +1,13 @@
 /** Public, fixed-vocabulary diagnostics. Never include provider text, URLs, keys or schema values. */
 export const AI_DIAGNOSTIC_MESSAGES = {
-    DRAWING_UNSUPPORTED: "本模型未提供可用构造，可能认为现有构造白名单无法表达、题设不足或无需辅助线。这是模型判断；请结合本次任务的后续尝试记录核对题目与构造说明。",
+    DRAWING_UNSUPPORTED: "本模型未提供可用构造，且未提供具体原因，无法据此确定是题设问题还是构造能力限制。请结合后续模型尝试核对；原题底图保留。",
+    DRAWING_MISSING_BASE_POINT: "本模型认为锁定底图缺少解答引用的原有点，无法对应辅助构造。请对照底图点名与解答核对；解答新建的辅助点应由构造步骤生成，无需预先放入底图。",
+    DRAWING_BASE_CONFLICT: "本模型认为锁定底图的结构与当前题干或解答存在冲突。请先核对相关点位、连线和标注，再按需纠正第一步底图；本提示是模型判断。",
+    DRAWING_CIRCLE_INTERSECTION: "本模型认为所需步骤依赖圆与直线或两圆的交点；当前构造格式仅支持两条直线求交。作辅助圆本身已支持，请核对解答是否确实需要求圆的交点。",
+    DRAWING_UNSUPPORTED_OPERATION: "本模型认为必要步骤超出当前构造操作范围。当前支持连线、作圆、中点、垂足、对称、旋转副本和直线交点；请对照解答中的具体构造核对。",
+    DRAWING_INSUFFICIENT_INFORMATION: "本模型认为当前题干或解答缺少确定辅助构造所需的信息。请核对辅助点的位置、连线端点或构造依据；这不等于已经证实题目条件不足。",
+    DRAWING_NO_AUXILIARY_NEEDED: "本模型未提取到当前解答中的辅助构造。若解答已使用辅助线，请核对当前答案和解析中的构造说明；本提示不表示题目一定不需要辅助线。",
+    DRAWING_STEP_LIMIT: "本模型认为所需辅助构造超过当前16步上限。请核对是否重复添加已有线条，或尝试步骤更少的等价解法。",
     DRAWING_INVALID: "构造坐标或依赖不合法，例如圆弧两端半径不一致、引用点缺失或几何退化；未采用错误构图。",
     JSON_INVALID: "已收到正文，但不是完整有效的JSON；可能含额外说明或公式转义错误。",
     DRAWING_SCHEMA_FIELDS: "构图JSON的顶层、底图或步骤字段不符合约定，可能缺少必需字段或包含多余字段。",
@@ -38,6 +45,17 @@ export type AIDiagnostic = keyof typeof AI_DIAGNOSTIC_MESSAGES;
 export function diagnosticMessage(value: unknown): string | undefined {
     return typeof value === "string" && Object.hasOwn(AI_DIAGNOSTIC_MESSAGES, value)
         ? AI_DIAGNOSTIC_MESSAGES[value as AIDiagnostic] : undefined;
+}
+
+/** Match the terminal attempt only; never replace cancellation/access errors with an old refusal. */
+export function finalAttemptDiagnostic(errorCode: unknown, attempts: unknown): AIDiagnostic | undefined {
+    const last: unknown = Array.isArray(attempts) ? attempts.at(-1) : undefined;
+    if (!errorCode || !last || typeof last !== 'object') return;
+    const a = last as Record<string, unknown>;
+    if (a.state !== 'failed' && a.state !== 'unknown') return;
+    const budgetFailure = errorCode === 'AI_BUDGET_EXHAUSTED' && a.state === 'failed' &&
+        ['AI_RESPONSE_ERROR', 'AI_DRAWING_INVALID', 'AI_DRAWING_UNSUPPORTED'].includes(String(a.errorCode));
+    if ((a.errorCode === errorCode || budgetFailure) && diagnosticMessage(a.diagnostic)) return a.diagnostic as AIDiagnostic;
 }
 
 /** Timing/counts only; never copy arbitrary properties from errors into the audit. */

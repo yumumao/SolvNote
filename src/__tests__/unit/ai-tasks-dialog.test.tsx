@@ -15,6 +15,13 @@ async function mount(){await act(async()=>root.render(<AITasks/>));await act(asy
 function fixture(detail:()=>Response|Promise<Response>){const mock=vi.fn(async(url:string,options:RequestInit)=>{expect(options.method).toBe('GET');if(url==='/api/ai/conversations')return response({conversations:[]});if(url==='/api/ai/jobs')return response({jobs:[{id:'owned',kind:'construction',state:'success',attempts:1,createdAt:'2026-09-26T00:00:00Z'}]});if(url==='/api/ai/jobs/owned?restore=1')return detail();throw Error('unexpected request');});vi.stubGlobal('fetch',mock);return mock;}
 const success=()=>response({id:'owned',kind:'construction',state:'success',result:{type:'construction',plan},attemptsLog:[{state:'success',modelName:'合成模型'}]});
 describe('short task recovery dialog',()=>{
+ it.each(['AI_DRAWING_UNSUPPORTED','AI_BUDGET_EXHAUSTED'])('shows a concrete final refusal and earlier model diagnostics for %s',async(errorCode)=>{
+  fixture(()=>response({id:'owned',kind:'construction',state:'failed',errorCode,attemptsLog:[{state:'failed',errorCode:'AI_DRAWING_UNSUPPORTED',modelName:'First model',diagnostic:'DRAWING_CIRCLE_INTERSECTION'},{state:'failed',errorCode:'AI_DRAWING_UNSUPPORTED',modelName:'Second model',diagnostic:'DRAWING_MISSING_BASE_POINT'}]}));
+  await mount();await click('详情/取回结果');
+  expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain('缺少解答引用的原有点');
+  expect(dialog()?.querySelector('[data-attempt-diagnostics]')?.textContent).toContain('圆与直线');
+  expect(dialog()?.querySelector('[data-attempt-diagnostics]')?.textContent).toContain('First model');
+ });
  it('opens results in an accessible dialog and closes without cancellation, clearing only job from URL',async()=>{
   const fetchMock=fixture(success);await mount();const opener=host.querySelector('article button') as HTMLButtonElement;opener.focus();await click('详情/取回结果');
   expect(dialog()).not.toBeNull();expect(dialog()?.getAttribute('aria-labelledby')).toBeTruthy();expect(dialog()?.textContent).toContain('任务详情');expect(dialog()?.querySelector('svg')).not.toBeNull();expect(host.querySelector('svg')).toBeNull();expect(dialog()?.textContent).toContain('合成模型');expect(dialog()?.querySelector('[data-task-detail-scroll]')).not.toBeNull();
