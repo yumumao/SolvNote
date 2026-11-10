@@ -23,10 +23,22 @@ async function request<T>(url:string,options:RequestOptions={}):Promise<T>{
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeout);
  const mergedHeaders=new Headers(headers);if(!mergedHeaders.has('Content-Type'))mergedHeaders.set('Content-Type','application/json');
  if(rest.method==='POST'&&!mergedHeaders.has('X-Request-ID'))mergedHeaders.set('X-Request-ID',crypto.randomUUID());
+ let detachCaller: (()=>void)|undefined;
  try{
- const res=await fetch(finalUrl,{...rest,headers:mergedHeaders,signal:callerSignal?AbortSignal.any([callerSignal,controller.signal]):controller.signal});
+ let signal=controller.signal;
+ if(callerSignal){
+  if(typeof AbortSignal.any==='function')signal=AbortSignal.any([callerSignal,controller.signal]);
+  else {
+   // Older browsers still support AbortController. Keep both cancellation and
+   // the existing timeout; never retry a request just because it was aborted.
+   const abort=()=>controller.abort(callerSignal.reason);
+   if(callerSignal.aborted)abort();
+   else {callerSignal.addEventListener('abort',abort,{once:true});detachCaller=()=>callerSignal.removeEventListener('abort',abort);}
+  }
+ }
+ const res=await fetch(finalUrl,{...rest,headers:mergedHeaders,signal});
  const text=await res.text();let data:unknown;try{data=text?JSON.parse(text):{}}catch{data=text}
- clearTimeout(timer);
+ clearTimeout(timer);detachCaller?.();detachCaller=undefined;
  if(!res.ok)throw new ApiError(res.status,res.statusText,data);
  if(res.status===202){
  const accepted=data as {jobId:string};if(typeof accepted.jobId!=='string'||!/^[a-zA-Z0-9_-]+$/.test(accepted.jobId))throw new ApiError(502,'Invalid task response',{});
@@ -35,7 +47,7 @@ async function request<T>(url:string,options:RequestOptions={}):Promise<T>{
  return await waitForAIJob<T>(accepted.jobId,callerSignal||undefined);
  }
  return data as T;
- }catch(e){if(e instanceof Error&&e.name==='AbortError')throw new ApiError(408,'Request Timeout',{message:'AI_REQUEST_TIMEOUT_CHECK_TASKS'});throw e}finally{clearTimeout(timer)}
+ }catch(e){if(e instanceof Error&&e.name==='AbortError')throw new ApiError(408,'Request Timeout',{message:'AI_REQUEST_TIMEOUT_CHECK_TASKS'});throw e}finally{clearTimeout(timer);detachCaller?.()}
 }
 export const apiClient={
  get:<T>(url:string,options?:RequestOptions)=>request<T>(url,{...options,method:'GET'}),

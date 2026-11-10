@@ -4,8 +4,9 @@ import {beforeEach, afterEach, describe, it, expect, vi} from "vitest";
 import {NoticePanel} from "@/components/announcements/notice-panel";
 import {useNotices} from "@/components/announcements/use-notices";
 import {safeNoticeHref} from "@/lib/announcements/schema";
+import {ApiError} from "@/lib/api-client";
 const {get, post, lang} = vi.hoisted(() => ({get: vi.fn(), post: vi.fn(), lang: {value: "zh"}}));
-vi.mock("@/lib/api-client", () => ({apiClient: {get, post}}));
+vi.mock("@/lib/api-client", async () => ({...await vi.importActual<typeof import('@/lib/api-client')>('@/lib/api-client'), apiClient: {get, post}}));
 vi.mock("@/contexts/LanguageContext", () => ({useLanguage: () => ({language: lang.value})}));
 const item = {id: "one", titleZh: "测试公告", bodyZh: "<script>alert(1)</script>", titleEn: "Test notice", bodyEn: "Text only", href: "/stats", readPolicy: "hide", status: "published", pinned: false, pinOrder: 0, startsAt: null, endsAt: null, revision: 1, createdAt: "", updatedAt: "", readAt: null};
 const listing = {items: [item], total: 1, page: 1, pageSize: 20, unreadCount: 1};
@@ -15,6 +16,29 @@ beforeEach(() => {vi.useFakeTimers();vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", t
 afterEach(async () => {await act(async () => root.unmount());host.remove();vi.useRealTimers();vi.unstubAllGlobals();});
 async function click(text: string) {const b = [...host.querySelectorAll("button")].find(b => b.textContent === text);expect(b).toBeDefined();await act(async () => b!.click());}
 describe("notices without implicit acknowledgement", () => {
+    it("identifies expired login while loading without showing response content", async () => {
+        get.mockRejectedValue(new ApiError(401, 'Unauthorized', {message: 'private-response'}));
+        await act(async () => root.render(<Panel/>));
+        expect(host.textContent).toContain('重新登录');expect(host.textContent).toContain('加载');
+        expect(host.textContent).toContain('HTTP 401');expect(host.textContent).not.toContain('private-response');
+    });
+    it("distinguishes acknowledgement rejection and preserves the notice", async () => {
+        get.mockResolvedValue(listing);post.mockRejectedValue(new ApiError(403, 'Forbidden', {message:'Cross-origin request denied'}));
+        await act(async () => root.render(<Panel/>));await click('已阅，对我隐藏');
+        expect(host.textContent).toContain('保存已阅状态');expect(host.textContent).toContain('正式地址');
+        expect(host.textContent).toContain('测试公告');expect(host.textContent).toContain('HTTP 403');
+    });
+    it("distinguishes temporary service failure and clears it after a successful refresh", async () => {
+        get.mockRejectedValue(new ApiError(503,'Unavailable',{message:'database-private-details'}));
+        await act(async () => root.render(<Panel/>));expect(host.textContent).toContain('暂时不可用');
+        expect(host.textContent).toContain('HTTP 503');expect(host.textContent).not.toContain('database-private-details');
+        get.mockResolvedValue(listing);await click('刷新');expect(host.querySelector('[role="alert"]')).toBeNull();
+    });
+    it("provides English network failure guidance", async () => {
+        lang.value='en';get.mockRejectedValue(new TypeError('private-network-error'));
+        await act(async () => root.render(<Panel/>));expect(host.textContent).toContain('network');
+        expect(host.textContent).not.toContain('private-network-error');
+    });
     it("does not acknowledge on opening, renders text safely, and hides only after explicit success", async () => {
         get.mockResolvedValue(listing);post.mockResolvedValue({readAt: "2026-09-26"});
         await act(async () => root.render(<Panel/>)); expect(post).not.toHaveBeenCalled();expect(host.querySelector("script")).toBeNull();expect(host.textContent).toContain("<script>");

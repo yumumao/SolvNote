@@ -3,6 +3,7 @@ import {useLanguage} from "@/contexts/LanguageContext";
 import {Button} from "@/components/ui/button";
 import {NoticeCard} from "./notice-card";
 import type {useNotices} from "./use-notices";
+import {noticeFailureText} from "@/lib/announcements/client-error";
 export function NoticePanel({feed}: {feed: ReturnType<typeof useNotices>}) {
     const {language} = useLanguage(), en = language === "en";
     return <div className="space-y-4">
@@ -12,7 +13,7 @@ export function NoticePanel({feed}: {feed: ReturnType<typeof useNotices>}) {
             <Button variant="ghost" onClick={feed.refresh}>{en ? "Refresh" : "刷新"}</Button>
         </div>
         <p className="text-xs text-muted-foreground">{en ? "Opening this list does not mark notices as read. Confirm each notice explicitly. Read-and-hide only affects your account." : "打开列表不会标为已阅，请逐条确认。读后隐藏仅影响你的账号，后台仍保留公告。"}</p>
-        {feed.error && <p role="alert" className="text-sm text-destructive">{en ? "Unable to load or save notices. Please refresh and retry." : "公告加载或保存失败，请刷新后重试。"}</p>}
+        {feed.error && <p role="alert" className="text-sm text-destructive">{noticeFailureText(feed.error, en)}</p>}
         {!feed.data && !feed.error && <p role="status">{en ? "Loading…" : "加载中…"}</p>}
         {feed.data && <>
             {feed.data.items.length === 0 && <p>{en ? "No notices on this page." : "本页暂无公告。"}</p>}
