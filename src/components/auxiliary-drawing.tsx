@@ -26,14 +26,14 @@ function OriginalImage({image}:{image?:string|null}){
         <img src={image} alt="辅助线原题图对照" className="max-w-full max-h-[360px] object-contain object-left"/>
     </figure></details>;
 }
-export function ConstructionPreview({plan,onUseCommands,originalImage}:{plan:ConstructionPlan;onUseCommands?:(commands:string)=>void;originalImage?:string|null}){
+export function ConstructionPreview({plan,onUseCommands,originalImage,questionText}:{plan:ConstructionPlan;onUseCommands?:(commands:string)=>void;originalImage?:string|null;questionText?:string}){
     const [count,setCount]=useState(plan.steps.length),[dynamic,setDynamic]=useState(false);
     const compiled=compileConstruction(plan),visible=Math.min(count,compiled.steps.length),commands=JSON.stringify([...compiled.base,...compiled.steps.slice(0,visible).flatMap(s=>s.commands)]);
     return <div className="space-y-3"><h4 className="font-semibold">{plan.title}</h4><p className="text-sm">坐标是示意。程序只保证列出的构造操作，不代表AI已证明题设、解答或底图坐标正确。</p>
         <ol className="list-decimal pl-6">{compiled.steps.map((s,i)=><li key={i} className={i>=visible?"text-muted-foreground":""}>{s.description}</li>)}</ol>
         <div className="flex gap-2 items-center"><Button variant="outline" disabled={!visible} onClick={()=>setCount(visible-1)}>上一步</Button><span>{visible}/{compiled.steps.length}步</span><Button variant="outline" disabled={visible===compiled.steps.length} onClick={()=>setCount(visible+1)}>下一步</Button></div>
         <OriginalImage image={originalImage}/>
-        <ConstructionDiagram geometry={compiled.geometry} visible={visible} title={plan.title}/>
+        <ConstructionDiagram geometry={compiled.geometry} visible={visible} title={plan.title} fallbackSourceText={questionText}/>
         <Button variant="outline" onClick={()=>setDynamic(v=>!v)}>{dynamic?"关闭GeoGebra动态演示":"打开GeoGebra动态演示（需联网）"}</Button>
         {dynamic&&((plan.regions?.length||0)>0||plan.annotations?.some(a=>a.kind==='text'))&&<p className="text-sm text-muted-foreground">GeoGebra演示构造步骤；原图阴影和文字标注请对照上方静态示意图。</p>}
         {dynamic && <GeogebraDemo commands={commands}/> }
@@ -53,7 +53,8 @@ export function DrawingResultPreview({result,originalImage,input}:{result:unknow
             const checked=DrawingEvidenceSchema.safeParse("drawingEvidence" in input?input.drawingEvidence:undefined);
             return <AuxiliaryDrawing drawingEvidence={checked.success?checked.data:undefined} questionText={input.questionText} answerText={answerText} analysis={analysis} drawingCorrection={drawingCorrection} image={originalImage} initialBase={plan.data}/>;
         }
-        return <ConstructionPreview plan={plan.data} originalImage={originalImage}/>;
+        const questionText=input&&typeof input==='object'&&'questionText' in input&&typeof input.questionText==='string'?input.questionText:undefined;
+        return <ConstructionPreview plan={plan.data} originalImage={originalImage} questionText={questionText}/>;
     }
     if(r?.type==="image_edit"){
         if(typeof r.imageDataUrl!=="string" || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(r.imageDataUrl))return <p role="alert">作图任务未包含有效图片，请查看调用记录；不会自动重新提交。</p>;
@@ -78,6 +79,9 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
     const sourceFor=(value:string)=>JSON.stringify({questionText,image,drawingCorrection:value,drawingEvidence});
     const source=sourceFor(correction),solution=JSON.stringify({questionText,answerText,analysis,image});
     const [base,setBase]=useState<ConstructionPlan|undefined>(initialBase),[baseSource,setBaseSource]=useState(initialBase?source:""),[baseImage,setBaseImage]=useState(image);
+    // Capture the text belonging to this drawing; later edits must not pair a new
+    // question with the old geometry while a regeneration is pending or failed.
+    const [baseQuestionText,setBaseQuestionText]=useState(questionText);
     const [baseConfirmed,setBaseConfirmed]=useState(false),[plan,setPlan]=useState<ConstructionPlan>(),[planSource,setPlanSource]=useState("");
     const [settings,setSettings]=useState<EditorSettings>(),[confirmed,setConfirmed]=useState(false),[edited,setEdited]=useState<Extract<DrawingResult,{type:"image_edit"}>>();
     const [busy,setBusy]=useState(false),[message,setMessage]=useState(""),[jobId,setJobId]=useState("");
@@ -118,6 +122,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
             const reused=baseDrawingCache?.lookup(baseIdentity,correction);
             if(reused){
                 setCorrection(reused.correction);setBase(reused.plan);setBaseSource(sourceFor(reused.correction));setBaseImage(image);setBaseIdentityKey(identity);
+                setBaseQuestionText(questionText);
                 setBaseConfirmed(false);setPlan(undefined);setPlanSource("");setConfirmed(false);setEdited(undefined);
                 setBaseFeedbackAt("initial");setProgressLabel("原题底图生成");setJobId("");
                 setMessage("已复用同一原题的已有底图及纠正说明，本次未调用AI、未产生新的作图费用。请核对并锁定后，再按当前新题解生成第二步辅助线；旧辅助线不会复用。");
@@ -141,6 +146,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
                     unchangedBase=!!base&&sameBaseDrawing(base,parsed);
                     baseDrawingCache?.remember(baseIdentity,{plan:parsed,correction},baseDrawingVersion);
                     setBase(parsed);setBaseSource(source);setBaseImage(image);setBaseIdentityKey(identity);setBaseConfirmed(false);setPlan(undefined);setPlanSource("");
+                    setBaseQuestionText(questionText);
                 }else{
                     // Defense in depth: even a malformed successful HTTP response cannot replace the visible base.
                     if(!base||JSON.stringify({...parsed,steps:[]})!==JSON.stringify(ConstructionSchema.parse(base)))throw new Error("Source changed");
@@ -164,7 +170,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
             <Button variant="outline" disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base")}>第一步：生成原题底图</Button>
             {progressLabel==="原题底图生成" && baseFeedbackAt==="initial" && workFeedback}
             {baseStale && <p role="alert">原题、原图或底图纠正说明已修改，下面的底图属于旧版本。请先根据纠正说明重新生成并核对，再添加辅助线。{sameQuestion?"分享时仍可选择这张最后成功生成的底图，并注明尚未按新纠正说明更新。":"当前题目已变，分享不会附带这张旧底图。"}</p>}
-            {base && <ConstructionPreview key={baseSource+"base"} plan={base} originalImage={baseImage} onUseCommands={!plan&&!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}
+            {base && <ConstructionPreview key={baseSource+"base"} plan={base} originalImage={baseImage} questionText={baseQuestionText} onUseCommands={!plan&&!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}
             <label className="block space-y-1"><span className="text-sm font-medium">原题底图纠正说明（可选）</span><textarea data-drawing-correction value={correction} onChange={e=>{baseDrawingCache?.invalidate(baseIdentity,baseDrawingVersion);setCorrection(e.target.value);}} maxLength={10000} rows={3} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="例如：A应在左上角，AB是竖直边；不要把原图整体旋转。"/><span className="text-xs text-muted-foreground">这里只纠正原题图的方向、点位、标签和已有边；输入后必须重新生成并核对底图，不会直接当作解题步骤。</span></label>
             {base && (baseStale||correction.trim()||baseFeedbackAt==="correction") && <Button variant="outline" data-regenerate-base disabled={disabled||busy||illustrating||(!questionText.trim()&&!image)} onClick={()=>void generate("base",true)}>根据纠正说明重新生成原题底图</Button>}
             {progressLabel==="原题底图生成" && baseFeedbackAt==="correction" && workFeedback}
@@ -174,7 +180,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
             <Button variant="outline" disabled={disabled||busy||illustrating||!usableBase||!answerText.trim()} onClick={()=>void generate("auxiliary")}>第二步：在锁定底图上添加辅助线</Button>
             {progressLabel==="辅助线方案生成" && workFeedback}
             {stale&&!baseStale && <p role="alert">解答已修改，旧辅助步骤已隐藏，底图仍保持锁定。可根据新解答重新执行第二步。</p>}
-            {plan&&!stale && <ConstructionPreview key={baseSource+planSource} plan={plan} originalImage={baseImage} onUseCommands={!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}
+            {plan&&!stale && <ConstructionPreview key={baseSource+planSource} plan={plan} originalImage={baseImage} questionText={baseQuestionText} onUseCommands={!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}
         </div>}
         {progressLabel!=="原题底图生成"&&progressLabel!=="辅助线方案生成" && workFeedback}
         <Button type="button" variant="outline" aria-haspopup="dialog" onClick={()=>{setEditingOpen(true);void settingsLoad();}}>打开实验性AI重新配图 / 整图编辑</Button>

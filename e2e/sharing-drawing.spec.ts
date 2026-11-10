@@ -27,7 +27,9 @@ for(const device of [{name:'desktop',width:1280,height:900,dpr:1},{name:'phone',
    await context.route('**/api/ai/drawing/construction',r=>{
     drawingCalls++;if(drawingCalls!==1)return r.fulfill({status:502,json:{message:'AI_DRAWING_UNSUPPORTED'}});
     const input=JobInputSchema.parse(r.request().postDataJSON());expect(input.drawingEvidence?.imageFacts).toEqual(device.name==='desktop'?[sourceCaption]:undefined);
-    return r.fulfill({json:{type:'construction',plan:preserveDrawingEvidence(ConstructionSchema.parse(plan),input.drawingEvidence,input.questionText)}});
+    // Phone deliberately receives geometry without sourceText: existing/cached
+    // drawings must show the editor's text even when the server did not store it.
+    return r.fulfill({json:{type:'construction',plan:preserveDrawingEvidence(ConstructionSchema.parse(plan),input.drawingEvidence,device.name==='desktop'?input.questionText:undefined)}});
    });
    await signInAs(member.id,context);const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
    await page.goto('/ai-dialogue/synthetic-share');

@@ -2,7 +2,7 @@
 import {useRef} from "react";
 import type {compileConstruction} from "@/lib/ai-drawing/construction";
 import {diagramRegionPath} from '@/lib/ai-drawing/regions';
-import {layoutDiagramAnnotations,diagramConditionLines,appendDiagramCaption,drawingSourceTextKey} from "@/lib/ai-drawing/annotations";
+import {layoutDiagramAnnotations,diagramConditionLines,appendDiagramCaption,drawingSourceTextKey,resolveDiagramSourceText} from "@/lib/ai-drawing/annotations";
 import {Button} from "./ui/button";
 import {MarkdownRenderer} from "./markdown-renderer";
 type Geometry=ReturnType<typeof compileConstruction>["geometry"];
@@ -11,7 +11,7 @@ const SVG_HEIGHT=500;
 const VIEW_PADDING=30;
 
 // All coordinates come from the whitelist compiler, never from arbitrary SVG or JS returned by AI.
-export function ConstructionDiagram({geometry,visible,title,readOnly=false,compact=false,attachmentTitle,shownConditionLines=[],shownSourceTexts=[],fitWidth=true}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean;compact?:boolean;attachmentTitle?:string;shownConditionLines?:readonly string[];shownSourceTexts?:readonly string[];fitWidth?:boolean}){
+export function ConstructionDiagram({geometry,visible,title,readOnly=false,compact=false,attachmentTitle,shownConditionLines=[],shownSourceTexts=[],fitWidth=true,fallbackSourceText}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean;compact?:boolean;attachmentTitle?:string;shownConditionLines?:readonly string[];shownSourceTexts?:readonly string[];fitWidth?:boolean;fallbackSourceText?:string}){
     const svg=useRef<SVGSVGElement>(null);
     const rounds=[...geometry.circles,...geometry.arcs];
     // The viewport depends ONLY on the locked source, including across separate jobs.
@@ -32,7 +32,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
     const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})),map,{left:topLeft.x,right:bottomRight.x,top:topLeft.y,bottom:bottomRight.y});
     const labelBounds=labels.flatMap(l=>l.bounds);
     const captionLines=diagramConditionLines(geometry.annotations||[],geometry.notes||[],geometry.sourceCaptions||[]);
-    const sourceText=geometry.sourceText||'';
+    const sourceText=resolveDiagramSourceText(geometry.sourceText,fallbackSourceText);
     const showSourceText=!!sourceText.trim()&&!shownSourceTexts.some(s=>drawingSourceTextKey(s)===drawingSourceTextKey(sourceText));
     const hiddenLabels=labels.some(l=>l.hidden&&l.annotation.kind!=='text');
     const crowdedLabelNote="部分标记因图内拥挤或角区过小，仅在图注保留，请对照原图核验位置。";

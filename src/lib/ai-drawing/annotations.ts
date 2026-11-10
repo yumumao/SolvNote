@@ -23,6 +23,9 @@ export const normalizeDrawingSourceText=(s:string)=>Array.from(s,c=>{
 // making a successful AI response fail (which would enter model fallback).
 export const DiagramSourceTextSchema=z.string().max(50000).transform(normalizeDrawingSourceText);
 export const drawingSourceTextKey=(s:string)=>normalizeDrawingSourceText(s).replace(/\r\n?/g,'\n').trim();
+// Legacy/cached drawings may contain only geometry. Their matching editor/task
+// question is already available locally; showing it must not require another AI call.
+export const resolveDiagramSourceText=(saved:string|undefined,question:string|undefined)=>normalizeDrawingSourceText(saved?.trim()?saved:question||'');
 export type DiagramAnnotation=z.infer<typeof DiagramAnnotationSchema>;
 export type DiagramNote=z.infer<typeof DiagramNoteSchema>;
 type Point={x:number;y:number};
