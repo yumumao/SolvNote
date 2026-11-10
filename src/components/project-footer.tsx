@@ -1,5 +1,6 @@
 import { APP_NAME, APP_REPOSITORY } from "@/lib/app-info";
 import type { Language } from "@/lib/translations";
+import { InstallApp } from "./install-app";
 
 type ProjectFooterProps = {
     language: Language;
@@ -32,6 +33,7 @@ export function ProjectFooter({ language, showSelfHosting = false, className = "
                     {isEnglish ? "Privacy" : "隐私说明"}
                 </a>
             </div>
+            <InstallApp language={language}/>
         </footer>
     );
 }

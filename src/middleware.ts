@@ -56,7 +56,10 @@ export async function middleware(req: NextRequest) {
     const isApi = path.startsWith("/api/");
     const publicPaths = new Set(["/api/register", "/api/register/status", "/api/registration/status",
         "/api/ai/config/template", "/privacy", "/favicon.ico", "/icon.svg", "/apple-icon.png"]);
-    if (publicPaths.has(path) || path.startsWith("/api/auth/") || path.startsWith("/icons/"))
+    // Browsers fetch installation metadata without a session. Only this exact,
+    // static read route is public; launch pages and APIs keep their auth checks.
+    const publicManifest = path === "/manifest.webmanifest" && (req.method === "GET" || req.method === "HEAD");
+    if (publicManifest || publicPaths.has(path) || path.startsWith("/api/auth/") || path.startsWith("/icons/"))
         return NextResponse.next();
     try {
         const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET, cookieName: "next-auth.session-token" });
