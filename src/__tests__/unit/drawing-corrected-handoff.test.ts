@@ -39,9 +39,9 @@ describe("corrected-base handoff audit",()=>{
  it("does not reject a supported construction merely because the locked base contains a manual correction note",()=>{
   expect(parseConstructionSteps(JSON.stringify({steps}),corrected)).toEqual({...corrected,steps});
  });
- it("does not automatically repeat the drawing call after an explicit unsupported response",async()=>{
+ it("lets the chain try another auxiliary model after refusal without repeating the drawing service",async()=>{
   mocks.callChain.mockImplementation(async(_prompt,_text,_image,parse)=>parse('{"unsupported":true}'));
-  await expect(executeDrawing("construction",JobInputSchema.parse({...source,drawingPlan:corrected}))).rejects.toMatchObject({code:"AI_DRAWING_UNSUPPORTED",diagnostic:"DRAWING_UNSUPPORTED",fallback:false});
+  await expect(executeDrawing("construction",JobInputSchema.parse({...source,drawingPlan:corrected}))).rejects.toMatchObject({code:"AI_DRAWING_UNSUPPORTED",diagnostic:"DRAWING_UNSUPPORTED",fallback:true});
   expect(mocks.callChain).toHaveBeenCalledTimes(1);expect(corrected.steps).toEqual([]);
  });
  it("distinguishes an invalid operation from a model's explicit unsupported result",()=>{

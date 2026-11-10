@@ -131,7 +131,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
                 return;
             }
         }
-        const notice=phase==="base"?"第一步让AI只读取当前原题和原图，生成底图供你核对，不生成辅助线；答案与解析只保存用于后续步骤。可能产生费用，继续？":phase==="auxiliary"?"第二步发送已核对的固定底图和当前解答，只生成新增辅助步骤，不重建或改写原图。可能产生费用，继续？":"图片模型会生成整张派生图，不能保证原图像素或方向不变。这不是锁定底图模式，可能额外收费。继续？";
+        const notice=phase==="base"?"第一步让AI只读取当前原题和原图，生成底图供你核对，不生成辅助线；答案与解析只保存用于后续步骤。可能产生费用，继续？":phase==="auxiliary"?"第二步发送已核对的固定底图和当前解答，只生成新增辅助步骤，不重建或改写原图。当前模型明确表示无法构造时，会在剩余预算内按解题模型顺序尝试下一候选；各次调用可能分别计费。继续？":"图片模型会生成整张派生图，不能保证原图像素或方向不变。这不是锁定底图模式，可能额外收费。继续？";
         if(!window.confirm(notice))return;
         if(phase==="base"){baseDrawingCache?.invalidate(baseIdentity,baseDrawingVersion);setBaseFeedbackAt(fromCorrection?"correction":"initial");setBaseConfirmed(false);}
         pending.current=true;setBusy(true);setFailed(false);setProgressLabel(phase==="base"?"原题底图生成":phase==="auxiliary"?"辅助线方案生成":"整图编辑");setJobId("");setMessage("正在提交作图请求，尚未确认受理。请暂勿离开或重复点击；取得任务编号后才可到任务页取回。");
@@ -187,6 +187,7 @@ export function AuxiliaryDrawing({questionText,answerText,analysis,drawingCorrec
         {base && <div data-drawing-stage="auxiliary" className="space-y-3 border-t pt-3">
             <label className="flex gap-2"><input data-confirm-base type="checkbox" checked={baseConfirmed&&!baseStale} disabled={disabled||busy||illustrating||baseStale} onChange={e=>setBaseConfirmed(e.target.checked)}/>我已核对原图方向、点位与已有边，锁定此底图</label>
             <Button variant="outline" disabled={disabled||busy||illustrating||!usableBase||!answerText.trim()} onClick={()=>void generate("auxiliary")}>第二步：在锁定底图上添加辅助线</Button>
+            <p className="text-xs text-muted-foreground">第二步使用解题模型顺序。当前模型明确表示无法构造时，会在剩余预算内尝试下一候选；各次调用可能分别计费。所有候选都未给出可用构造时会显示失败原因，原题底图继续保留。</p>
             {progressLabel==="辅助线方案生成" && workFeedback}
             {stale&&!baseStale && <p role="alert">解答已修改，旧辅助步骤已隐藏，底图仍保持锁定。可根据新解答重新执行第二步。</p>}
             {plan&&!stale && <ConstructionPreview key={baseSource+planSource} plan={plan} originalImage={baseImage} questionText={baseQuestionText} onUseCommands={!baseStale&&!disabled&&!busy?onUseCommands:undefined}/>}

@@ -45,7 +45,10 @@ export function parseConstructionBase(raw: string, questionText?: string): Const
 const AuxiliarySchema = z.object({steps: ConstructionSchema.shape.steps.min(1)}).strict();
 export function parseConstructionSteps(raw: string, lockedBase: ConstructionPlan): ConstructionPlan {
     const value = parseJSON(raw, z.unknown());
-    if (UnsupportedSchema.safeParse(value).success) throw new AIError("AI_DRAWING_UNSUPPORTED", false, 0, "DRAWING_UNSUPPORTED");
+    // A completed refusal is this model's judgment, not proof that every solver
+    // cannot express the construction. Keep the same frozen base and let the
+    // bounded text-model chain try its next candidate; never invent operations.
+    if (UnsupportedSchema.safeParse(value).success) throw new AIError("AI_DRAWING_UNSUPPORTED", true, 0, "DRAWING_UNSUPPORTED");
     const parsed = AuxiliarySchema.safeParse(value);
     if (!parsed.success) throw new AIError("AI_RESPONSE_ERROR", true, 0, "DRAWING_SCHEMA_FIELDS");
     // Never accept model-returned base coordinates, even if a full plan looks valid.

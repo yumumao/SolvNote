@@ -432,12 +432,42 @@ describe.sequential("bounded drawing routes and jobs",()=>{
   expect(JSON.parse(shared.send.mock.calls[1][3])).toEqual({question:fields.questionText,correction:fields.drawingCorrection,previousBase:corrected});
   expect(await readJob("bob",secondId)).toBeNull();await processOne();expect(shared.send).toHaveBeenCalledTimes(2);
  });
- it("stops unsupported drawings once without spending the fallback model budget",async()=>{
+ it("stops unsupported source drawings once without spending the fallback model budget",async()=>{
   shared.send.mockResolvedValue(JSON.stringify({unsupported:true}));
   const r=await DRAW(req("/api/ai/drawing/construction",{questionText:"synthetic unsupported curve",answerText:"synthetic answer"}),{params:Promise.resolve({kind:"construction"})});
   const {jobId}=await r.json();await processOne();const job=await readJob("alice",jobId);
   expect(job?.state).toBe("failed");expect(job?.errorCode).toBe("AI_DRAWING_UNSUPPORTED");expect(shared.send).toHaveBeenCalledTimes(1);
   expect(job?.attemptsLog[0]).toMatchObject({diagnostic:"DRAWING_UNSUPPORTED"});
+ });
+ it("tries the next solver after an explicit auxiliary refusal and preserves the locked base and text",async()=>{
+  const base={...construction,steps:[],sourceText:"完整题干",sourceCaptions:["原图图注"]};
+  shared.send.mockResolvedValueOnce('{"unsupported":true}').mockResolvedValueOnce(JSON.stringify({steps:construction.steps}));
+  const response=await DRAW(req("/api/ai/drawing/construction",{questionText:"synthetic question",answerText:"join Q and R",drawingPlan:base}),{params:Promise.resolve({kind:"construction"})});
+  expect(response.status).toBe(202);const {jobId}=await response.json();await processOne();
+  const job=await readJob("alice",jobId,true);
+  expect(job?.state).toBe("success");expect(job?.result).toEqual({type:"construction",plan:{...base,steps:construction.steps}});
+  expect(job?.input?.drawingPlan).toEqual(base);
+  expect(shared.send.mock.calls.map(c=>c[1].id)).toEqual(["t","v"]);
+  expect(shared.send.mock.calls[1].slice(2,5)).toEqual(shared.send.mock.calls[0].slice(2,5));
+  expect(job?.attemptsLog.map(a=>a.state)).toEqual(["failed","success"]);
+  expect(job?.attemptsLog[0]).toMatchObject({errorCode:"AI_DRAWING_UNSUPPORTED",diagnostic:"DRAWING_UNSUPPORTED"});
+  await processOne();expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+ it("ends with an explicit failure when every auxiliary candidate refuses, without resending or returning the base as success",async()=>{
+  const base={...construction,steps:[]};shared.send.mockResolvedValue('{"unsupported":true}');
+  const response=await DRAW(req("/api/ai/drawing/construction",{questionText:"synthetic question",answerText:"synthetic answer",drawingPlan:base}),{params:Promise.resolve({kind:"construction"})});
+  const {jobId}=await response.json();await processOne();const job=await readJob("alice",jobId,true);
+  expect(shared.send.mock.calls.map(c=>c[1].id)).toEqual(["t","v"]);
+  expect(job?.state).toBe("failed");expect(job?.errorCode).toBe("AI_DRAWING_UNSUPPORTED");expect(job).not.toHaveProperty("result");
+  expect(job?.input?.drawingPlan).toEqual(base);expect(job?.attemptsLog).toHaveLength(2);
+  await processOne();expect(shared.send).toHaveBeenCalledTimes(2);
+ });
+ it("still rejects a fallback model that tries to replace the locked base",async()=>{
+  const base={...construction,steps:[]};shared.send.mockResolvedValueOnce('{"unsupported":true}').mockResolvedValueOnce(JSON.stringify({...construction,points:[{id:"Q",x:900,y:100},{id:"R",x:0,y:0}]}));
+  const response=await DRAW(req("/api/ai/drawing/construction",{questionText:"synthetic question",answerText:"synthetic answer",drawingPlan:base}),{params:Promise.resolve({kind:"construction"})});
+  const {jobId}=await response.json();await processOne();const job=await readJob("alice",jobId,true);
+  expect(shared.send).toHaveBeenCalledTimes(2);expect(job?.state).toBe("failed");expect(job).not.toHaveProperty("result");
+  expect(job?.input?.drawingPlan).toEqual(base);expect(job?.attemptsLog[1]).toMatchObject({errorCode:"AI_RESPONSE_ERROR",diagnostic:"DRAWING_SCHEMA_FIELDS"});
  });
  it("never dispatches editing when not activated or without explicit consent",async()=>{
   const response=await DRAW(req("/api/ai/drawing/image_edit",{questionText:"fixture",imageBase64:image,drawingPlan:construction}),{params:Promise.resolve({kind:"image_edit"})});expect(response.status).toBe(400);expect(shared.send).not.toHaveBeenCalled();
