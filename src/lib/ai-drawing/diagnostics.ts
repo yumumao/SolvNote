@@ -2,6 +2,10 @@ import { diagnosticMessage } from "../ai/diagnostics";
 
 /** Public fixed messages only: never display raw upstream errors, URLs or config values. */
 const drawingErrors: Record<string, string> = {
+    INVALID_REQUEST_OR_CONFIGURATION: "作图请求未被接受，当前底图数据、请求参数或模型配置未通过检查；请保留已有底图并核对设置。",
+    AI_DRAWING_RESULT_FORMAT: "返回的构造结果格式不合法，未采用该结果；已有底图仍保留。",
+    AI_DRAWING_BASE_CHANGED: "返回结果与锁定底图不一致，已阻止替换原图；已有底图仍保留。",
+    AI_DRAWING_STEPS_EMPTY: "返回结果中没有可用的辅助步骤；已有底图仍保留。",
     AI_DESCRIPTION_INVALID: "识图模型未返回合法的描述与待核对项，未自动换模型、解题或生图。可手动填写描述，或检查本次任务。",
     AI_NO_ALLOWED_MODEL: "当前账号没有可用的识图模型，请检查上方识图调用顺序、vision能力与授权；MiniMax生图模型不能代替识图模型。",
     AI_ILLUSTRATION_SETTINGS_CHANGED: "创作配图授权已失效，请回AI设置刷新并重新确认连接与模型。",

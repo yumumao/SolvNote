@@ -3,7 +3,7 @@ import {createRoot,type Root} from "react-dom/client";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 vi.mock("@/components/geogebra-demo",()=>({GeogebraDemo:()=>null}));
 import {AuxiliaryDrawing,DrawingResultPreview} from "@/components/auxiliary-drawing";
-import {apiClient} from "@/lib/api-client";
+import {ApiError,apiClient} from "@/lib/api-client";
 const source="data:image/png;base64,YQ==";
 const base={title:"Locked square",points:[{id:"A",x:0,y:4},{id:"B",x:0,y:0},{id:"C",x:4,y:0}],segments:[["A","B"],["B","C"]],steps:[]};
 const steps=[{description:"Reflect B",operation:{kind:"reflect",id:"P",point:"B",a:"A",b:"C"}}];
@@ -16,6 +16,28 @@ async function render(override={}){await act(async()=>root.render(<AuxiliaryDraw
 async function click(text:string){expect(button(text)).toBeDefined();await act(async()=>button(text).click());}
 async function confirmBase(){const check=host.querySelector('input[data-confirm-base]') as HTMLInputElement;expect(check).not.toBeNull();await act(async()=>check.click());}
 describe("separate base confirmation and auxiliary requests",()=>{
+ it.each(['api','changed-base','empty-steps','bad-format'] as const)('shows a visible auxiliary failure reason for %s while keeping the locked text and geometry',async failure=>{
+  const textBase={...base,sourceText:'原图外的完整题干\n第二段',sourceCaptions:['原图图注']};
+  const post=vi.spyOn(apiClient,'post').mockResolvedValueOnce({type:'construction',plan:textBase});
+  if(failure==='api')post.mockRejectedValueOnce(new ApiError(400,'Bad Request',{message:'INVALID_REQUEST_OR_CONFIGURATION'}));
+  else post.mockResolvedValueOnce({type:'construction',plan:failure==='changed-base'?{...textBase,title:'Changed base',steps}:failure==='empty-steps'?textBase:{steps}});
+  await render();await click('第一步：生成原题底图');await confirmBase();
+  const original=host.querySelector('[data-drawing-stage="base"] svg')!.outerHTML;
+  await click('第二步：在锁定底图上添加辅助线');
+  const alert=host.querySelector('[data-drawing-stage="auxiliary"] [role="alert"]');
+  expect(alert?.textContent).toContain('辅助线生成失败');
+  expect(alert?.textContent).toContain(failure==='api'?'请求未被接受':failure==='changed-base'?'锁定底图不一致':failure==='empty-steps'?'没有可用的辅助步骤':'构造结果格式不合法');
+  expect(host.querySelector('[data-drawing-stage="base"] svg')!.outerHTML).toBe(original);
+  expect(host.querySelector('[data-diagram-source-text]')?.textContent).toContain('原图外的完整题干');
+  expect(post).toHaveBeenCalledTimes(2);expect(host.querySelector('[data-aux-point]')).toBeNull();
+ });
+ it('adds auxiliary steps to a current drawing with exterior text and captions without changing the base',async()=>{
+  const textBase={...base,sourceText:'原图外的完整题干\n第二段',sourceCaptions:['原图图注']};
+  vi.spyOn(apiClient,'post').mockResolvedValueOnce({type:'construction',plan:textBase}).mockResolvedValueOnce({type:'construction',plan:{...textBase,steps}});
+  await render();await click('第一步：生成原题底图');await confirmBase();await click('第二步：在锁定底图上添加辅助线');
+  expect(host.querySelector('[data-drawing-stage="auxiliary"] [data-aux-point="P"]')).not.toBeNull();
+  expect(host.querySelector('[data-drawing-stage="auxiliary"] [data-diagram-source-text]')?.textContent).toContain('第二段');
+ });
  it("makes one source-only job, waits for confirmation, then sends the same base snapshot",async()=>{
   const post=vi.spyOn(apiClient,"post").mockResolvedValueOnce({type:"construction",plan:base}).mockResolvedValueOnce({type:"construction",plan:{...base,steps}});
   await render();await click("第一步：生成原题底图");

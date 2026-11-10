@@ -26,7 +26,7 @@ export type DialoguePayload = {
     reviewDone?: boolean;
     result?: ParsedQuestion;
 };
-export type StepMetadata = { transport?: AITransportDiagnostics; diagnostic?: AIDiagnostic; round?: number; stage: string; modelName: string; model: string; providerName: string; withImage: boolean; detailImageCount?:number; questions: string[] };
+export type StepMetadata = { timeoutFallback?: true; transport?: AITransportDiagnostics; diagnostic?: AIDiagnostic; round?: number; stage: string; modelName: string; model: string; providerName: string; withImage: boolean; detailImageCount?:number; questions: string[] };
 export type ProcessStep = Partial<StepMetadata> & { id?: string; modelId: string; state: string; errorCode?: string | null; startedAt: string | Date; finishedAt: string | Date | null; round?: number };
 export type DialogueView = {
     id: string; state: string; revision: number; roundsUsed: number; roundLimit: number; roundOpen: boolean;

@@ -76,6 +76,43 @@ beforeEach(async()=>{
 });
 afterAll(async()=>{if(oldOrigin===undefined)delete process.env.NEXTAUTH_URL;else process.env.NEXTAUTH_URL=oldOrigin;await shared.db?.$disconnect();if(oldDir===undefined)delete process.env.AI_CONFIG_DIR;else process.env.AI_CONFIG_DIR=oldDir;});
 describe.sequential("persistent dialogue with synthetic SQLite and mocked providers",()=>{
+ it.each(["TIMEOUT_BEFORE_HEADERS","TIMEOUT_READING_BODY"] as const)("persists %s as unknown and continues recognition on the next model",async diagnostic=>{
+  const snapshot=await captureAiIsolation();
+  try{
+   const {config,revision}=await loadAIConfig();
+   const vision=config.models.find(m=>m.id==='v')!;
+   await saveAIConfig({...config,models:[...config.models,{...vision,id:'v-copy'},{...vision,id:'v-next',model:'vision-next',name:'Next reader'}],chains:{...config.chains,vision:['v','v-copy','v-next']}},revision);
+   shared.send.mockRejectedValueOnce(new AIError('AI_ACCEPTANCE_UNKNOWN',false,0,diagnostic));
+   const id=await create('admin');await processOne();const c=await view(id,'admin');
+   expect(c.state).toBe('answered');expect(c.roundAttempts).toBe(3);
+   expect(shared.send.mock.calls.map(c=>c[1].id)).toEqual(['v','v-next','t']);
+   expect(shared.send.mock.calls[1].slice(2,5)).toEqual(shared.send.mock.calls[0].slice(2,5));
+   expect(c.steps.map(s=>s.state)).toEqual(['unknown','success','success']);
+   expect(c.steps[0]).toMatchObject({errorCode:'AI_ACCEPTANCE_UNKNOWN',diagnostic});
+   expect(c.steps[1]).toMatchObject({timeoutFallback:true,stage:'recognize'});
+   expect(c.steps[2]).not.toHaveProperty('timeoutFallback');
+   expect(JSON.stringify(c)).not.toContain('synthetic-only');
+   const calls=shared.send.mock.calls.length;await processOne();expect(shared.send).toHaveBeenCalledTimes(calls);
+  }finally{await restoreAiIsolation(snapshot);}
+ });
+ it('never dispatches a timeout fallback if saving the unknown attempt loses its lease',async()=>{
+  const snapshot=await captureAiIsolation();
+  try{
+   const {config,revision}=await loadAIConfig(),vision=config.models.find(m=>m.id==='v')!;
+   await saveAIConfig({...config,models:[...config.models,{...vision,id:'v-next',model:'vision-next'}],chains:{...config.chains,vision:['v','v-next']}},revision);
+   const id=await create('admin');
+   shared.send.mockImplementationOnce(async()=>{
+    await shared.db.aiWorkerLease.update({where:{id:'site'},data:{until:new Date(0)}});
+    await shared.db.aiJob.updateMany({where:{conversationId:id},data:{leaseUntil:new Date(0)}});
+    await claimJob('replacement-worker');
+    throw new AIError('AI_ACCEPTANCE_UNKNOWN',false,0,'TIMEOUT_BEFORE_HEADERS');
+   });
+   await processOne();
+   expect(shared.send).toHaveBeenCalledTimes(1);
+   const attempts=await shared.db.aiAttempt.findMany({where:{job:{conversationId:id}}});
+   expect(attempts.map(s=>s.state)).toEqual(['unknown']);
+  }finally{await restoreAiIsolation(snapshot);}
+ });
  it("counts the first completed answer, routes text solver without image, encrypts trace",async()=>{
   const id=await create();await processOne();const c=await view(id);
   expect(c.state).toBe("answered");expect(c.roundsUsed).toBe(1);expect(c.roundLimit).toBe(10);
@@ -445,7 +482,7 @@ describe.sequential("safe failure diagnostics survive the persistent worker",()=
   expect(attempt.metadata).not.toContain("JSON_INVALID");
   expect(JSON.stringify(c)).not.toContain("PRIVATE-RESPONSE");
  });
- it("preserves unknown status and makes no fallback dispatch on body timeout",async()=>{
+ it("preserves unknown status when the only vision model times out",async()=>{
   shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"TIMEOUT_READING_BODY"));
   const id=await create();await processOne();const c=await view(id);
   expect(c.state).toBe("unknown");
@@ -564,7 +601,7 @@ describe.sequential("explicit recovery after interrupted AI stages",()=>{
  async function interrupt(stage:"recognize"|"geometry_check"|"solve",user="alice"){
   const geometry={regions:[],angles:[{label:"1",vertex:"Q",arms:["P","R"]}]};
   if(stage!=="recognize")shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,...(stage==="geometry_check"?{geometry}:{})}));
-  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"TIMEOUT_READING_BODY"));
+  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"NETWORK_READING_BODY"));
   const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
   const id=await createConversation(user,{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());await processOne();return id;
  }
@@ -581,13 +618,13 @@ describe.sequential("explicit recovery after interrupted AI stages",()=>{
   expect((await view(id)).roundAttempts).toBe(old.roundAttempts);
   await processOne();const c=await view(id);
   expect(c.state).toBe("answered");expect(c.roundsUsed).toBe(1);
-  expect(c.steps[sent].stage).toBe(stage);expect(c.steps[sent-1]).toMatchObject({state:"unknown",diagnostic:"TIMEOUT_READING_BODY"});
+  expect(c.steps[sent].stage).toBe(stage);expect(c.steps[sent-1]).toMatchObject({state:"unknown",diagnostic:"NETWORK_READING_BODY"});
   expect(c.steps.filter(s=>s.stage==="recognize")).toHaveLength(stage==="recognize"?2:1);
  });
  it("preserves successful recognition and geometry when retrying a failed solve",async()=>{
   shared.send.mockResolvedValueOnce(JSON.stringify({...transcript,geometry:{regions:[],angles:[{label:"1",vertex:"Q",arms:["P","R"]}]}}));
   shared.send.mockResolvedValueOnce(JSON.stringify({angles:[{label:"1",vertex:"Q",arms:["P","R"]}],geometryUncertainties:[]}));
-  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"TIMEOUT_READING_BODY"));
+  shared.send.mockRejectedValueOnce(new AIError("AI_ACCEPTANCE_UNKNOWN",false,0,"NETWORK_READING_BODY"));
   const pixels=await sharp({create:{width:80,height:60,channels:3,background:"white"}}).png().toBuffer();
   const id=await createConversation("alice",{questionText:"synthetic q",imageBase64:`data:image/png;base64,${pixels.toString("base64")}`},key());await processOne();
   const before=await view(id);expect(before.state).toBe("unknown");expect(before.geometryChecked).toBe(true);

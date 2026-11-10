@@ -31,3 +31,15 @@ it('keeps the specific recognition failure visible after the next model succeeds
  await render([{...step('1','failed'),diagnostic:'GEOMETRY_INVALID'}],false);
  expect(host.textContent).toContain(diagnosticMessage('GEOMETRY_INVALID'));
 });
+
+it('explains timeout fallback without hiding the previous unknown result',async()=>{
+ const prior={...step('1','unknown','2026-10-03T00:00:02Z'),stage:'recognize',modelName:'First fixture',errorCode:'AI_ACCEPTANCE_UNKNOWN',diagnostic:'TIMEOUT_BEFORE_HEADERS' as const};
+ const next={...step('3','success','2026-10-03T00:00:04Z'),stage:'recognize',modelName:'Second fixture',timeoutFallback:true as const};
+ await render([prior,next],false);
+ expect(host.textContent).toContain('状态不确定');
+ expect(host.textContent).toContain('未向本模型重发');
+ expect(host.textContent).toContain('上一模型调用超时，已自动切换到当前模型');
+ expect(host.textContent).toContain('上一请求仍可能继续处理或计费');
+ await render([prior],false);
+ expect(host.textContent).not.toContain('已自动切换');
+});

@@ -7,7 +7,7 @@ import { runtimeConfig, assertRunContributors } from "../ai-access/runtime";
 import { loadEffectiveAIConfigInTx } from "../ai-access/effective-config";
 import { requireTxAiUser } from "../ai-access/account";
 import { prisma } from "../prisma";
-import { sendAI, AIError } from "./transport";
+import { sendAI, buildRequest, AIError } from "./transport";
 import { sendImageEdit } from "../ai-drawing/image-edit";
 import { aiRun, ATTEMPT_MS, TOTAL_MS, type AIRun } from "../ai-jobs/context";
 
@@ -21,14 +21,15 @@ export type ChainOptions = {
     modelId?: string;
     question?: string[];
 };
-function attemptMetadata(run: AIRun, model: AIModel, provider: AIProvider, image: string | undefined, options: ChainOptions): StepMetadata {
+function attemptMetadata(run: AIRun, model: AIModel, provider: AIProvider, image: string | undefined, options: ChainOptions, timeoutFallback = false): StepMetadata {
     return {
         round: run.round, stage: options.stage || "solve", modelName: model.name, model: model.model,
         providerName: provider.name, withImage: !!image,
         questions: options.question || [], detailImageCount: image ? options.detailImages?.length || 0 : 0,
+        ...(timeoutFallback ? { timeoutFallback: true as const } : {}),
     };
 }
-async function registerAttempt(run: AIRun, model: AIModel, provider: AIProvider, image: string | undefined, options: ChainOptions) {
+async function registerAttempt(run: AIRun, model: AIModel, provider: AIProvider, image: string | undefined, options: ChainOptions, timeoutFallback = false) {
     if (!run.jobId) return null;
     if (!run.leaseOwner) throw new AIError("AI_ACCEPTANCE_UNKNOWN");
     return prisma.$transaction(async (tx) => {
@@ -68,7 +69,7 @@ async function registerAttempt(run: AIRun, model: AIModel, provider: AIProvider,
             if (saved.count !== 1) throw new AIError("AI_ACCEPTANCE_UNKNOWN");
         }
         return tx.aiAttempt.create({
-            data: { jobId: run.jobId!, modelId: model.id, state: "running", metadata: protect(attemptMetadata(run, model, provider, image, options)) },
+            data: { jobId: run.jobId!, modelId: model.id, state: "running", metadata: protect(attemptMetadata(run, model, provider, image, options, timeoutFallback)) },
         });
     });
 }
@@ -124,6 +125,10 @@ export async function callChain<T>(
     if(options.modelId && !config.models.some(m=>m.id===options.modelId))throw new AIError("AI_ACCESS_REVOKED");
     if(options.imageEdit && (!options.modelId || !image))throw new AIError("AI_IMAGE_EDIT_UNSUPPORTED");
     const ids=options.imageEdit ? [options.modelId!] : config.chains[kind].filter(id => !options.modelId || options.modelId === id);
+    // Timeout fallback is an explicit chain policy, not permission to retry all
+    // unknown transport outcomes. Duplicate aliases must not resend the same target.
+    const timedOutTargets = new Set<string>();
+    let pendingTimeoutFallback = false;
     for (const id of ids) {
         if (id === run.excludeModel) continue;
         if (run.signal.aborted) throw new AIError("AI_CANCELLED");
@@ -142,6 +147,9 @@ export async function callChain<T>(
         )
             continue;
         if(options.imageEdit && provider.protocol!=="gemini")throw new AIError("AI_IMAGE_EDIT_UNSUPPORTED");
+        const request = options.imageEdit ? undefined : buildRequest(provider, model, "", "");
+        const target = request ? JSON.stringify([new URL(request.url).href, request.body.model ?? null]) : "";
+        if (timedOutTargets.has(target)) continue;
         const group = createHash("sha256")
             .update(`${new URL(provider.baseUrl).host}:${provider.apiKey}`)
             .digest("hex");
@@ -153,7 +161,9 @@ export async function callChain<T>(
             continue;
         }
         const attachedImage = model.capabilities.includes("vision") ? image : undefined;
-        const attempt = await registerAttempt(run, model, provider, attachedImage, options);
+        const followsTimeout = pendingTimeoutFallback;
+        const attempt = await registerAttempt(run, model, provider, attachedImage, options, followsTimeout);
+        pendingTimeoutFallback = false;
         if (run.signal.aborted) throw new AIError("AI_CANCELLED");
         run.attempts++;
         run.usedModelIds = [...new Set([...(run.usedModelIds || []), id])];
@@ -183,7 +193,7 @@ export async function callChain<T>(
                     e.code === "AI_ACCEPTANCE_UNKNOWN" ? "unknown" : "failed",
                     e.code,
                     diagnosticMessage(e.diagnostic) || transport
-                        ? { ...attemptMetadata(run, model, provider, attachedImage, options), ...(diagnosticMessage(e.diagnostic)?{diagnostic:e.diagnostic}:{}), ...(transport?{transport}:{}) }
+                        ? { ...attemptMetadata(run, model, provider, attachedImage, options, followsTimeout), ...(diagnosticMessage(e.diagnostic)?{diagnostic:e.diagnostic}:{}), ...(transport?{transport}:{}) }
                         : undefined,
                 );
             if (e.retryAfterMs)
@@ -195,7 +205,14 @@ export async function callChain<T>(
                     },
                     update: { until: new Date(Date.now() + e.retryAfterMs) },
                 });
-            if (options.imageEdit || options.singleAttempt || !e.fallback) throw e;
+            if (run.signal.aborted) throw new AIError("AI_CANCELLED");
+            const timedOut = e.code === "AI_ACCEPTANCE_UNKNOWN" &&
+                (e.diagnostic === "TIMEOUT_BEFORE_HEADERS" || e.diagnostic === "TIMEOUT_READING_BODY");
+            if (options.imageEdit || options.singleAttempt || (!e.fallback && !timedOut)) throw e;
+            if (timedOut) {
+                timedOutTargets.add(target);
+                pendingTimeoutFallback = true;
+            }
             continue;
         }
         await runtimeConfig(run);

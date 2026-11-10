@@ -5,6 +5,10 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 // Real Undici fetch/HTTP parser and real loopback sockets. Only the connector and
 // DNS are replaced; no public network, real provider or production key is used.
 const fixture = vi.hoisted(() => ({ port: 0 }));
+vi.mock("@/lib/ai-access/runtime", () => ({ runtimeConfig: async () => ({
+    providers: [provider], models: [model, {...model, id: "next", model: "next"}], chains: {vision:["m","next"],text:["m","next"]},
+}), assertRunContributors: vi.fn() }));
+vi.mock("@/lib/prisma", () => ({ prisma: { aiCooldown: { findUnique: async () => null } } }));
 vi.mock("node:dns/promises", () => ({ lookup: async () => [{ address: "8.8.8.8", family: 4 }] }));
 vi.mock("undici", async importOriginal => {
     const actual = await importOriginal<typeof import("undici")>();
@@ -21,6 +25,8 @@ vi.mock("undici", async importOriginal => {
     } };
 });
 import { sendAI } from "@/lib/ai/transport";
+import { callChain } from "@/lib/ai/chain";
+import { aiRun, ATTEMPT_MS } from "@/lib/ai-jobs/context";
 
 const provider = { id: "p", name: "Synthetic", protocol: "chat" as const,
     baseUrl: "https://example.com/v1", apiKey: "SYNTHETIC-LOCAL-ONLY", enabled: true };
@@ -39,11 +45,31 @@ beforeEach(async () => {
     fixture.port = address.port;
 });
 afterEach(async () => {
+    vi.restoreAllMocks();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
 });
 
 describe("actual socket lifecycle across the safe transport boundary", () => {
+    it.each([false,true])("moves to the next model after a real socket timeout (partial body: %s)", async partial => {
+        const models: string[] = [];
+        handle = (req,res) => {
+            let raw = ""; req.on("data",chunk=>{raw+=chunk});
+            req.on("end",()=>{
+                const body=JSON.parse(raw);models.push(body.model);
+                if(body.model==='fixture') {
+                    if(partial) {res.writeHead(200,{'content-type':'text/event-stream'});res.write('data: {"choices":[{"index":0,"delta":{"content":"discarded partial"},"finish_reason":null}]}\n\n');}
+                } else {
+                    res.writeHead(200,{'content-type':'text/event-stream'});
+                    res.write('data: {"choices":[{"index":0,"delta":{"content":"complete next result"},"finish_reason":"stop"}]}\n\n');
+                }
+            });
+        };
+        const originalTimeout=AbortSignal.timeout.bind(AbortSignal);
+        vi.spyOn(AbortSignal,'timeout').mockImplementation(ms=>originalTimeout(ms===ATTEMPT_MS?500:ms));
+        const result=await aiRun.run({signal:new AbortController().signal,deadline:Date.now()+600000,attempts:0,maxAttempts:2},()=>callChain('fixture','same input',undefined,s=>s,{role:'recognize',stage:'recognize'}));
+        expect(result).toBe('complete next result');expect(models).toEqual(['fixture','next']);expect(requests).toBe(2);
+    });
     it.each(["chat", "responses"] as const)("returns %s completion while upstream keeps HTTP open", async protocol => {
         let received = 0;
         handle = (req, res) => {

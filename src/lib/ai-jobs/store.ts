@@ -112,7 +112,7 @@ export async function readJob(userId: string, id: string, restore = false) {
     if(restored)delete restored._submissionHash;
     return {
         ...publicJob(j),
-        attemptsLog: attempts.map(({metadata,...a})=>{const m=metadata?unprotect<import("../ai-dialogue/types").StepMetadata>(metadata):undefined;return {...a,...(m?{stage:m.stage,modelName:m.modelName,providerName:m.providerName,withImage:m.withImage,...(diagnosticMessage(m.diagnostic)?{diagnostic:m.diagnostic}:{})}: {})};}),
+        attemptsLog: attempts.map(({metadata,...a})=>{const m=metadata?unprotect<import("../ai-dialogue/types").StepMetadata>(metadata):undefined;return {...a,...(m?{stage:m.stage,modelName:m.modelName,providerName:m.providerName,withImage:m.withImage,...(m.timeoutFallback===true?{timeoutFallback:true as const}:{}),...(diagnosticMessage(m.diagnostic)?{diagnostic:m.diagnostic}:{})}: {})};}),
         ...(j.state === "success" && j.result
             ? { result: unprotect(j.result) }
             : {}),
