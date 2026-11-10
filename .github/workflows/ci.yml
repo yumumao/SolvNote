@@ -82,7 +82,8 @@ jobs:
           AI_WORKER_DISABLED: '1'
 
   e2e-test:
-    runs-on: ubuntu-latest
+    # Playwright 1.57 supports Ubuntu 24.04; latest can move to unsupported OSes.
+    runs-on: ubuntu-24.04
     name: E2E Tests
     needs: build-check
     timeout-minutes: 60
