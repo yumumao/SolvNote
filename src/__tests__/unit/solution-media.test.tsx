@@ -22,7 +22,7 @@ it('renders independent image slots in the requested order without drawing contr
 it('defaults to answer and available second-step drawing, leaving question and other images optional',async()=>{
  await act(async()=>root.render(<SolutionShare {...snapshot}/>));
  await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='分享解题过程')!.click());
- const dialog=host.querySelector('dialog')!;expect(dialog.textContent).toContain('默认不附带题干');expect(dialog.textContent).not.toContain('默认附带题干');expect(dialog.querySelectorAll('[data-solution-options] input[type=checkbox]')).toHaveLength(5);expect([...dialog.querySelectorAll<HTMLInputElement>('[data-solution-options] input[type=checkbox]')].map(e=>e.checked)).toEqual([false,true,false,false,true]);
+ const dialog=host.querySelector('dialog')!;expect(dialog.textContent).toContain('默认不单独展示题干');expect(dialog.textContent).not.toContain('默认附带题干');expect(dialog.querySelectorAll('[data-solution-options] input[type=checkbox]')).toHaveLength(5);expect([...dialog.querySelectorAll<HTMLInputElement>('[data-solution-options] input[type=checkbox]')].map(e=>e.checked)).toEqual([false,true,false,false,true]);
  expect([...dialog.querySelectorAll('[data-solution-document] h2')].map(e=>e.textContent)).toEqual(['参考答案','辅助线图','解题过程']);
  await act(async()=>{const checkbox=[...dialog.querySelectorAll('label')].find(e=>e.textContent?.includes('原题重绘'))!.querySelector('input')!;checkbox.click()});
  expect([...dialog.querySelectorAll('h2')].map(e=>e.textContent)).toContain('原题重绘');expect(dialog.querySelector('[data-solution-document]')?.textContent).not.toContain('合成题干');

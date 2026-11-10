@@ -13,9 +13,11 @@ export function SolutionDocument({snapshot}:{snapshot:SolutionSnapshot}){
  // Only suppress conditions actually rendered in this snapshot, never mutate either plan.
  const sourceConditions=snapshot.includeBase&&snapshot.basePlan
   ?diagramConditionLines(snapshot.basePlan.annotations||[],snapshot.basePlan.notes||[],snapshot.basePlan.sourceCaptions||[]):[];
+ const shownQuestion=snapshot.includeQuestion&&snapshot.questionText?.trim()?[snapshot.questionText]:[];
+ const shownBaseText=snapshot.includeBase&&snapshot.basePlan?.sourceText?[snapshot.basePlan.sourceText]:[];
  const drawing=(title:string,plan:ConstructionPlan,auxiliary=false)=><section data-solution-section>{heading(title)}<div>
   {!auxiliary&&snapshot.baseNeedsReview&&<p data-base-review-note style={{fontSize:13,color:'#92400e'}}>此图为最后成功生成的版本，尚未按新纠正说明更新，请对照原图核验。</p>}
-  <ConstructionDiagram geometry={compileConstruction(plan).geometry} visible={plan.steps.length} title={title} attachmentTitle={title} shownConditionLines={auxiliary?sourceConditions:undefined} readOnly compact/>
+  <ConstructionDiagram geometry={compileConstruction(plan).geometry} visible={plan.steps.length} title={title} attachmentTitle={title} shownConditionLines={auxiliary?sourceConditions:undefined} shownSourceTexts={auxiliary?[...shownQuestion,...shownBaseText]:shownQuestion} fitWidth={snapshot.fitWidth} readOnly compact/>
   {auxiliary&&plan.steps.length>0&&<aside data-auxiliary-caption style={{fontSize:14,lineHeight:1.6,marginTop:4,overflowWrap:"anywhere",textAlign:"left",color:"#334155"}}>
    <p style={{margin:0,fontWeight:600}}>辅助线图注（辅助构造，不是原题条件）</p>
    <ol style={{margin:"2px 0 0",paddingLeft:20}}>{plan.steps.map((step,i)=><li key={i} style={{whiteSpace:"pre-wrap"}}>{step.description}</li>)}</ol>

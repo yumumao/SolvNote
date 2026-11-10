@@ -102,7 +102,7 @@ export function SolutionShare({analysis,questionText,answerText,originalImage,ba
     <button type="button" aria-label="关闭解题分享" onClick={close} className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6 inline-flex size-9 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-500 shadow-sm hover:bg-red-200 hover:text-red-700 focus-visible:ring-2 focus-visible:ring-red-300">✕</button>
     <div data-solution-dialog-scroll className="min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6">
     <h2 id={title} className="pr-12 text-xl font-semibold">分享解题过程</h2>
-    <p className="mt-2 text-sm text-muted-foreground">仅在本机生成快照，不上传题目、不创建公开链接。默认不附带题干；勾选题干时优先带上第一步重绘，没有重绘则带上可用原图，图片可单独取消。参考答案和已生成的第二步辅助线图仍默认选中；不含错因、错误作答或账户信息。</p>
+    <p className="mt-2 text-sm text-muted-foreground">仅在本机生成快照，不上传题目、不创建公开链接。默认不单独展示题干；重绘和辅助线图会保留对应题文。勾选题干时优先带上第一步重绘，没有重绘则带上可用原图，图片可单独取消。参考答案和已生成的第二步辅助线图仍默认选中；不含错因、错误作答或账户信息。</p>
     {workspace}
    </div></>}
   </dialog>

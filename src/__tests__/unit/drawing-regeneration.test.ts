@@ -31,7 +31,7 @@ describe("editable previous base is not a second-stage locked base",()=>{
    expect(image).toBe(raw.imageBase64);expect(options.role).toBe("recognize");return parse(JSON.stringify(corrected));
   });
   await validateDrawingInput("construction",input,"synthetic-user");
-  expect(await executeDrawing("construction",input)).toEqual({type:"construction",plan:corrected});expect(mocks.callChain).toHaveBeenCalledTimes(1);
+  expect(await executeDrawing("construction",input)).toEqual({type:"construction",plan:{...corrected,sourceText:raw.questionText}});expect(mocks.callChain).toHaveBeenCalledTimes(1);
  });
  it("refuses ambiguous jobs that submit previous and locked bases together",()=>{
   expect(()=>JobInputSchema.parse({...raw,drawingPlan:base})).toThrow();
@@ -45,6 +45,6 @@ describe("editable previous base is not a second-stage locked base",()=>{
  });
  it("does not turn an unchanged provider result into an automatic paid retry",async()=>{
   mocks.callChain.mockImplementation(async(_p,_text,_image,parse)=>parse(JSON.stringify(base)));
-  expect(await executeDrawing("construction",JobInputSchema.parse(raw))).toEqual({type:"construction",plan:base});expect(mocks.callChain).toHaveBeenCalledTimes(1);
+  expect(await executeDrawing("construction",JobInputSchema.parse(raw))).toEqual({type:"construction",plan:{...base,sourceText:raw.questionText}});expect(mocks.callChain).toHaveBeenCalledTimes(1);
  });
 });

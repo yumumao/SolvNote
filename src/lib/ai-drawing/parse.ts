@@ -5,7 +5,9 @@ import { ConstructionSchema, compileConstruction, type ConstructionPlan } from "
 
 const UnsupportedSchema = z.object({unsupported: z.literal(true)}).strict();
 export function parseConstruction(raw: string) {
-    const value = parseJSON(raw, z.unknown());
+    return validateParsedConstruction(parseJSON(raw, z.unknown()));
+}
+function validateParsedConstruction(value: unknown) {
     if (UnsupportedSchema.safeParse(value).success) throw new AIError("AI_DRAWING_UNSUPPORTED", false, 0, "DRAWING_UNSUPPORTED");
     const parsed = ConstructionSchema.safeParse(value);
     if (!parsed.success) {
@@ -30,8 +32,13 @@ export function validateConstructionBase(raw: ConstructionPlan): ConstructionPla
     compileConstruction(base);
     return base;
 }
-export function parseConstructionBase(raw: string): ConstructionPlan {
-    const plan = parseConstruction(raw);
+export function parseConstructionBase(raw: string, questionText?: string): ConstructionPlan {
+    let value = parseJSON(raw, z.unknown());
+    // Current editor text is authoritative. Discard an unnecessary model copy
+    // before schema validation, without masking unsupported or geometry errors.
+    if (questionText?.trim() && value && typeof value === 'object' && !Array.isArray(value) && !UnsupportedSchema.safeParse(value).success)
+        value = {...value, sourceText: questionText};
+    const plan = validateParsedConstruction(value);
     if (plan.steps.length) throw new AIError("AI_RESPONSE_ERROR", true, 0, "DRAWING_SCHEMA_FIELDS");
     return plan;
 }

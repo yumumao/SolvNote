@@ -28,12 +28,12 @@ describe("corrected-base handoff audit",()=>{
   const next=JobInputSchema.parse(JSON.parse(JSON.stringify({...source,drawingPlan:first.plan,answerText:"Current answer"})));
   mocks.callChain.mockImplementationOnce(async(prompt,text,image,parse)=>{
    const body=JSON.parse(text);
-   expect(prompt).toBe(CONSTRUCTION_PROMPT);expect(body.lockedBase).toEqual(corrected);
+   expect(prompt).toBe(CONSTRUCTION_PROMPT);expect(body.lockedBase).toEqual(first.plan);
    expect(body.answer).toBe("Current answer");expect(body).not.toHaveProperty("previousBase");
    expect(body).not.toHaveProperty("drawingPreviousBase");expect(image).toBeUndefined();
    return parse(JSON.stringify({steps}));
   });
-  expect(await executeDrawing("construction",next)).toEqual({type:"construction",plan:{...corrected,steps}});
+  expect(await executeDrawing("construction",next)).toEqual({type:"construction",plan:{...corrected,sourceText:source.questionText,steps}});
   expect(mocks.callChain).toHaveBeenCalledTimes(2);expect(previous).toEqual(prior);expect(corrected).toEqual(updated);
  });
  it("does not reject a supported construction merely because the locked base contains a manual correction note",()=>{

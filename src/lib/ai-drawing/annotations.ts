@@ -10,6 +10,19 @@ export const DiagramAnnotationSchema=z.discriminatedUnion('kind',[
 export const DiagramNoteSchema=z.object({text:text(300),status:z.enum(['confirmed','uncertain'])}).strict();
 // Separate capacity for previously recognized image text; never promote it to a condition.
 export const SourceCaptionSchema=text(1000);
+// Keep the current problem text with its drawing, independently of model-selected
+// annotations. Preserve paragraphs/LaTeX; consumers render text, never raw markup.
+export const normalizeDrawingSourceText=(s:string)=>Array.from(s,c=>{
+ const n=c.codePointAt(0)!;
+ if([11,12,133].includes(n))return '\n';
+ if((n<32&&![9,10,13].includes(n))||(n>=127&&n<=159)||(n>=0x202a&&n<=0x202e)||(n>=0x2066&&n<=0x2069))return '';
+ if((n>=0xd800&&n<=0xdfff)||n===0xfffe||n===0xffff)return '\ufffd';
+ return c;
+}).join('');
+// Input questions already allow these characters; normalize locally instead of
+// making a successful AI response fail (which would enter model fallback).
+export const DiagramSourceTextSchema=z.string().max(50000).transform(normalizeDrawingSourceText);
+export const drawingSourceTextKey=(s:string)=>normalizeDrawingSourceText(s).replace(/\r\n?/g,'\n').trim();
 export type DiagramAnnotation=z.infer<typeof DiagramAnnotationSchema>;
 export type DiagramNote=z.infer<typeof DiagramNoteSchema>;
 type Point={x:number;y:number};
@@ -88,12 +101,14 @@ export function layoutDiagramAnnotations(annotations:DiagramAnnotation[],get:(id
  });
 }
 /** Standalone SVG has no HTML caption, so append safe, wrapped SVG text to a clone. */
-export function appendDiagramCaption(svg:SVGSVGElement,lines:string[]){
- if(!lines.length)return;
+export function appendDiagramCaption(svg:SVGSVGElement,lines:string[],sourceText=''){
+ if(!lines.length&&!sourceText.trim())return;
  const ns='http://www.w3.org/2000/svg';
  const [left,top,oldWidth,height]=svg.getAttribute('viewBox')!.split(/\s+/).map(Number),width=Math.max(320,oldWidth),inset=12,font=16,lineHeight=24;
  const count=Math.max(1,Math.floor((width-inset*2)/font));
- const wrapped=['原图标记与图注（识别结果，请核对原图）',...lines].flatMap(line=>{
+ const content=[...(sourceText.trim()?['题干与图外文字（请核对原图）',...sourceText.replace(/\r\n?/g,'\n').split('\n')]:[]),...(lines.length?['原图标记与图注（识别结果，请核对原图）',...lines]:[])];
+ const wrapped=content.flatMap(line=>{
+  if(!line)return [''];
   const chars=Array.from(line),out:string[]=[];for(let i=0;i<chars.length;i+=count)out.push(chars.slice(i,i+count).join(''));return out;
  });
  const group=document.createElementNS(ns,'g');group.setAttribute('data-export-caption','true');

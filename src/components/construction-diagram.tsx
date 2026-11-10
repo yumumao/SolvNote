@@ -2,15 +2,16 @@
 import {useRef} from "react";
 import type {compileConstruction} from "@/lib/ai-drawing/construction";
 import {diagramRegionPath} from '@/lib/ai-drawing/regions';
-import {layoutDiagramAnnotations,diagramConditionLines,appendDiagramCaption} from "@/lib/ai-drawing/annotations";
+import {layoutDiagramAnnotations,diagramConditionLines,appendDiagramCaption,drawingSourceTextKey} from "@/lib/ai-drawing/annotations";
 import {Button} from "./ui/button";
+import {MarkdownRenderer} from "./markdown-renderer";
 type Geometry=ReturnType<typeof compileConstruction>["geometry"];
 const SVG_WIDTH=800;
 const SVG_HEIGHT=500;
 const VIEW_PADDING=30;
 
 // All coordinates come from the whitelist compiler, never from arbitrary SVG or JS returned by AI.
-export function ConstructionDiagram({geometry,visible,title,readOnly=false,compact=false,attachmentTitle,shownConditionLines=[]}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean;compact?:boolean;attachmentTitle?:string;shownConditionLines?:readonly string[]}){
+export function ConstructionDiagram({geometry,visible,title,readOnly=false,compact=false,attachmentTitle,shownConditionLines=[],shownSourceTexts=[],fitWidth=true}:{geometry:Geometry;visible:number;title:string;readOnly?:boolean;compact?:boolean;attachmentTitle?:string;shownConditionLines?:readonly string[];shownSourceTexts?:readonly string[];fitWidth?:boolean}){
     const svg=useRef<SVGSVGElement>(null);
     const rounds=[...geometry.circles,...geometry.arcs];
     // The viewport depends ONLY on the locked source, including across separate jobs.
@@ -31,6 +32,8 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
     const labels=layoutDiagramAnnotations(geometry.annotations||[],id=>map(originals.get(id)!),geometry.basePoints.map(p=>({...map(p),id:p.id})),map,{left:topLeft.x,right:bottomRight.x,top:topLeft.y,bottom:bottomRight.y});
     const labelBounds=labels.flatMap(l=>l.bounds);
     const captionLines=diagramConditionLines(geometry.annotations||[],geometry.notes||[],geometry.sourceCaptions||[]);
+    const sourceText=geometry.sourceText||'';
+    const showSourceText=!!sourceText.trim()&&!shownSourceTexts.some(s=>drawingSourceTextKey(s)===drawingSourceTextKey(sourceText));
     const hiddenLabels=labels.some(l=>l.hidden&&l.annotation.kind!=='text');
     const crowdedLabelNote="部分标记因图内拥挤或角区过小，仅在图注保留，请对照原图核验位置。";
     // A shared document may already show these source conditions under its redraw.
@@ -112,7 +115,7 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
             const background=exported.querySelector("rect");
             if(background)for(const [key,value] of Object.entries({x:left,y:top,width,height}))background.setAttribute(key,String(value));
         }
-        appendDiagramCaption(exported,allCaptionLines);
+        appendDiagramCaption(exported,allCaptionLines,sourceText);
         return new XMLSerializer().serializeToString(exported);
     }
     function createImageUrl(){
@@ -160,6 +163,10 @@ export function ConstructionDiagram({geometry,visible,title,readOnly=false,compa
             {visibleDerivedPoints.map(p=>renderPoint(p,true))}
             </g>
         </svg>
+        {showSourceText&&<aside data-diagram-source-text style={{fontSize:14,lineHeight:1.6,marginTop:6,overflowWrap:"anywhere",textAlign:"left",color:"#334155",minWidth:0}}>
+            <p style={{margin:"0 0 2px",fontWeight:600}}>题干与图外文字（请核对原图）</p>
+            <MarkdownRenderer content={sourceText} fitWidth={fitWidth} localShare/>
+        </aside>}
         {displayedCaptionLines.length>0&&<aside data-diagram-caption style={{fontSize:14,lineHeight:1.6,marginTop:4,overflowWrap:"anywhere",textAlign:"left",color:"#334155"}}>
             <p style={{margin:0,fontWeight:600}}>原图标记与图注（识别结果，请核对原图）</p>
             <ul style={{margin:"2px 0 0",paddingLeft:20}}>{displayedCaptionLines.map((line,i)=><li key={i}>{line}</li>)}</ul>

@@ -4,11 +4,15 @@ import {AIError} from '../ai/transport';
 const key=(s:string)=>s.trim().replace(/^(?:(?:∠|角|编号角?)\s*|angle\s+)([0-9]+)$/i,'$1');
 const oneLine=(s:string)=>s.replace(/\s+/g,' ').trim();
 /** Do not invent a cw/ccw sector from arms alone. Missing placements become captions. */
-export function preserveDrawingEvidence(plan:ConstructionPlan,evidence?:DrawingEvidence):ConstructionPlan{
+export function preserveDrawingEvidence(plan:ConstructionPlan,evidence?:DrawingEvidence,questionText?:string):ConstructionPlan{
  // This field is copied only from this request's evidence, never from model output
  // or a previous drawing whose text may have been superseded by a correction.
  plan={...plan};delete plan.sourceCaptions;
- if(!evidence)return plan;
+ // Every editor supplies the current question, even without dialogue evidence.
+ // Never let an old transcript/previous drawing/model rewrite replace edited text.
+ // Image-only requests may use sourceText freshly transcribed in this same call.
+ if(questionText?.trim())plan.sourceText=questionText;
+ if(!evidence)return ConstructionSchema.parse(plan);
  const e=prepareDrawingEvidence(evidence),known=e.authority==='verified'&&!e.uncertainties.length;
  if(known)for(const a of plan.annotations||[]){
   if(a.kind!=='angle')continue;

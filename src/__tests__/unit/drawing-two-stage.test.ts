@@ -18,7 +18,7 @@ beforeEach(()=>{vi.clearAllMocks();});
 describe("two separately accepted drawing stages",()=>{
  it("generates only the source before reading any solution or auxiliary instructions",async()=>{
   mocks.callChain.mockImplementationOnce(async(_p,t,_i,parse)=>{expect(JSON.parse(t)).toEqual({question:input.questionText,correction:""});return parse(JSON.stringify(base));});
-  expect(await executeDrawing("construction",input)).toEqual({type:"construction",plan:base});
+  expect(await executeDrawing("construction",input)).toEqual({type:"construction",plan:{...base,sourceText:input.questionText}});
   expect(mocks.callChain).toHaveBeenCalledTimes(1);
   expect(mocks.callChain.mock.calls[0][0]).toContain("steps必须为空数组");
   expect(mocks.callChain.mock.calls[0][2]).toBe(input.imageBase64);
@@ -30,7 +30,7 @@ describe("two separately accepted drawing stages",()=>{
    expect(text).not.toContain(input.answerText);expect(text).not.toContain(input.analysis);
    expect(image).toBe(input.imageBase64);return parse(JSON.stringify(base));
   });
-  expect(await executeDrawing("construction",corrected)).toEqual({type:"construction",plan:base});
+  expect(await executeDrawing("construction",corrected)).toEqual({type:"construction",plan:{...base,sourceText:input.questionText}});
   expect(mocks.callChain).toHaveBeenCalledTimes(1);
  });
  it("rejects auxiliaries sneaked into the source stage",async()=>{
@@ -87,10 +87,10 @@ it("constructs the reported 24-degree auxiliary point by reflection, not arbitra
 it('extracts markings with the existing image call and sends them unchanged to the second stage',async()=>{
  const marked={...base,annotations:[{kind:'angle',a:'C',vertex:'B',b:'A',direction:'ccw',text:'1'}],notes:[{text:'AB与BC有相同刻痕',status:'confirmed'},{text:'D处数字不清，请核对',status:'uncertain'}]};
  mocks.callChain.mockImplementationOnce(async(_p,t,i,parse)=>{expect(i).toBe(input.imageBase64);expect(Object.keys(JSON.parse(t)).sort()).toEqual(['correction','question']);return parse(JSON.stringify(marked));});
- const first=await executeDrawing('construction',input);expect(first).toEqual({type:'construction',plan:marked});expect(mocks.callChain).toHaveBeenCalledTimes(1);
- const saved=ConstructionSchema.parse(JSON.parse(JSON.stringify(marked)));
+ const first=await executeDrawing('construction',input);expect(first).toEqual({type:'construction',plan:{...marked,sourceText:input.questionText}});expect(mocks.callChain).toHaveBeenCalledTimes(1);
+ const saved=ConstructionSchema.parse(JSON.parse(JSON.stringify(first.type==='construction'?first.plan:{})));
  mocks.callChain.mockImplementationOnce(async(p,t,i,parse)=>{expect(JSON.parse(t).lockedBase).toEqual(saved);expect(i).toBeUndefined();expect(p).toContain('uncertain仅为待核对内容，不能作为已知条件');return parse(JSON.stringify(extra));});
- expect(await executeDrawing('construction',{...input,drawingPlan:saved})).toEqual({type:'construction',plan:{...marked,...extra}});expect(mocks.callChain).toHaveBeenCalledTimes(2);
+ expect(await executeDrawing('construction',{...input,drawingPlan:saved})).toEqual({type:'construction',plan:{...saved,...extra}});expect(mocks.callChain).toHaveBeenCalledTimes(2);
 });
 
 const evidence={authority:'verified',transcription:'原题转录',angles:[{label:'1',vertex:'B',arms:['A','C']}],uncertainties:[],clarifications:[]};

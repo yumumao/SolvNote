@@ -106,3 +106,37 @@ it('exports the full wrapped source caption inside the standalone SVG without wi
  expect(doc.documentElement.getAttribute('viewBox')!.split(' ')[2]).toBe(withoutCaption.documentElement.getAttribute('viewBox')!.split(' ')[2]);
  expect(host.querySelector('svg')!.getAttribute('viewBox')).toBe(initial);
 }));
+it('includes exterior question text with the drawing even when the separate question is not selected',()=>mount(async(host,render)=>{
+ const sourceText='图外题文：一块长方形草地，长为12米。\n\n求阴影面积，保留单位。';
+ const value=snapshot({questionText:sourceText,includeQuestion:false,basePlan:{...base,sourceText},auxiliaryPlan:{...auxiliary,sourceText}});
+ await render(<SolutionDocument snapshot={snapshot()}/>);const before=sourceSection(host).querySelector('svg')!.getAttribute('viewBox');
+ await render(<SolutionDocument snapshot={value}/>);
+ expect(sourceSection(host).querySelector('[data-diagram-source-text]')!.textContent).toContain('图外题文');
+ expect(sourceSection(host).querySelector('svg')!.getAttribute('viewBox')).toBe(before);
+ expect(host.querySelectorAll('[data-diagram-source-text]')).toHaveLength(1);
+ expect(solutionPlainText(host,{includeLatex:false}).match(/图外题文/g)).toHaveLength(1);
+ await render(<SolutionDocument snapshot={{...value,includeBase:false}}/>);expect(auxSection(host).textContent).toContain('图外题文');
+ await render(<SolutionDocument snapshot={{...value,includeQuestion:true}}/>);
+ expect(host.querySelectorAll('[data-diagram-source-text]')).toHaveLength(0);expect(host.textContent?.match(/图外题文/g)).toHaveLength(1);
+}));
+it('does not hide differing source text and never loads remote Markdown content from a drawing',()=>mount(async(host,render)=>{
+ const sourceText='外侧说明，$\\frac{1}{2}$。\n\n![图片](https://invalid.example/test.png)\n\n[链接](https://invalid.example)';
+ await render(<SolutionDocument snapshot={snapshot({includeQuestion:true,questionText:'较新题干',basePlan:{...base,sourceText},auxiliaryPlan:{...auxiliary,sourceText:'另一张图的说明'}})}/>);
+ expect(host.querySelectorAll('[data-diagram-source-text]')).toHaveLength(2);expect(sourceSection(host).textContent).toContain('外侧说明');
+ expect(sourceSection(host).querySelector('.katex')).not.toBeNull();expect(sourceSection(host).querySelector('img')).toBeNull();expect(sourceSection(host).querySelector('a')).toBeNull();
+}));
+it('standalone SVG retains the full exterior text even when the embedding suppresses its duplicate',()=>mount(async(host,render)=>{
+ const sourceText='图外第一段：'+('甲乙丙丁'.repeat(100))+'\n图外第二段：全文结束\ufffe';
+ const create=vi.fn<(blob:Blob)=>string>(()=>'blob:exterior');vi.stubGlobal('URL',{createObjectURL:create,revokeObjectURL:vi.fn()});vi.spyOn(window,'open').mockReturnValue(null);
+ await render(<ConstructionDiagram geometry={compileConstruction({...base,sourceText}).geometry} visible={0} title="synthetic" shownSourceTexts={[sourceText]}/>);
+ expect(host.querySelector('[data-diagram-source-text]')).toBeNull();
+ await act(async()=>{(host.querySelector('[data-open-full-image]') as HTMLButtonElement).click();});
+ const raw=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=()=>reject(r.error);r.readAsText(create.mock.calls[0][0]);});
+ const doc=new DOMParser().parseFromString(raw,'image/svg+xml'),caption=doc.querySelector('[data-export-caption]')!;
+ expect(caption.textContent).toContain(sourceText.replace('\n','').replace('\ufffe','\ufffd'));expect(caption.textContent).toContain('题干与图外文字');expect(doc.querySelector('parsererror')).toBeNull();
+}));
+it('deduplicates locally cleaned source text against the same pasted question',()=>mount(async(host,render)=>{
+ const sourceText='首段\n第二段';
+ await render(<SolutionDocument snapshot={snapshot({includeQuestion:true,questionText:'首段\f第二段\u202e',basePlan:{...base,sourceText},auxiliaryPlan:{...auxiliary,sourceText}})}/>);
+ expect(host.querySelector('[data-diagram-source-text]')).toBeNull();expect(host.textContent?.match(/第二段/g)).toHaveLength(1);
+}));
